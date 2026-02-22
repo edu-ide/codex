@@ -39,4 +39,12 @@ pub trait AgentExecutor: Send + Sync + 'static {
 
     /// Return the agent card for discovery.
     fn agent_card(&self, base_url: &str) -> AgentCard;
+
+    /// Process a direct ACP JSON-RPC call.
+    fn acp_call(
+        &self,
+        request: serde_json::Value,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value, crate::error::A2AError>> + Send {
+        async { Err(crate::error::A2AError::unsupported_operation("acp_call")) }
+    }
 }

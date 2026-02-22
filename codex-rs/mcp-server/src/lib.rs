@@ -136,7 +136,7 @@ pub async fn run_main_with_transport(
     // --- A2A server (optional) ---
     let a2a_handle = if let Some(a2a_port) = transport.a2a_port {
         // Broadcast channel for forwarding MCP notifications to A2A event bus.
-        let (a2a_notif_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+        let (a2a_notif_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
 
         let handler = a2a_handler::CodexA2AExecutor::new(
             incoming_tx.clone(),
@@ -147,9 +147,11 @@ pub async fn run_main_with_transport(
         let addr = format!("0.0.0.0:{a2a_port}");
         info!("A2A server listening on http://{addr}/");
 
+        let a2a_notif_tx_server = a2a_notif_tx.clone();
         Some((tokio::spawn(async move {
             if let Err(e) = a2a_rs::A2AServer::new(handler, a2a_rs::InMemoryTaskStore::new())
                 .bind(&addr)
+                .with_acp_broadcaster(a2a_notif_tx_server)
                 .run()
                 .await
             {
@@ -236,7 +238,9 @@ pub async fn run_main_with_transport(
                     Ok(json) => {
                         // Forward notifications to A2A broadcast channel.
                         if let Some(ref a2a_tx) = a2a_notif_tx_for_stdout {
-                            let _ = a2a_tx.send(json.clone());
+                            if let Ok(val) = serde_json::to_value(&msg) {
+                                let _ = a2a_tx.send(val);
+                            }
                         }
                         if !routed {
                             if let Err(e) = stdout.write_all(json.as_bytes()).await {

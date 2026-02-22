@@ -6,6 +6,7 @@
 //! and [`EventBus`] for streaming events.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -23,7 +24,7 @@ use axum::{
     routing::{get, post},
 };
 use futures::stream::{self, Stream};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
@@ -40,6 +41,10 @@ pub struct A2AServerState<E: AgentExecutor, S: TaskStore> {
     pub base_url: String,
     /// Active task cancellation tokens, keyed by task ID.
     pub cancel_tokens: Arc<Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// In-memory task index for metadata listing endpoint.
+    pub task_index: Arc<Mutex<HashSet<String>>>,
+    /// Global broadcaster for ACP/HTTP clients.
+    pub acp_broadcaster: tokio::sync::broadcast::Sender<Value>,
 }
 
 impl<E: AgentExecutor, S: TaskStore> Clone for A2AServerState<E, S> {
@@ -49,6 +54,8 @@ impl<E: AgentExecutor, S: TaskStore> Clone for A2AServerState<E, S> {
             store: Arc::clone(&self.store),
             base_url: self.base_url.clone(),
             cancel_tokens: Arc::clone(&self.cancel_tokens),
+            task_index: Arc::clone(&self.task_index),
+            acp_broadcaster: self.acp_broadcaster.clone(),
         }
     }
 }
@@ -63,6 +70,7 @@ pub struct A2AServer<E: AgentExecutor, S: TaskStore> {
     store: Arc<S>,
     addr: String,
     base_url: Option<String>,
+    acp_broadcaster: Option<tokio::sync::broadcast::Sender<Value>>,
 }
 
 impl<E: AgentExecutor, S: TaskStore> A2AServer<E, S> {
@@ -73,7 +81,14 @@ impl<E: AgentExecutor, S: TaskStore> A2AServer<E, S> {
             store: Arc::new(store),
             addr: "0.0.0.0:5000".to_string(),
             base_url: None,
+            acp_broadcaster: None,
         }
+    }
+
+    /// Set an existing ACP broadcaster
+    pub fn with_acp_broadcaster(mut self, tx: tokio::sync::broadcast::Sender<Value>) -> Self {
+        self.acp_broadcaster = Some(tx);
+        self
     }
 
     /// Set the bind address (default: `0.0.0.0:5000`).
@@ -100,6 +115,8 @@ impl<E: AgentExecutor, S: TaskStore> A2AServer<E, S> {
             store: Arc::clone(&self.store),
             base_url,
             cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
+            task_index: Arc::new(Mutex::new(HashSet::new())),
+            acp_broadcaster: self.acp_broadcaster.clone().unwrap_or_else(|| tokio::sync::broadcast::channel(256).0),
         };
 
         Router::new()
@@ -111,10 +128,13 @@ impl<E: AgentExecutor, S: TaskStore> A2AServer<E, S> {
             .route("/.well-known/agent.json", get(handle_agent_card::<E, S>))
             .route("/message:send", post(handle_send_message::<E, S>))
             .route("/message:stream", post(handle_stream_message::<E, S>))
+            .route("/acp", post(handle_acp_post::<E, S>))
+            .route("/acp/stream", get(handle_acp_stream::<E, S>))
             .route(
                 "/tasks/{id}",
                 get(handle_get_task::<E, S>).post(handle_cancel_task_compat::<E, S>),
             )
+            .route("/tasks/metadata", get(handle_list_task_metadata::<E, S>))
             .route("/tasks/{id}/cancel", post(handle_cancel_task::<E, S>))
             .with_state(state)
     }
@@ -405,6 +425,7 @@ async fn handle_send_message<E: AgentExecutor, S: TaskStore>(
             Ok(ExecutionEvent::Task(task)) => {
                 // Save to store.
                 state.store.save(task.clone()).await?;
+                state.task_index.lock().await.insert(task.id.clone());
                 return Ok(Json(SendMessageResponse::Task(task)));
             }
             Ok(ExecutionEvent::Message(message)) => {
@@ -467,49 +488,47 @@ async fn handle_stream_message<E: AgentExecutor, S: TaskStore>(
     });
 
     // Convert broadcast receiver into SSE stream.
+    let store = Arc::clone(&state.store);
+    let task_index = Arc::clone(&state.task_index);
     let stream = BroadcastStream::new(rx).filter_map(move |result| {
+        let store = Arc::clone(&store);
+        let task_index = Arc::clone(&task_index);
         match result {
             Ok(event) => {
-                let sse_event = match &event {
-                    ExecutionEvent::Task(task) => {
-                        Event::default()
-                            .event("task")
-                            .json_data(task)
-                            .ok()
-                    }
-                    ExecutionEvent::Message(msg) => {
-                        Event::default()
-                            .event("message")
-                            .json_data(msg)
-                            .ok()
-                    }
-                    ExecutionEvent::StatusUpdate(update) => {
-                        Event::default()
-                            .event("status")
-                            .json_data(update)
-                            .ok()
-                    }
-                    ExecutionEvent::ArtifactUpdate(update) => {
-                        Event::default()
-                            .event("artifact")
-                            .json_data(update)
-                            .ok()
-                    }
-                };
-                // If this is a terminal event, we'll close after sending.
-                let is_terminal = matches!(&event,
-                    ExecutionEvent::Task(t) if matches!(t.status.state, TaskState::Completed | TaskState::Failed | TaskState::Canceled)
-                );
-                match sse_event {
-                    Some(e) => {
-                        if is_terminal {
-                            // Send the event — stream will end naturally after broadcast closes.
-                            Some(Ok(e))
+                if let ExecutionEvent::Task(task) = &event {
+                    let store = Arc::clone(&store);
+                    let task_index = Arc::clone(&task_index);
+                    let task_for_save = task.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = store.save(task_for_save.clone()).await {
+                            tracing::warn!(
+                                "failed to persist task {} from stream: {e}",
+                                task_for_save.id
+                            );
                         } else {
-                            Some(Ok(e))
+                            task_index.lock().await.insert(task_for_save.id.clone());
                         }
+                    });
+                }
+                match &event {
+                    ExecutionEvent::Task(task) => {
+                        Event::default().event("task").json_data(task).ok().map(Ok)
                     }
-                    None => None,
+                    ExecutionEvent::Message(msg) => Event::default()
+                        .event("message")
+                        .json_data(msg)
+                        .ok()
+                        .map(Ok),
+                    ExecutionEvent::StatusUpdate(update) => Event::default()
+                        .event("status")
+                        .json_data(update)
+                        .ok()
+                        .map(Ok),
+                    ExecutionEvent::ArtifactUpdate(update) => Event::default()
+                        .event("artifact")
+                        .json_data(update)
+                        .ok()
+                        .map(Ok),
                 }
             }
             Err(_) => None, // Stream ended
@@ -561,10 +580,29 @@ async fn handle_jsonrpc_stream_message<E: AgentExecutor, S: TaskStore>(
         cancel_tokens.lock().await.remove(&task_id_clone);
     });
 
+    let store = Arc::clone(&state.store);
+    let task_index = Arc::clone(&state.task_index);
     let stream = BroadcastStream::new(rx).filter_map(move |result| {
         let request_id = request_id.clone();
+        let store = Arc::clone(&store);
+        let task_index = Arc::clone(&task_index);
         match result {
             Ok(event) => {
+                if let ExecutionEvent::Task(task) = &event {
+                    let store = Arc::clone(&store);
+                    let task_index = Arc::clone(&task_index);
+                    let task_for_save = task.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = store.save(task_for_save.clone()).await {
+                            tracing::warn!(
+                                "failed to persist task {} from jsonrpc stream: {e}",
+                                task_for_save.id
+                            );
+                        } else {
+                            task_index.lock().await.insert(task_for_save.id.clone());
+                        }
+                    });
+                }
                 let result_value = match event {
                     ExecutionEvent::Task(task) => json!(task),
                     ExecutionEvent::Message(msg) => json!(msg),
@@ -586,6 +624,32 @@ async fn handle_jsonrpc_stream_message<E: AgentExecutor, S: TaskStore>(
     Sse::new(stream)
 }
 
+/// `POST /acp`
+async fn handle_acp_post<E: AgentExecutor, S: TaskStore>(
+    State(state): State<A2AServerState<E, S>>,
+    Json(body): Json<Value>,
+) -> Response {
+    match state.executor.acp_call(body).await {
+        Ok(result) => Json(result).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_jsonrpc_error())).into_response(),
+    }
+}
+
+/// `GET /acp/stream`
+async fn handle_acp_stream<E: AgentExecutor, S: TaskStore>(
+    State(state): State<A2AServerState<E, S>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.acp_broadcaster.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|res| match res {
+        Ok(val) => {
+            let payload = val.to_string();
+            Some(Ok(Event::default().data(payload)))
+        }
+        Err(_) => None,
+    });
+    Sse::new(stream)
+}
+
 /// `GET /tasks/{id}`
 async fn handle_get_task<E: AgentExecutor, S: TaskStore>(
     State(state): State<A2AServerState<E, S>>,
@@ -595,6 +659,37 @@ async fn handle_get_task<E: AgentExecutor, S: TaskStore>(
         Some(task) => Ok(Json(task)),
         None => Err(A2AError::task_not_found(&task_id)),
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskMetadataItem {
+    id: String,
+    context_id: String,
+    state: TaskState,
+    updated_at: Option<String>,
+}
+
+/// `GET /tasks/metadata`
+///
+/// Returns task metadata snapshots for all tasks seen by this server process.
+async fn handle_list_task_metadata<E: AgentExecutor, S: TaskStore>(
+    State(state): State<A2AServerState<E, S>>,
+) -> Result<Json<Vec<TaskMetadataItem>>, A2AError> {
+    let mut ids: Vec<String> = state.task_index.lock().await.iter().cloned().collect();
+    ids.sort();
+    let mut out = Vec::new();
+    for id in ids {
+        if let Some(task) = state.store.load(&id).await? {
+            out.push(TaskMetadataItem {
+                id: task.id,
+                context_id: task.context_id,
+                state: task.status.state,
+                updated_at: task.status.timestamp,
+            });
+        }
+    }
+    Ok(Json(out))
 }
 
 /// Compatibility handler for `POST /tasks/{id}:cancel`.
@@ -733,6 +828,7 @@ mod tests {
             store: Arc::new(InMemoryTaskStore::new()),
             base_url: "http://localhost".to_string(),
             cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
+            task_index: Arc::new(Mutex::new(HashSet::new())),
         };
         let state_for_assert = state.clone();
 
@@ -769,5 +865,14 @@ mod tests {
             .await
             .expect("store load should succeed");
         assert!(saved.is_some());
+
+        let Json(metadata) = handle_list_task_metadata::<StreamingFirstExecutor, InMemoryTaskStore>(
+            State(state_for_assert),
+        )
+        .await
+        .expect("metadata should list saved task");
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].id, task.id);
+        assert_eq!(metadata[0].context_id, task.context_id);
     }
 }
