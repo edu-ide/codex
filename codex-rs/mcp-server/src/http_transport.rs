@@ -212,7 +212,7 @@ pub(crate) async fn outgoing_http_interceptor(
     // Also write to stdout when running in dual mode.
     write_stdout: bool,
     // Optional A2A notification broadcast — forwards all notifications.
-    a2a_notif_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    a2a_notif_tx: Option<tokio::sync::broadcast::Sender<serde_json::Value>>,
 ) {
     let mut stdout = if write_stdout {
         Some(tokio::io::stdout())
@@ -244,7 +244,9 @@ pub(crate) async fn outgoing_http_interceptor(
 
             // Forward to A2A broadcast channel if enabled.
             if let Some(ref a2a_tx) = a2a_notif_tx {
-                let _ = a2a_tx.send(json.clone());
+                if let Ok(val) = serde_json::to_value(&msg) {
+                    let _ = a2a_tx.send(val);
+                }
             }
 
             // Dual mode: also write to stdout.

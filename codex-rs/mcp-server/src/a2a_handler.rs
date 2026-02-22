@@ -38,7 +38,7 @@ pub struct CodexA2AExecutor {
         Arc<Mutex<HashMap<String, oneshot::Sender<OutgoingJsonRpcMessage>>>>,
     /// Broadcast sender for outgoing MCP notifications — used to subscribe
     /// and forward intermediate `codex/event` notifications as A2A events.
-    pub notification_tx: tokio::sync::broadcast::Sender<String>,
+    pub notification_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
     /// Per-task cancellation tokens for aborting in-flight MCP calls.
     cancel_tokens: Arc<Mutex<HashMap<String, CancellationToken>>>,
     /// Maps context_id → thread_id for multi-turn conversations.
@@ -49,7 +49,7 @@ impl CodexA2AExecutor {
     pub fn new(
         incoming_tx: mpsc::Sender<crate::IncomingMessage>,
         pending: Arc<Mutex<HashMap<String, oneshot::Sender<OutgoingJsonRpcMessage>>>>,
-        notification_tx: tokio::sync::broadcast::Sender<String>,
+        notification_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
     ) -> Self {
         Self {
             incoming_tx,
@@ -223,14 +223,15 @@ impl AgentExecutor for CodexA2AExecutor {
         let forwarder_context_id = context_id.clone();
         let forwarder_bus = event_bus.clone_sender();
         let forwarder_handle = tokio::spawn(async move {
-            while let Ok(json_str) = notif_rx.recv().await {
+            while let Ok(json_val) = notif_rx.recv().await {
+                let json_str = json_val.to_string();
                 // Status updates (thinking, running commands, etc.)
                 if let Some(update) = parse_codex_notification_to_status(
                     &json_str,
                     &forwarder_task_id,
                     &forwarder_context_id,
                 ) {
-                    forwarder_bus.publish(ExecutionEvent::StatusUpdate(update));
+                    let _ = forwarder_bus.publish(ExecutionEvent::StatusUpdate(update));
                 }
                 // Artifact updates (file patches)
                 if let Some(artifact_event) = parse_codex_notification_to_artifact(
@@ -238,7 +239,7 @@ impl AgentExecutor for CodexA2AExecutor {
                     &forwarder_task_id,
                     &forwarder_context_id,
                 ) {
-                    forwarder_bus.publish(ExecutionEvent::ArtifactUpdate(artifact_event));
+                    let _ = forwarder_bus.publish(ExecutionEvent::ArtifactUpdate(artifact_event));
                 }
             }
         });
@@ -246,8 +247,22 @@ impl AgentExecutor for CodexA2AExecutor {
         // Execute the actual MCP call with cancellation support.
         match self.execute_via_mcp(&task_id, &prompt, &cancel_token).await {
             Ok(result_text) => {
-                let task = completed_task(&task_id, &context_id, &result_text);
-                event_bus.publish(ExecutionEvent::Task(task));
+                let mut task = completed_task(&task_id, &context_id, &result_text);
+                if let Some(ref mut msg) = task.status.message {
+                    msg.metadata = Some(json!({ "coderAgent": { "kind": "text" } }));
+                }
+                let _ = event_bus.publish(ExecutionEvent::Task(task));
+                
+                let _ = event_bus.publish(ExecutionEvent::Message(a2a_rs::types::Message {
+                    message_id: uuid::Uuid::new_v4().to_string(),
+                    context_id: Some(context_id.to_string()),
+                    task_id: Some(task_id.to_string()),
+                    role: a2a_rs::types::Role::Agent,
+                    parts: vec![a2a_rs::types::Part::text(&result_text)],
+                    metadata: Some(json!({ "coderAgent": { "kind": "text" } })),
+                    extensions: vec![],
+                    reference_task_ids: None,
+                }));
             }
             Err(err_msg) if err_msg == "Task canceled" => {
                 // Build a canceled task.
@@ -359,6 +374,63 @@ impl AgentExecutor for CodexA2AExecutor {
                 output_modes: None,
             }],
             icon_url: None,
+        }
+    }
+
+    async fn acp_call(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, A2AError> {
+        let req_obj = match request.as_object() {
+            Some(obj) => obj.clone(),
+            None => return Err(A2AError::invalid_request("Expected JSON object")),
+        };
+        
+        let method = req_obj.get("method").and_then(|v| v.as_str()).unwrap_or("");
+        let msg_id = req_obj.get("id").cloned().unwrap_or(json!("1"));
+
+        match method {
+            "initialize" => {
+                let _ = self.notification_tx.send(json!({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": { "protocolVersion": "0.1.0", "capabilities": {}, "serverInfo": { "name": "codex", "version": "1.0.0" } }
+                }));
+                return Ok(json!({ "status": "ok" }));
+            },
+            "_agent/capabilities" => {
+                let _ = self.notification_tx.send(json!({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": { "skills": [ { "name": "codex", "description": "Codex default coding skill", "isBuiltin": true, "disabled": false } ], "mcps": [] }
+                }));
+                return Ok(json!({ "status": "ok" }));
+            },
+            "_models/list" => {
+                let _ = self.notification_tx.send(json!({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": { "models": [ { "id": "codex", "name": "Codex Default" } ] }
+                }));
+                return Ok(json!({ "status": "ok" }));
+            },
+            "_agent/skill/toggle" | "_agent/skill/create" | "_agent/skill/delete" | "_agent/mcp/toggle" | "_agent/mcp/delete" => {
+                let _ = self.notification_tx.send(json!({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": { "success": true }
+                }));
+                return Ok(json!({ "status": "ok" }));
+            },
+            _ => {
+                let mcp_call: crate::IncomingMessage = match serde_json::from_value(json!(req_obj)) {
+                    Ok(msg) => msg,
+                    Err(e) => return Err(A2AError::parse_error(format!("Invalid JSON-RPC request: {e}"))),
+                };
+                
+                let _ = self.incoming_tx.send(mcp_call).await;
+                return Ok(json!({ "status": "ok" }));
+            }
         }
     }
 }
