@@ -5036,6 +5036,7 @@ async fn built_tools(
         }),
         app_tools,
         turn_context.dynamic_tools.as_slice(),
+        skills_outcome.map(|o| o.skills.as_slice()).unwrap_or(&[]),
     )))
 }
 
@@ -8069,6 +8070,7 @@ mod tests {
             ),
             app_tools,
             turn_context.dynamic_tools.as_slice(),
+            &[],
         );
         let item = ResponseItem::CustomToolCall {
             id: None,

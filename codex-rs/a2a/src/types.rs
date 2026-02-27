@@ -215,6 +215,21 @@ pub struct AgentCapabilities {
     pub push_notifications: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extended_agent_card: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extensions: Vec<AgentExtension>,
+}
+
+/// A declaration of a protocol extension supported by an agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentExtension {
+    pub uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
 }
 
 /// A focused capability of the agent.
@@ -237,6 +252,22 @@ pub struct AgentSkill {
 // Request / Response types
 // ================================================================
 
+/// Push notification configuration (A2A v1.0 spec Section 4.3.1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushNotificationConfig {
+    /// Optional config identifier used to manage multiple webhooks per task.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Webhook URL to POST task updates to.
+    pub url: String,
+    /// Optional authentication token sent in request header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authentication: Option<serde_json::Value>,
+}
+
 /// Configuration for `POST /message:send`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -245,8 +276,11 @@ pub struct SendMessageConfiguration {
     pub accepted_output_modes: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history_length: Option<i32>,
-    #[serde(default)]
-    pub blocking: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking: Option<bool>,
+    /// Push notification config for async webhook delivery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub push_notification_config: Option<PushNotificationConfig>,
 }
 
 /// `POST /message:send` request body.
@@ -266,6 +300,44 @@ pub struct SendMessageRequest {
 pub enum SendMessageResponse {
     Task(Task),
     Message(Message),
+}
+
+/// Params for `tasks/pushNotificationConfig/set`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPushNotificationConfig {
+    pub task_id: String,
+    pub push_notification_config: PushNotificationConfig,
+}
+
+/// Params for `tasks/pushNotificationConfig/get`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTaskPushNotificationConfigParams {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub push_notification_config_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Params for `tasks/pushNotificationConfig/list`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTaskPushNotificationConfigParams {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Params for `tasks/pushNotificationConfig/delete`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteTaskPushNotificationConfigParams {
+    pub id: String,
+    pub push_notification_config_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 // ================================================================

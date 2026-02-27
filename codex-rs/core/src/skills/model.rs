@@ -16,6 +16,8 @@ pub struct SkillMetadata {
     pub permissions: Option<Permissions>,
     pub path: PathBuf,
     pub scope: SkillScope,
+    pub kind: Option<String>,
+    pub agent_card_url: Option<String>,
 }
 
 impl SkillMetadata {

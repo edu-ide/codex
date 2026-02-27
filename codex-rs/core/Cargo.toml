@@ -18,6 +18,7 @@ path = "src/bin/config_schema.rs"
 workspace = true
 
 [dependencies]
+a2a-rs = { workspace = true, features = ["client"] }
 anyhow = { workspace = true }
 arc-swap = "1.8.2"
 async-channel = { workspace = true }

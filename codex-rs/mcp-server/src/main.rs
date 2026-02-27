@@ -16,11 +16,6 @@ struct Cli {
     /// Requires --port to be set.
     #[arg(long)]
     http_only: bool,
-
-    /// Start an A2A server on this port.
-    /// Example: --a2a-port 9200
-    #[arg(long)]
-    a2a_port: Option<u16>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -33,7 +28,6 @@ fn main() -> anyhow::Result<()> {
     let transport = TransportOptions {
         http_port: cli.port,
         http_only: cli.http_only,
-        a2a_port: cli.a2a_port,
     };
 
     arg0_dispatch_or_else(|codex_linux_sandbox_exe| async move {

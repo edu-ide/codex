@@ -18,7 +18,7 @@ use crate::types::*;
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::sse::{Event, Sse},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -29,6 +29,9 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
+
+const HTTP_EXTENSION_HEADER: &str = "a2a-extensions";
+const LEGACY_HTTP_EXTENSION_HEADER: &str = "x-a2a-extensions";
 
 // ============================================================
 // Server state
@@ -43,6 +46,10 @@ pub struct A2AServerState<E: AgentExecutor, S: TaskStore> {
     pub cancel_tokens: Arc<Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
     /// In-memory task index for metadata listing endpoint.
     pub task_index: Arc<Mutex<HashSet<String>>>,
+    /// Per-task push notification configurations.
+    pub push_configs: Arc<Mutex<HashMap<String, Vec<PushNotificationConfig>>>>,
+    /// Active execution event buses keyed by task ID for resubscription.
+    pub event_buses: Arc<Mutex<HashMap<String, EventBus>>>,
     /// Global broadcaster for ACP/HTTP clients.
     pub acp_broadcaster: tokio::sync::broadcast::Sender<Value>,
 }
@@ -55,6 +62,8 @@ impl<E: AgentExecutor, S: TaskStore> Clone for A2AServerState<E, S> {
             base_url: self.base_url.clone(),
             cancel_tokens: Arc::clone(&self.cancel_tokens),
             task_index: Arc::clone(&self.task_index),
+            push_configs: Arc::clone(&self.push_configs),
+            event_buses: Arc::clone(&self.event_buses),
             acp_broadcaster: self.acp_broadcaster.clone(),
         }
     }
@@ -103,21 +112,27 @@ impl<E: AgentExecutor, S: TaskStore> A2AServer<E, S> {
         self
     }
 
-    /// Build the Axum router without starting the server.
-    pub fn router(&self) -> Router {
+    fn make_state(&self) -> A2AServerState<E, S> {
         let base_url = self
             .base_url
             .clone()
             .unwrap_or_else(|| format!("http://{}", self.addr));
 
-        let state = A2AServerState {
+        A2AServerState {
             executor: Arc::clone(&self.executor),
             store: Arc::clone(&self.store),
             base_url,
             cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
             task_index: Arc::new(Mutex::new(HashSet::new())),
+            push_configs: Arc::new(Mutex::new(HashMap::new())),
+            event_buses: Arc::new(Mutex::new(HashMap::new())),
             acp_broadcaster: self.acp_broadcaster.clone().unwrap_or_else(|| tokio::sync::broadcast::channel(256).0),
-        };
+        }
+    }
+
+    /// Build the Axum router without starting the server.
+    pub fn router(&self) -> Router {
+        let state = self.make_state();
 
         Router::new()
             .route("/", post(handle_jsonrpc::<E, S>))
@@ -126,10 +141,34 @@ impl<E: AgentExecutor, S: TaskStore> A2AServer<E, S> {
                 get(handle_agent_card_v03::<E, S>),
             )
             .route("/.well-known/agent.json", get(handle_agent_card::<E, S>))
-            .route("/message:send", post(handle_send_message::<E, S>))
-            .route("/message:stream", post(handle_stream_message::<E, S>))
+            .route("/message:send", post(handle_send_message_http::<E, S>))
+            .route("/message:stream", post(handle_stream_message_http::<E, S>))
             .route("/acp", post(handle_acp_post::<E, S>))
             .route("/acp/stream", get(handle_acp_stream::<E, S>))
+            .route(
+                "/tasks/{id}",
+                get(handle_get_task::<E, S>).post(handle_cancel_task_compat::<E, S>),
+            )
+            .route("/tasks/metadata", get(handle_list_task_metadata::<E, S>))
+            .route("/tasks/{id}/cancel", post(handle_cancel_task::<E, S>))
+            .with_state(state)
+    }
+
+    /// Build the router WITHOUT /acp and /acp/stream routes.
+    /// Use this when an external ACP handler (e.g. codex-acp subprocess bridge)
+    /// will be merged separately.
+    pub fn router_without_acp(&self) -> Router {
+        let state = self.make_state();
+
+        Router::new()
+            .route("/", post(handle_jsonrpc::<E, S>))
+            .route(
+                "/.well-known/agent-card.json",
+                get(handle_agent_card_v03::<E, S>),
+            )
+            .route("/.well-known/agent.json", get(handle_agent_card::<E, S>))
+            .route("/message:send", post(handle_send_message_http::<E, S>))
+            .route("/message:stream", post(handle_stream_message_http::<E, S>))
             .route(
                 "/tasks/{id}",
                 get(handle_get_task::<E, S>).post(handle_cancel_task_compat::<E, S>),
@@ -182,7 +221,8 @@ async fn handle_agent_card_v03<E: AgentExecutor, S: TaskStore>(
         "capabilities": {
             "streaming": card.capabilities.streaming.unwrap_or(false),
             "pushNotifications": card.capabilities.push_notifications.unwrap_or(false),
-            "stateTransitionHistory": false
+            "stateTransitionHistory": false,
+            "extensions": card.capabilities.extensions
         },
         "defaultInputModes": card.default_input_modes,
         "defaultOutputModes": card.default_output_modes,
@@ -214,6 +254,27 @@ struct JsonRpcTaskIdParams {
     id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonRpcTaskPushNotificationConfigSetParams {
+    task_id: String,
+    push_notification_config: PushNotificationConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum JsonRpcTaskPushNotificationConfigGetParams {
+    TaskId(JsonRpcTaskIdParams),
+    Config(GetTaskPushNotificationConfigParams),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonRpcTaskPushNotificationConfigDeleteParams {
+    id: String,
+    push_notification_config_id: String,
+}
+
 fn jsonrpc_null_id() -> Value {
     Value::Null
 }
@@ -239,6 +300,92 @@ fn jsonrpc_err(id: Value, err: A2AError, status: StatusCode) -> Response {
         .into_response()
 }
 
+fn parse_requested_extensions(headers: &HeaderMap) -> Vec<String> {
+    let mut requested = Vec::new();
+    let mut seen = HashSet::new();
+
+    for name in [HTTP_EXTENSION_HEADER, LEGACY_HTTP_EXTENSION_HEADER] {
+        for value in headers.get_all(name) {
+            let Ok(value) = value.to_str() else {
+                continue;
+            };
+            for candidate in value.split(',') {
+                let uri = candidate.trim();
+                if uri.is_empty() {
+                    continue;
+                }
+                if seen.insert(uri.to_string()) {
+                    requested.push(uri.to_string());
+                }
+            }
+        }
+    }
+
+    requested
+}
+
+fn resolve_activated_extensions<E: AgentExecutor, S: TaskStore>(
+    state: &A2AServerState<E, S>,
+    headers: &HeaderMap,
+    fallback_request_extensions: Option<&[String]>,
+) -> Vec<String> {
+    let mut requested = parse_requested_extensions(headers);
+    if requested.is_empty() {
+        if let Some(fallback_extensions) = fallback_request_extensions {
+            for extension in fallback_extensions {
+                let uri = extension.trim();
+                if !uri.is_empty() {
+                    requested.push(uri.to_string());
+                }
+            }
+        }
+    }
+    if requested.is_empty() {
+        return Vec::new();
+    }
+
+    let supported: HashSet<String> = state
+        .executor
+        .agent_card(&state.base_url)
+        .capabilities
+        .extensions
+        .into_iter()
+        .map(|extension| extension.uri)
+        .collect();
+    if supported.is_empty() {
+        return Vec::new();
+    }
+
+    let mut activated = Vec::new();
+    let mut seen = HashSet::new();
+    for extension in requested {
+        if supported.contains(&extension) && seen.insert(extension.clone()) {
+            activated.push(extension);
+        }
+    }
+    activated
+}
+
+fn with_activated_extensions(mut response: Response, activated_extensions: &[String]) -> Response {
+    if activated_extensions.is_empty() {
+        return response;
+    }
+
+    let header_value = activated_extensions.join(",");
+    let Ok(value) = HeaderValue::from_str(&header_value) else {
+        return response;
+    };
+    response.headers_mut().insert(
+        HeaderName::from_static(HTTP_EXTENSION_HEADER),
+        value.clone(),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(LEGACY_HTTP_EXTENSION_HEADER),
+        value,
+    );
+    response
+}
+
 fn jsonrpc_sse_single(
     id: Value,
     result: Value,
@@ -254,9 +401,223 @@ fn jsonrpc_sse_single(
     ))
 }
 
+fn is_terminal_state(state: TaskState) -> bool {
+    matches!(
+        state,
+        TaskState::Completed
+            | TaskState::Failed
+            | TaskState::Canceled
+            | TaskState::Rejected
+            | TaskState::InputRequired
+    )
+}
+
+fn supports_push_notifications<E: AgentExecutor, S: TaskStore>(state: &A2AServerState<E, S>) -> bool {
+    state
+        .executor
+        .agent_card(&state.base_url)
+        .capabilities
+        .push_notifications
+        .unwrap_or(false)
+}
+
+fn event_to_stream_response_payload(event: &ExecutionEvent) -> Value {
+    match event {
+        ExecutionEvent::Task(task) => json!({ "task": task }),
+        ExecutionEvent::Message(message) => json!({ "message": message }),
+        ExecutionEvent::StatusUpdate(update) => json!({ "statusUpdate": update }),
+        ExecutionEvent::ArtifactUpdate(update) => json!({ "artifactUpdate": update }),
+    }
+}
+
+fn event_to_json_value(event: ExecutionEvent) -> Value {
+    match event {
+        ExecutionEvent::Task(task) => json!(task),
+        ExecutionEvent::Message(msg) => json!(msg),
+        ExecutionEvent::StatusUpdate(update) => json!(update),
+        ExecutionEvent::ArtifactUpdate(update) => json!(update),
+    }
+}
+
+async fn send_push_notification(
+    client: &reqwest::Client,
+    config: &PushNotificationConfig,
+    event: &ExecutionEvent,
+) -> Result<(), reqwest::Error> {
+    let mut req = client
+        .post(&config.url)
+        .header("Content-Type", "application/json");
+    if let Some(token) = &config.token {
+        req = req.header("X-A2A-Notification-Token", token);
+    }
+    let payload = event_to_stream_response_payload(event);
+    let _ = req.json(&payload).send().await?.error_for_status()?;
+    Ok(())
+}
+
+fn spawn_push_notification_forwarder<E: AgentExecutor, S: TaskStore>(
+    state: &A2AServerState<E, S>,
+    task_id: &str,
+    mut rx: tokio::sync::broadcast::Receiver<ExecutionEvent>,
+) {
+    let push_configs = Arc::clone(&state.push_configs);
+    let task_id = task_id.to_string();
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let configs = {
+                        let guard = push_configs.lock().await;
+                        guard.get(&task_id).cloned().unwrap_or_default()
+                    };
+                    for config in configs {
+                        if let Err(err) = send_push_notification(&client, &config, &event).await {
+                            tracing::warn!(
+                                "failed to send push notification for task {} to {}: {}",
+                                task_id,
+                                config.url,
+                                err
+                            );
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+async fn upsert_push_config<E: AgentExecutor, S: TaskStore>(
+    state: &A2AServerState<E, S>,
+    params: TaskPushNotificationConfig,
+) -> Result<TaskPushNotificationConfig, A2AError> {
+    if !supports_push_notifications(state) {
+        return Err(A2AError::push_notification_not_supported());
+    }
+
+    let task_id = params.task_id.clone();
+    if state.store.load(&task_id).await?.is_none() {
+        return Err(A2AError::task_not_found(&task_id));
+    }
+
+    let mut config = params.push_notification_config.clone();
+    if config.id.as_ref().map_or(true, |id| id.is_empty()) {
+        config.id = Some(task_id.clone());
+    }
+    let config_id = config.id.clone().unwrap_or_else(|| task_id.clone());
+
+    {
+        let mut guard = state.push_configs.lock().await;
+        let entries = guard.entry(task_id.clone()).or_default();
+        if let Some(existing_idx) = entries
+            .iter()
+            .position(|existing| existing.id.as_deref() == Some(config_id.as_str()))
+        {
+            entries[existing_idx] = config.clone();
+        } else {
+            entries.push(config.clone());
+        }
+    }
+
+    Ok(TaskPushNotificationConfig {
+        task_id,
+        push_notification_config: config,
+    })
+}
+
+async fn get_push_config<E: AgentExecutor, S: TaskStore>(
+    state: &A2AServerState<E, S>,
+    params: GetTaskPushNotificationConfigParams,
+) -> Result<TaskPushNotificationConfig, A2AError> {
+    if !supports_push_notifications(state) {
+        return Err(A2AError::push_notification_not_supported());
+    }
+
+    let task_id = params.id.clone();
+    if state.store.load(&task_id).await?.is_none() {
+        return Err(A2AError::task_not_found(&task_id));
+    }
+
+    let config_id = params
+        .push_notification_config_id
+        .unwrap_or_else(|| task_id.clone());
+    let maybe = {
+        let guard = state.push_configs.lock().await;
+        guard
+            .get(&task_id)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.id.as_deref() == Some(config_id.as_str()))
+            })
+            .cloned()
+    };
+
+    match maybe {
+        Some(push_notification_config) => Ok(TaskPushNotificationConfig {
+            task_id,
+            push_notification_config,
+        }),
+        None => Err(A2AError::internal_error(format!(
+            "Push notification config with id '{config_id}' not found for task {task_id}"
+        ))),
+    }
+}
+
+async fn list_push_configs<E: AgentExecutor, S: TaskStore>(
+    state: &A2AServerState<E, S>,
+    task_id: String,
+) -> Result<Vec<TaskPushNotificationConfig>, A2AError> {
+    if !supports_push_notifications(state) {
+        return Err(A2AError::push_notification_not_supported());
+    }
+    if state.store.load(&task_id).await?.is_none() {
+        return Err(A2AError::task_not_found(&task_id));
+    }
+
+    let configs = {
+        let guard = state.push_configs.lock().await;
+        guard.get(&task_id).cloned().unwrap_or_default()
+    };
+    Ok(configs
+        .into_iter()
+        .map(|push_notification_config| TaskPushNotificationConfig {
+            task_id: task_id.clone(),
+            push_notification_config,
+        })
+        .collect())
+}
+
+async fn delete_push_config<E: AgentExecutor, S: TaskStore>(
+    state: &A2AServerState<E, S>,
+    task_id: String,
+    push_notification_config_id: String,
+) -> Result<(), A2AError> {
+    if !supports_push_notifications(state) {
+        return Err(A2AError::push_notification_not_supported());
+    }
+    if state.store.load(&task_id).await?.is_none() {
+        return Err(A2AError::task_not_found(&task_id));
+    }
+
+    let mut guard = state.push_configs.lock().await;
+    if let Some(entries) = guard.get_mut(&task_id) {
+        entries.retain(|entry| {
+            entry.id.as_deref() != Some(push_notification_config_id.as_str())
+        });
+        if entries.is_empty() {
+            guard.remove(&task_id);
+        }
+    }
+    Ok(())
+}
+
 /// `POST /` JSON-RPC compatibility endpoint for A2A 0.3 clients.
 async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
     State(state): State<A2AServerState<E, S>>,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
     let fallback_id = body.get("id").cloned().unwrap_or(Value::Null);
@@ -291,9 +652,16 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                     );
                 }
             };
+            let activated_extensions =
+                resolve_activated_extensions(&state, &headers, Some(&params.message.extensions));
             match handle_send_message::<E, S>(State(state), Json(params)).await {
-                Ok(Json(result)) => jsonrpc_ok(envelope.id, result),
-                Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
+                Ok(Json(result)) => {
+                    with_activated_extensions(jsonrpc_ok(envelope.id, result), &activated_extensions)
+                }
+                Err(err) => with_activated_extensions(
+                    jsonrpc_err(envelope.id, err, StatusCode::OK),
+                    &activated_extensions,
+                ),
             }
         }
         "tasks/get" => {
@@ -339,9 +707,14 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                     );
                 }
             };
-            handle_jsonrpc_stream_message::<E, S>(state, params, envelope.id)
-                .await
-                .into_response()
+            let activated_extensions =
+                resolve_activated_extensions(&state, &headers, Some(&params.message.extensions));
+            with_activated_extensions(
+                handle_jsonrpc_stream_message::<E, S>(state, params, envelope.id)
+                    .await
+                    .into_response(),
+                &activated_extensions,
+            )
         }
         "tasks/resubscribe" => {
             let params: JsonRpcTaskIdParams = match serde_json::from_value(envelope.params) {
@@ -354,27 +727,135 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                     );
                 }
             };
-            match state.store.load(&params.id).await {
-                Ok(Some(task)) => jsonrpc_sse_single(envelope.id, json!(task)).into_response(),
-                Ok(None) => jsonrpc_err(
-                    envelope.id,
-                    A2AError::task_not_found(&params.id),
-                    StatusCode::NOT_FOUND,
-                ),
-                Err(err) => jsonrpc_err(envelope.id, err, StatusCode::INTERNAL_SERVER_ERROR),
+            let request_id = envelope.id.clone();
+            match handle_jsonrpc_resubscribe_task::<E, S>(state, params.id, request_id.clone()).await {
+                Ok(response) => response,
+                Err(err) => jsonrpc_err(request_id, err, StatusCode::OK),
             }
         }
-        "agent/getAuthenticatedExtendedCard" => jsonrpc_err(
-            envelope.id,
-            A2AError::unsupported_operation("agent/getAuthenticatedExtendedCard"),
-            StatusCode::NOT_IMPLEMENTED,
-        ),
+        "tasks/pushNotificationConfig/set" => {
+            let params: JsonRpcTaskPushNotificationConfigSetParams =
+                match serde_json::from_value(envelope.params) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return jsonrpc_err(
+                            envelope.id,
+                            A2AError::invalid_params(format!(
+                                "Invalid tasks/pushNotificationConfig/set params: {e}"
+                            )),
+                            StatusCode::BAD_REQUEST,
+                        );
+                    }
+                };
+            let typed = TaskPushNotificationConfig {
+                task_id: params.task_id,
+                push_notification_config: params.push_notification_config,
+            };
+            match upsert_push_config(&state, typed).await {
+                Ok(config) => jsonrpc_ok(envelope.id, config),
+                Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
+            }
+        }
+        "tasks/pushNotificationConfig/get" => {
+            let params: JsonRpcTaskPushNotificationConfigGetParams =
+                match serde_json::from_value(envelope.params) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return jsonrpc_err(
+                            envelope.id,
+                            A2AError::invalid_params(format!(
+                                "Invalid tasks/pushNotificationConfig/get params: {e}"
+                            )),
+                            StatusCode::BAD_REQUEST,
+                        );
+                    }
+                };
+            let typed = match params {
+                JsonRpcTaskPushNotificationConfigGetParams::TaskId(task) => {
+                    GetTaskPushNotificationConfigParams {
+                        id: task.id,
+                        push_notification_config_id: None,
+                        metadata: None,
+                    }
+                }
+                JsonRpcTaskPushNotificationConfigGetParams::Config(config) => config,
+            };
+            match get_push_config(&state, typed).await {
+                Ok(config) => jsonrpc_ok(envelope.id, config),
+                Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
+            }
+        }
+        "tasks/pushNotificationConfig/list" => {
+            let params: ListTaskPushNotificationConfigParams =
+                match serde_json::from_value(envelope.params) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return jsonrpc_err(
+                            envelope.id,
+                            A2AError::invalid_params(format!(
+                                "Invalid tasks/pushNotificationConfig/list params: {e}"
+                            )),
+                            StatusCode::BAD_REQUEST,
+                        );
+                    }
+                };
+            match list_push_configs(&state, params.id).await {
+                Ok(configs) => jsonrpc_ok(envelope.id, configs),
+                Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
+            }
+        }
+        "tasks/pushNotificationConfig/delete" => {
+            let params: JsonRpcTaskPushNotificationConfigDeleteParams =
+                match serde_json::from_value(envelope.params) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return jsonrpc_err(
+                            envelope.id,
+                            A2AError::invalid_params(format!(
+                                "Invalid tasks/pushNotificationConfig/delete params: {e}"
+                            )),
+                            StatusCode::BAD_REQUEST,
+                        );
+                    }
+                };
+            match delete_push_config(&state, params.id, params.push_notification_config_id).await {
+                Ok(()) => jsonrpc_ok(envelope.id, Value::Null),
+                Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
+            }
+        }
+        "agent/getAuthenticatedExtendedCard" => {
+            let card = state.executor.agent_card(&state.base_url);
+            if card.capabilities.extended_agent_card.unwrap_or(false) {
+                jsonrpc_ok(envelope.id, card)
+            } else {
+                jsonrpc_err(
+                    envelope.id,
+                    A2AError::unsupported_operation("agent/getAuthenticatedExtendedCard"),
+                    StatusCode::NOT_IMPLEMENTED,
+                )
+            }
+        }
         method => jsonrpc_err(
             envelope.id,
             A2AError::method_not_found(method),
             StatusCode::NOT_FOUND,
         ),
     }
+}
+
+/// `POST /message:send` with extension negotiation headers.
+async fn handle_send_message_http<E: AgentExecutor, S: TaskStore>(
+    State(state): State<A2AServerState<E, S>>,
+    headers: HeaderMap,
+    Json(request): Json<SendMessageRequest>,
+) -> Result<Response, A2AError> {
+    let activated_extensions =
+        resolve_activated_extensions(&state, &headers, Some(&request.message.extensions));
+    let Json(result) = handle_send_message::<E, S>(State(state), Json(request)).await?;
+    Ok(with_activated_extensions(
+        Json(result).into_response(),
+        &activated_extensions,
+    ))
 }
 
 /// `POST /message:send`
@@ -388,15 +869,44 @@ async fn handle_send_message<E: AgentExecutor, S: TaskStore>(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let task_id = uuid::Uuid::new_v4().to_string();
-    let event_bus = EventBus::new(16);
+    let task_id = request
+        .message
+        .task_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let blocking = request
+        .configuration
+        .as_ref()
+        .and_then(|cfg| cfg.blocking)
+        .unwrap_or(true);
+    let incoming_message = request.message.clone();
+    let request_metadata = request.metadata.clone();
+    let event_bus = EventBus::new(64);
     let mut rx = event_bus.subscribe();
+    let push_rx = event_bus.subscribe();
 
     let context = RequestContext {
         request,
         task_id: Some(task_id.clone()),
-        context_id,
+        context_id: context_id.clone(),
     };
+
+    // Save inline push notification config if provided.
+    if let Some(config) = context
+        .request
+        .configuration
+        .as_ref()
+        .and_then(|cfg| cfg.push_notification_config.clone())
+    {
+        let _ = upsert_push_config(
+            &state,
+            TaskPushNotificationConfig {
+                task_id: task_id.clone(),
+                push_notification_config: config,
+            },
+        )
+        .await;
+    }
 
     // Register cancel token
     let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(false);
@@ -405,18 +915,69 @@ async fn handle_send_message<E: AgentExecutor, S: TaskStore>(
         .lock()
         .await
         .insert(task_id.clone(), cancel_tx);
+    state
+        .event_buses
+        .lock()
+        .await
+        .insert(task_id.clone(), event_bus.clone_sender());
+
+    if supports_push_notifications(&state) {
+        spawn_push_notification_forwarder(&state, &task_id, push_rx);
+    }
 
     // Execute in background.
     let executor = Arc::clone(&state.executor);
     let cancel_tokens = Arc::clone(&state.cancel_tokens);
+    let event_buses = Arc::clone(&state.event_buses);
     let task_id_clone = task_id.clone();
+    let task_id_for_cancel = task_id.clone();
     tokio::spawn(async move {
         if let Err(e) = executor.execute(context, &event_bus).await {
             tracing::error!("AgentExecutor error: {e}");
         }
         // Cleanup cancel token
         cancel_tokens.lock().await.remove(&task_id_clone);
+        event_buses.lock().await.remove(&task_id_for_cancel);
     });
+
+    // Non-blocking mode: return immediately with a submitted task,
+    // while persisting terminal updates in the background.
+    if !blocking {
+        let submitted_task = Task {
+            id: task_id.clone(),
+            context_id: context_id.clone(),
+            status: TaskStatus {
+                state: TaskState::Submitted,
+                message: None,
+                timestamp: Some(now_iso8601()),
+            },
+            artifacts: vec![],
+            history: vec![incoming_message],
+            metadata: request_metadata,
+        };
+        state.store.save(submitted_task.clone()).await?;
+        state.task_index.lock().await.insert(submitted_task.id.clone());
+
+        let store = Arc::clone(&state.store);
+        let task_index = Arc::clone(&state.task_index);
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(ExecutionEvent::Task(task)) => {
+                        if let Err(err) = store.save(task.clone()).await {
+                            tracing::warn!("failed to persist task {}: {}", task.id, err);
+                        } else {
+                            task_index.lock().await.insert(task.id.clone());
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+        return Ok(Json(SendMessageResponse::Task(submitted_task)));
+    }
 
     // Non-streaming mode still may receive intermediate streaming events first.
     // Keep consuming until a terminal Task or Message is received.
@@ -446,6 +1007,18 @@ async fn handle_send_message<E: AgentExecutor, S: TaskStore>(
     }
 }
 
+/// `POST /message:stream` with extension negotiation headers.
+async fn handle_stream_message_http<E: AgentExecutor, S: TaskStore>(
+    State(state): State<A2AServerState<E, S>>,
+    headers: HeaderMap,
+    Json(request): Json<SendMessageRequest>,
+) -> Response {
+    let activated_extensions =
+        resolve_activated_extensions(&state, &headers, Some(&request.message.extensions));
+    let sse = handle_stream_message::<E, S>(State(state), Json(request)).await;
+    with_activated_extensions(sse.into_response(), &activated_extensions)
+}
+
 /// `POST /message:stream` — SSE streaming of task events.
 async fn handle_stream_message<E: AgentExecutor, S: TaskStore>(
     State(state): State<A2AServerState<E, S>>,
@@ -457,15 +1030,36 @@ async fn handle_stream_message<E: AgentExecutor, S: TaskStore>(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let task_id = uuid::Uuid::new_v4().to_string();
+    let task_id = request
+        .message
+        .task_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let event_bus = EventBus::new(64);
     let rx = event_bus.subscribe();
+    let push_rx = event_bus.subscribe();
 
     let context = RequestContext {
         request,
         task_id: Some(task_id.clone()),
         context_id,
     };
+
+    if let Some(config) = context
+        .request
+        .configuration
+        .as_ref()
+        .and_then(|cfg| cfg.push_notification_config.clone())
+    {
+        let _ = upsert_push_config(
+            &state,
+            TaskPushNotificationConfig {
+                task_id: task_id.clone(),
+                push_notification_config: config,
+            },
+        )
+        .await;
+    }
 
     // Register cancel token
     let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(false);
@@ -474,17 +1068,29 @@ async fn handle_stream_message<E: AgentExecutor, S: TaskStore>(
         .lock()
         .await
         .insert(task_id.clone(), cancel_tx);
+    state
+        .event_buses
+        .lock()
+        .await
+        .insert(task_id.clone(), event_bus.clone_sender());
+
+    if supports_push_notifications(&state) {
+        spawn_push_notification_forwarder(&state, &task_id, push_rx);
+    }
 
     // Execute in background.
     let executor = Arc::clone(&state.executor);
     let _store = Arc::clone(&state.store);
     let cancel_tokens = Arc::clone(&state.cancel_tokens);
+    let event_buses = Arc::clone(&state.event_buses);
     let task_id_clone = task_id.clone();
+    let task_id_for_events = task_id.clone();
     tokio::spawn(async move {
         if let Err(e) = executor.execute(context, &event_bus).await {
             tracing::error!("AgentExecutor error: {e}");
         }
         cancel_tokens.lock().await.remove(&task_id_clone);
+        event_buses.lock().await.remove(&task_id_for_events);
     });
 
     // Convert broadcast receiver into SSE stream.
@@ -551,15 +1157,36 @@ async fn handle_jsonrpc_stream_message<E: AgentExecutor, S: TaskStore>(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let task_id = uuid::Uuid::new_v4().to_string();
+    let task_id = request
+        .message
+        .task_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let event_bus = EventBus::new(64);
     let rx = event_bus.subscribe();
+    let push_rx = event_bus.subscribe();
 
     let context = RequestContext {
         request,
         task_id: Some(task_id.clone()),
         context_id,
     };
+
+    if let Some(config) = context
+        .request
+        .configuration
+        .as_ref()
+        .and_then(|cfg| cfg.push_notification_config.clone())
+    {
+        let _ = upsert_push_config(
+            &state,
+            TaskPushNotificationConfig {
+                task_id: task_id.clone(),
+                push_notification_config: config,
+            },
+        )
+        .await;
+    }
 
     // Register cancel token
     let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(false);
@@ -568,16 +1195,28 @@ async fn handle_jsonrpc_stream_message<E: AgentExecutor, S: TaskStore>(
         .lock()
         .await
         .insert(task_id.clone(), cancel_tx);
+    state
+        .event_buses
+        .lock()
+        .await
+        .insert(task_id.clone(), event_bus.clone_sender());
+
+    if supports_push_notifications(&state) {
+        spawn_push_notification_forwarder(&state, &task_id, push_rx);
+    }
 
     // Execute in background.
     let executor = Arc::clone(&state.executor);
     let cancel_tokens = Arc::clone(&state.cancel_tokens);
+    let event_buses = Arc::clone(&state.event_buses);
     let task_id_clone = task_id.clone();
+    let task_id_for_events = task_id.clone();
     tokio::spawn(async move {
         if let Err(e) = executor.execute(context, &event_bus).await {
             tracing::error!("AgentExecutor error: {e}");
         }
         cancel_tokens.lock().await.remove(&task_id_clone);
+        event_buses.lock().await.remove(&task_id_for_events);
     });
 
     let store = Arc::clone(&state.store);
@@ -603,12 +1242,7 @@ async fn handle_jsonrpc_stream_message<E: AgentExecutor, S: TaskStore>(
                         }
                     });
                 }
-                let result_value = match event {
-                    ExecutionEvent::Task(task) => json!(task),
-                    ExecutionEvent::Message(msg) => json!(msg),
-                    ExecutionEvent::StatusUpdate(update) => json!(update),
-                    ExecutionEvent::ArtifactUpdate(update) => json!(update),
-                };
+                let result_value = event_to_json_value(event);
                 let payload = json!({
                     "jsonrpc": "2.0",
                     "id": request_id,
@@ -622,6 +1256,59 @@ async fn handle_jsonrpc_stream_message<E: AgentExecutor, S: TaskStore>(
     });
 
     Sse::new(stream)
+}
+
+async fn handle_jsonrpc_resubscribe_task<E: AgentExecutor, S: TaskStore>(
+    state: A2AServerState<E, S>,
+    task_id: String,
+    request_id: Value,
+) -> Result<Response, A2AError> {
+    let task = state
+        .store
+        .load(&task_id)
+        .await?
+        .ok_or_else(|| A2AError::task_not_found(&task_id))?;
+
+    let first_payload = json!({
+        "jsonrpc": "2.0",
+        "id": request_id.clone(),
+        "result": task
+    })
+    .to_string();
+    let initial = stream::once(async move {
+        Ok::<Event, Infallible>(Event::default().data(first_payload))
+    });
+
+    if is_terminal_state(task.status.state) {
+        return Ok(Sse::new(initial).into_response());
+    }
+
+    let maybe_bus = {
+        let guard = state.event_buses.lock().await;
+        guard.get(&task_id).map(|bus| bus.clone_sender())
+    };
+
+    if let Some(event_bus) = maybe_bus {
+        let stream_request_id = request_id.clone();
+        let stream = BroadcastStream::new(event_bus.subscribe()).filter_map(move |result| {
+            let request_id = stream_request_id.clone();
+            match result {
+                Ok(event) => {
+                    let payload = json!({
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": event_to_json_value(event),
+                    })
+                    .to_string();
+                    Some(Ok(Event::default().data(payload)))
+                }
+                Err(_) => None,
+            }
+        });
+        Ok(Sse::new(initial.chain(stream)).into_response())
+    } else {
+        Ok(Sse::new(initial).into_response())
+    }
 }
 
 /// `POST /acp`
@@ -736,7 +1423,13 @@ async fn cancel_task_by_id<E: AgentExecutor, S: TaskStore>(
     }
 
     // Also call executor cancel for cleanup.
-    let event_bus = EventBus::new(16);
+    let event_bus = {
+        let guard = state.event_buses.lock().await;
+        guard
+            .get(task_id)
+            .map(|bus| bus.clone_sender())
+            .unwrap_or_else(|| EventBus::new(16))
+    };
     let _ = state.executor.cancel(task_id, &event_bus).await;
 
     match state.store.load(&task_id).await? {
@@ -812,6 +1505,7 @@ mod tests {
                     streaming: Some(true),
                     push_notifications: Some(false),
                     extended_agent_card: None,
+                    extensions: vec![],
                 },
                 default_input_modes: vec!["text/plain".to_string()],
                 default_output_modes: vec!["text/plain".to_string()],
@@ -829,6 +1523,9 @@ mod tests {
             base_url: "http://localhost".to_string(),
             cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
             task_index: Arc::new(Mutex::new(HashSet::new())),
+            push_configs: Arc::new(Mutex::new(HashMap::new())),
+            event_buses: Arc::new(Mutex::new(HashMap::new())),
+            acp_broadcaster: tokio::sync::broadcast::channel(16).0,
         };
         let state_for_assert = state.clone();
 

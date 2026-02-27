@@ -30,7 +30,6 @@ pub(crate) mod message_processor;
 mod outgoing_message;
 mod patch_approval;
 pub mod http_transport;
-pub mod a2a_handler;
 
 use crate::message_processor::MessageProcessor;
 use crate::outgoing_message::OutgoingMessage;
@@ -57,8 +56,6 @@ pub struct TransportOptions {
     /// If set, start an MCP HTTP server on this port in addition to (or
     /// instead of) stdin/stdout.
     pub http_port: Option<u16>,
-    /// If set, start an A2A server on this port.
-    pub a2a_port: Option<u16>,
     /// When true, disable the stdin/stdout transport entirely (HTTP-only mode).
     pub http_only: bool,
 }
@@ -128,39 +125,8 @@ pub async fn run_main_with_transport(
         None
     };
 
-    // Shared pending map: routes MCP responses to HTTP and A2A requestors.
-    // Both A2A executor and HTTP handlers register oneshot channels here
-    // using unique request IDs (A2A prefixes with "a2a-").
+    // Shared pending map: routes MCP responses to HTTP requestors.
     let shared_pending: PendingMap = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
-
-    // --- A2A server (optional) ---
-    let a2a_handle = if let Some(a2a_port) = transport.a2a_port {
-        // Broadcast channel for forwarding MCP notifications to A2A event bus.
-        let (a2a_notif_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
-
-        let handler = a2a_handler::CodexA2AExecutor::new(
-            incoming_tx.clone(),
-            shared_pending.clone(),
-            a2a_notif_tx.clone(),
-        );
-
-        let addr = format!("0.0.0.0:{a2a_port}");
-        info!("A2A server listening on http://{addr}/");
-
-        let a2a_notif_tx_server = a2a_notif_tx.clone();
-        Some((tokio::spawn(async move {
-            if let Err(e) = a2a_rs::A2AServer::new(handler, a2a_rs::InMemoryTaskStore::new())
-                .bind(&addr)
-                .with_acp_broadcaster(a2a_notif_tx_server)
-                .run()
-                .await
-            {
-                error!("A2A server error: {e}");
-            }
-        }), a2a_notif_tx))
-    } else {
-        None
-    };
 
     // --- HTTP server (optional) ---
     let mut outgoing_rx = Some(outgoing_rx);
@@ -175,17 +141,15 @@ pub async fn run_main_with_transport(
 
         let router = http_transport::build_router(state);
 
-        // Start the outgoing interceptor that routes responses to HTTP/A2A
+        // Start the outgoing interceptor that routes responses to HTTP
         // handlers and/or stdout.
         let write_stdout = !transport.http_only;
-        let a2a_notif_tx_for_http = a2a_handle.as_ref().map(|(_, tx)| tx.clone());
         let interceptor_handle = tokio::spawn(
             http_transport::outgoing_http_interceptor(
                 outgoing_rx.take().expect("outgoing_rx already taken"),
                 shared_pending.clone(),
                 sse_tx,
                 write_stdout,
-                a2a_notif_tx_for_http,
             ),
         );
 
@@ -213,7 +177,6 @@ pub async fn run_main_with_transport(
     };
 
     // --- Stdout writer (when no HTTP or dual mode without interceptor) ---
-    let a2a_notif_tx_for_stdout = a2a_handle.as_ref().map(|(_, tx)| tx.clone());
     let stdout_pending = shared_pending.clone();
     let stdout_handle = if let Some(mut outgoing_rx) = outgoing_rx.take() {
         Some(tokio::spawn(async move {
@@ -236,12 +199,6 @@ pub async fn run_main_with_transport(
 
                 match serde_json::to_string(&msg) {
                     Ok(json) => {
-                        // Forward notifications to A2A broadcast channel.
-                        if let Some(ref a2a_tx) = a2a_notif_tx_for_stdout {
-                            if let Ok(val) = serde_json::to_value(&msg) {
-                                let _ = a2a_tx.send(val);
-                            }
-                        }
                         if !routed {
                             if let Err(e) = stdout.write_all(json.as_bytes()).await {
                                 error!("Failed to write to stdout: {e}");
@@ -293,9 +250,6 @@ pub async fn run_main_with_transport(
     }
     if let Some((server_h, interceptor_h)) = http_handle {
         let _ = tokio::join!(server_h, interceptor_h);
-    }
-    if let Some((h, _)) = a2a_handle {
-        let _ = h.await;
     }
 
     Ok(())

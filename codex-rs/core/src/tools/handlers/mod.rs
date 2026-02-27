@@ -1,4 +1,5 @@
 pub mod apply_patch;
+pub mod remote_agent;
 mod dynamic;
 mod grep_files;
 mod js_repl;
@@ -20,6 +21,7 @@ use serde::Deserialize;
 
 use crate::function_tool::FunctionCallError;
 pub use apply_patch::ApplyPatchHandler;
+pub use remote_agent::RemoteAgentHandler;
 pub use dynamic::DynamicToolHandler;
 pub use grep_files::GrepFilesHandler;
 pub use js_repl::JsReplHandler;
