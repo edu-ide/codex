@@ -1355,6 +1355,7 @@ impl JsReplManager {
             ),
             None,
             exec.turn.dynamic_tools.as_slice(),
+            &[],
         );
 
         let payload =

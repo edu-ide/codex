@@ -43,8 +43,9 @@ impl ToolRouter {
         mcp_tools: Option<HashMap<String, Tool>>,
         app_tools: Option<HashMap<String, ToolInfo>>,
         dynamic_tools: &[DynamicToolSpec],
+        remote_agents: &[crate::skills::SkillMetadata],
     ) -> Self {
-        let builder = build_specs(config, mcp_tools, app_tools, dynamic_tools);
+        let builder = build_specs(config, mcp_tools, app_tools, dynamic_tools, remote_agents);
         let (specs, registry) = builder.build();
 
         Self { registry, specs }

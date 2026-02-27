@@ -29,7 +29,33 @@ use crate::error::A2AError;
 use crate::types::*;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+const HTTP_EXTENSION_HEADER: &str = "A2A-Extensions";
+const LEGACY_HTTP_EXTENSION_HEADER: &str = "X-A2A-Extensions";
+
+fn extension_header_value(extensions: &[String]) -> Option<String> {
+    if extensions.is_empty() {
+        return None;
+    }
+    let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
+    for extension in extensions {
+        let uri = extension.trim();
+        if uri.is_empty() {
+            continue;
+        }
+        if seen.insert(uri.to_string()) {
+            normalized.push(uri.to_string());
+        }
+    }
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.join(","))
+    }
+}
 
 // ============================================================
 // JSON-RPC envelope types (v0.3)
@@ -302,7 +328,9 @@ impl A2AClient {
         &self,
         request: SendMessageRequest,
     ) -> Result<SendMessageResponse, ClientError> {
-        self.rpc_call("message/send", request).await
+        let requested_extensions = request.message.extensions.clone();
+        self.rpc_call_with_extensions("message/send", request, &requested_extensions)
+            .await
     }
 
     /// Send a message and receive streaming SSE events.
@@ -313,27 +341,41 @@ impl A2AClient {
         &self,
         request: SendMessageRequest,
     ) -> Result<tokio::sync::mpsc::Receiver<Result<StreamEvent, ClientError>>, ClientError> {
+        let requested_extensions = request.message.extensions.clone();
+        self.stream_rpc_call("message/stream", request, &requested_extensions)
+            .await
+    }
+
+    async fn stream_rpc_call<P: Serialize>(
+        &self,
+        method: &'static str,
+        params: P,
+        requested_extensions: &[String],
+    ) -> Result<tokio::sync::mpsc::Receiver<Result<StreamEvent, ClientError>>, ClientError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let rpc_request = JsonRpcRequest {
             jsonrpc: "2.0",
-            method: "message/stream",
-            params: request,
+            method,
+            params,
             id,
         };
 
-        let resp = self
+        let mut req = self
             .http
             .post(&self.endpoint)
             .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream")
-            .json(&rpc_request)
-            .send()
-            .await?;
+            .header("Accept", "text/event-stream");
+        if let Some(extensions) = extension_header_value(requested_extensions) {
+            req = req
+                .header(HTTP_EXTENSION_HEADER, extensions.clone())
+                .header(LEGACY_HTTP_EXTENSION_HEADER, extensions);
+        }
+        let resp = req.json(&rpc_request).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(self.parse_http_error("message/stream", status, &body));
+            return Err(self.parse_http_error(method, status, &body));
         }
 
         let (tx, rx) = tokio::sync::mpsc::channel(64);
@@ -417,18 +459,53 @@ impl A2AClient {
             .await
     }
 
+    /// Set push notification config for a task.
+    pub async fn set_task_push_notification_config(
+        &self,
+        params: TaskPushNotificationConfig,
+    ) -> Result<TaskPushNotificationConfig, ClientError> {
+        self.rpc_call("tasks/pushNotificationConfig/set", params).await
+    }
+
+    /// Get push notification config for a task.
+    pub async fn get_task_push_notification_config(
+        &self,
+        params: GetTaskPushNotificationConfigParams,
+    ) -> Result<TaskPushNotificationConfig, ClientError> {
+        self.rpc_call("tasks/pushNotificationConfig/get", params).await
+    }
+
+    /// List push notification configs for a task.
+    pub async fn list_task_push_notification_configs(
+        &self,
+        params: ListTaskPushNotificationConfigParams,
+    ) -> Result<Vec<TaskPushNotificationConfig>, ClientError> {
+        self.rpc_call("tasks/pushNotificationConfig/list", params).await
+    }
+
+    /// Delete a push notification config for a task.
+    pub async fn delete_task_push_notification_config(
+        &self,
+        params: DeleteTaskPushNotificationConfigParams,
+    ) -> Result<(), ClientError> {
+        let _: serde_json::Value = self
+            .rpc_call("tasks/pushNotificationConfig/delete", params)
+            .await?;
+        Ok(())
+    }
+
     /// Resubscribe to task events (streaming).
     ///
     /// Maps to JSON-RPC method `tasks/resubscribe`.
     pub async fn resubscribe_task(
         &self,
         task_id: &str,
-    ) -> Result<Task, ClientError> {
+    ) -> Result<tokio::sync::mpsc::Receiver<Result<StreamEvent, ClientError>>, ClientError> {
         #[derive(Serialize)]
         struct Params {
             id: String,
         }
-        self.rpc_call("tasks/resubscribe", Params { id: task_id.to_string() })
+        self.stream_rpc_call("tasks/resubscribe", Params { id: task_id.to_string() }, &[])
             .await
     }
 
@@ -442,6 +519,15 @@ impl A2AClient {
         method: &'static str,
         params: P,
     ) -> Result<R, ClientError> {
+        self.rpc_call_with_extensions(method, params, &[]).await
+    }
+
+    async fn rpc_call_with_extensions<P: Serialize, R: serde::de::DeserializeOwned>(
+        &self,
+        method: &'static str,
+        params: P,
+        requested_extensions: &[String],
+    ) -> Result<R, ClientError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let rpc_request = JsonRpcRequest {
             jsonrpc: "2.0",
@@ -450,14 +536,17 @@ impl A2AClient {
             id,
         };
 
-        let resp = self
+        let mut req = self
             .http
             .post(&self.endpoint)
             .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .json(&rpc_request)
-            .send()
-            .await?;
+            .header("Accept", "application/json");
+        if let Some(extensions) = extension_header_value(requested_extensions) {
+            req = req
+                .header(HTTP_EXTENSION_HEADER, extensions.clone())
+                .header(LEGACY_HTTP_EXTENSION_HEADER, extensions);
+        }
+        let resp = req.json(&rpc_request).send().await?;
 
         let status = resp.status();
         let body = resp.text().await?;

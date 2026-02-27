@@ -18,6 +18,8 @@ pub struct SkillMetadata {
     /// Path to the SKILLS.md file that declares this skill.
     pub path_to_skills_md: PathBuf,
     pub scope: SkillScope,
+    pub kind: Option<String>,
+    pub agent_card_url: Option<String>,
 }
 
 impl SkillMetadata {

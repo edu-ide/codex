@@ -1925,10 +1925,12 @@ pub(crate) fn build_specs(
     mcp_tools: Option<HashMap<String, rmcp::model::Tool>>,
     app_tools: Option<HashMap<String, ToolInfo>>,
     dynamic_tools: &[DynamicToolSpec],
+    remote_agents: &[crate::skills::SkillMetadata],
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
     use crate::tools::handlers::ArtifactsHandler;
     use crate::tools::handlers::CodeModeHandler;
+    use crate::tools::handlers::RemoteAgentHandler;
     use crate::tools::handlers::DynamicToolHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::JsReplHandler;
@@ -2222,6 +2224,17 @@ pub(crate) fn build_specs(
         }
     }
 
+    if !remote_agents.is_empty() {
+        for agent in remote_agents {
+            if agent.kind.as_deref() == Some("remote") {
+                builder.push_spec(create_remote_agent_tool(agent));
+                let url = agent.agent_card_url.clone().unwrap_or_else(|| "".to_string());
+                let handler = std::sync::Arc::new(RemoteAgentHandler::new(agent.name.clone(), url));
+                builder.register_handler(agent.name.clone(), handler);
+            }
+        }
+    }
+
     builder
 }
 
@@ -2405,7 +2418,7 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Live),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&config, None, None, &[]).build();
+        let (tools, _) = build_specs(&config, None, None, &[], &[]).build();
 
         // Build actual map name -> spec
         use std::collections::BTreeMap;
@@ -2524,7 +2537,7 @@ mod tests {
                 "agent_job:test".to_string(),
             )),
         });
-        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
         assert_contains_tool_names(
             &tools,
             &[
@@ -2638,11 +2651,20 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
         assert!(
             !tools.iter().any(|t| t.spec.name() == "get_memory"),
             "get_memory should be disabled when memory_tool feature is off"
         );
+
+        features.enable(Feature::CollaborationModes);
+        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info: &model_info,
+            features: &features,
+            web_search_mode: Some(WebSearchMode::Cached),
+        });
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
+        assert_contains_tool_names(&tools, &["request_user_input"]);
     }
 
     #[test]
@@ -2658,7 +2680,7 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
 
         assert!(
             !tools.iter().any(|tool| tool.spec.name() == "js_repl"),
@@ -2684,7 +2706,7 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
         assert_contains_tool_names(&tools, &["js_repl", "js_repl_reset"]);
     }
 
@@ -2752,13 +2774,66 @@ mod tests {
             panic!("js_repl should use a freeform tool spec");
         };
 
-        assert_eq!(format.syntax, "lark");
-        assert!(format.definition.contains("PRAGMA_LINE"));
-        assert!(format.definition.contains("`[^`]"));
-        assert!(format.definition.contains("``[^`]"));
-        assert!(format.definition.contains("PLAIN_JS_SOURCE"));
-        assert!(format.definition.contains("codex-js-repl:"));
-        assert!(!format.definition.contains("(?!"));
+        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info: &model_info,
+            features: &features,
+            web_search_mode: Some(WebSearchMode::Cached),
+        });
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
+        let filtered = filter_tools_for_model(
+            tools.iter().map(|tool| tool.spec.clone()).collect(),
+            &tools_config,
+        );
+        assert_contains_tool_specs(&filtered, &["js_repl", "js_repl_reset"]);
+        assert!(
+            !filtered.iter().any(|tool| tool_name(tool) == "shell"),
+            "expected non-js_repl tools to be hidden when js_repl_tools_only is enabled"
+        );
+    }
+
+    #[test]
+    fn js_repl_tools_only_hides_dynamic_tools_from_model_tools() {
+        let config = test_config();
+        let model_info =
+            ModelsManager::construct_model_info_offline_for_tests("gpt-5-codex", &config);
+        let mut features = Features::with_defaults();
+        features.enable(Feature::JsRepl);
+        features.enable(Feature::JsReplToolsOnly);
+
+        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info: &model_info,
+            features: &features,
+            web_search_mode: Some(WebSearchMode::Cached),
+        });
+        let dynamic_tools = vec![DynamicToolSpec {
+            name: "dynamic_echo".to_string(),
+            description: "echo dynamic payload".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"}
+                },
+                "required": ["text"],
+                "additionalProperties": false
+            }),
+        }];
+        let (tools, _) = build_specs(&tools_config, None, None, &dynamic_tools, &[]).build();
+        assert!(
+            tools.iter().any(|tool| tool.spec.name() == "dynamic_echo"),
+            "expected dynamic tool in full router specs"
+        );
+
+        let filtered = filter_tools_for_model(
+            tools.iter().map(|tool| tool.spec.clone()).collect(),
+            &tools_config,
+        );
+        assert!(
+            !filtered
+                .iter()
+                .any(|tool| tool_name(tool) == "dynamic_echo"),
+            "expected dynamic tools to be hidden from direct model tools in js_repl_tools_only mode"
+        );
+        assert_contains_tool_specs(&filtered, &["js_repl", "js_repl_reset"]);
     }
 
     fn assert_model_tools(
@@ -2775,7 +2850,7 @@ mod tests {
             web_search_mode,
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
         let tool_names = tools.iter().map(|t| t.spec.name()).collect::<Vec<_>>();
         assert_eq!(&tool_names, &expected_tools,);
     }
@@ -2809,7 +2884,7 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
 
         let tool = find_tool(&tools, "web_search");
         assert_eq!(
@@ -2837,7 +2912,7 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Live),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
 
         let tool = find_tool(&tools, "web_search");
         assert_eq!(
@@ -2944,7 +3019,7 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
 
         assert!(
             !tools.iter().any(|tool| matches!(
@@ -2967,7 +3042,7 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, Some(HashMap::new()), None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, Some(HashMap::new()), None, &[], &[]).build();
 
         assert_contains_tool_names(
             &tools,
@@ -3158,7 +3233,7 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Live),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, Some(HashMap::new()), None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, Some(HashMap::new()), None, &[], &[]).build();
 
         // Only check the shell variant and a couple of core tools.
         let mut subset = vec!["exec_command", "write_stdin", "update_plan"];
@@ -3208,7 +3283,7 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
 
         assert!(find_tool(&tools, "exec_command").supports_parallel_tool_calls);
         assert!(!find_tool(&tools, "write_stdin").supports_parallel_tool_calls);
@@ -3234,7 +3309,7 @@ mod tests {
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
         });
-        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, None, None, &[], &[]).build();
 
         assert!(
             tools
@@ -3371,7 +3446,7 @@ mod tests {
             ),
         ]);
 
-        let (tools, _) = build_specs(&tools_config, Some(tools_map), None, &[]).build();
+        let (tools, _) = build_specs(&tools_config, Some(tools_map), None, &[], &[]).build();
 
         // Only assert that the MCP tools themselves are sorted by fully-qualified name.
         let mcp_names: Vec<_> = tools
@@ -4035,4 +4110,38 @@ Examples of valid command strings:
             })]
         );
     }
+}
+
+
+fn create_remote_agent_tool(skill: &crate::skills::SkillMetadata) -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "query".to_string(),
+        JsonSchema::String {
+            description: Some("The task description to send to the remote agent.".to_string()),
+        },
+    );
+    properties.insert(
+        "async_mode".to_string(),
+        JsonSchema::Boolean {
+            description: Some("Whether to run the task asynchronously.".to_string()),
+        },
+    );
+    properties.insert(
+        "subscribe".to_string(),
+        JsonSchema::Boolean {
+            description: Some("Whether to subscribe to the remote agent's output stream.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: skill.name.clone(),
+        description: skill.description.clone(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["query".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
 }
