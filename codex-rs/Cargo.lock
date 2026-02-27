@@ -1756,6 +1756,7 @@ dependencies = [
 name = "codex-core"
 version = "0.0.0"
 dependencies = [
+ "a2a-rs",
  "anyhow",
  "arc-swap",
  "askama",
@@ -2087,7 +2088,6 @@ dependencies = [
 name = "codex-mcp-server"
 version = "0.0.0"
 dependencies = [
- "a2a-rs",
  "anyhow",
  "axum",
  "bytes",

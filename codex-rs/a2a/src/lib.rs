@@ -18,6 +18,8 @@ pub mod client;
 pub mod error;
 pub mod event;
 pub mod executor;
+#[cfg(feature = "client")]
+pub mod proxy;
 #[cfg(feature = "server")]
 pub mod server;
 pub mod store;
@@ -26,6 +28,8 @@ pub mod types;
 // Re-export commonly used items at crate root.
 #[cfg(feature = "client")]
 pub use client::{A2AClient, ClientError, StreamEvent};
+#[cfg(feature = "client")]
+pub use proxy::A2aProxy;
 pub use error::A2AError;
 pub use event::{EventBus, ExecutionEvent};
 pub use executor::{AgentExecutor, RequestContext};

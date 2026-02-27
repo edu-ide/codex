@@ -38,6 +38,10 @@ struct SkillFrontmatter {
     description: String,
     #[serde(default)]
     metadata: SkillFrontmatterMetadata,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    agent_card_url: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -547,6 +551,8 @@ fn parse_skill_file(path: &Path, scope: SkillScope) -> Result<SkillMetadata, Ski
         permissions,
         path_to_skills_md: resolved_path,
         scope,
+        kind: parsed.kind,
+        agent_card_url: parsed.agent_card_url,
     })
 }
 
@@ -1067,7 +1073,9 @@ mod tests {
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::User,
             }]
         );
@@ -1216,7 +1224,9 @@ mod tests {
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::User,
             }]
         );
@@ -1625,7 +1635,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::User,
             }]
         );
@@ -1667,7 +1679,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::User,
             }]
         );
@@ -1722,7 +1736,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::User,
             }]
         );
@@ -1765,7 +1781,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::User,
             }]
         );
@@ -1873,7 +1891,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::User,
             }]
         );
@@ -2051,7 +2071,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::User,
             }]
         );
@@ -2084,7 +2106,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::User,
             }]
         );
@@ -2198,7 +2222,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::Repo,
             }]
         );
@@ -2235,7 +2261,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::Repo,
             }]
         );
@@ -2343,7 +2371,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::Repo,
             }]
         );
@@ -2382,7 +2412,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::Repo,
             }]
         );
@@ -2588,7 +2620,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::Repo,
             }]
         );
@@ -2648,7 +2682,9 @@ permissions:
                 policy: None,
                 permission_profile: None,
                 permissions: None,
-                path_to_skills_md: normalized(&skill_path),
+                path: normalized(&skill_path),
+                kind: None,
+                agent_card_url: None,
                 scope: SkillScope::System,
             }]
         );
