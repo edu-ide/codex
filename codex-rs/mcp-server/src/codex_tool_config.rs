@@ -10,7 +10,7 @@ use codex_utils_json_to_toml::json_to_toml;
 use rmcp::model::JsonObject;
 use rmcp::model::Tool;
 use schemars::JsonSchema;
-use schemars::r#gen::SchemaSettings;
+use schemars::generate::SchemaSettings;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -108,10 +108,9 @@ impl From<CodexToolCallSandboxMode> for SandboxMode {
 
 /// Builds a `Tool` definition (JSON schema etc.) for the Codex tool-call.
 pub(crate) fn create_tool_for_codex_tool_call_param() -> Tool {
-    let schema = SchemaSettings::draft2019_09()
+    let schema = SchemaSettings::draft2020_12()
         .with(|s| {
             s.inline_subschemas = true;
-            s.option_add_null_type = false;
         })
         .into_generator()
         .into_root_schema_for::<CodexToolCallParam>();
@@ -232,10 +231,9 @@ impl CodexToolCallReplyParam {
 
 /// Builds a `Tool` definition for the `codex-reply` tool-call.
 pub(crate) fn create_tool_for_codex_tool_call_reply_param() -> Tool {
-    let schema = SchemaSettings::draft2019_09()
+    let schema = SchemaSettings::draft2020_12()
         .with(|s| {
             s.inline_subschemas = true;
-            s.option_add_null_type = false;
         })
         .into_generator()
         .into_root_schema_for::<CodexToolCallReplyParam>();
@@ -258,7 +256,7 @@ pub(crate) fn create_tool_for_codex_tool_call_reply_param() -> Tool {
 }
 
 fn create_tool_input_schema(
-    schema: schemars::schema::RootSchema,
+    schema: schemars::Schema,
     panic_message: &str,
 ) -> Arc<JsonObject> {
     #[expect(clippy::expect_used)]

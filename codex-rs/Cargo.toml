@@ -232,7 +232,7 @@ rustls = { version = "0.23", default-features = false, features = [
     "ring",
     "std",
 ] }
-schemars = "0.8.22"
+schemars = { version = "1.0", features = ["derive"] }
 seccompiler = "0.5.0"
 semver = "1.0"
 sentry = "0.46.0"

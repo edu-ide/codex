@@ -1,65 +1,46 @@
 use crate::config::ConfigToml;
 use crate::config::types::RawMcpServerConfig;
 use crate::features::FEATURES;
-use schemars::r#gen::SchemaGenerator;
-use schemars::r#gen::SchemaSettings;
-use schemars::schema::InstanceType;
-use schemars::schema::ObjectValidation;
-use schemars::schema::RootSchema;
-use schemars::schema::Schema;
-use schemars::schema::SchemaObject;
+use schemars::SchemaGenerator;
+use schemars::generate::SchemaSettings;
+use schemars::Schema;
 use serde_json::Map;
 use serde_json::Value;
 use std::path::Path;
 
 /// Schema for the `[features]` map with known + legacy keys only.
-pub(crate) fn features_schema(schema_gen: &mut SchemaGenerator) -> Schema {
-    let mut object = SchemaObject {
-        instance_type: Some(InstanceType::Object.into()),
-        ..Default::default()
-    };
+pub(crate) fn features_schema(_: &mut SchemaGenerator) -> Schema {
+    let mut properties = serde_json::Map::new();
+    let bool_schema = serde_json::json!({ "type": "boolean" });
 
-    let mut validation = ObjectValidation::default();
     for feature in FEATURES {
-        validation
-            .properties
-            .insert(feature.key.to_string(), schema_gen.subschema_for::<bool>());
+        properties.insert(feature.key.to_string(), bool_schema.clone());
     }
     for legacy_key in crate::features::legacy_feature_keys() {
-        validation
-            .properties
-            .insert(legacy_key.to_string(), schema_gen.subschema_for::<bool>());
+        properties.insert(legacy_key.to_string(), bool_schema.clone());
     }
-    validation.additional_properties = Some(Box::new(Schema::Bool(false)));
-    object.object = Some(Box::new(validation));
 
-    Schema::Object(object)
+    schemars::json_schema!({
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": false
+    })
 }
 
 /// Schema for the `[mcp_servers]` map using the raw input shape.
 pub(crate) fn mcp_servers_schema(schema_gen: &mut SchemaGenerator) -> Schema {
-    let mut object = SchemaObject {
-        instance_type: Some(InstanceType::Object.into()),
-        ..Default::default()
-    };
-
-    let validation = ObjectValidation {
-        additional_properties: Some(Box::new(schema_gen.subschema_for::<RawMcpServerConfig>())),
-        ..Default::default()
-    };
-    object.object = Some(Box::new(validation));
-
-    Schema::Object(object)
+    let additional = schema_gen.subschema_for::<RawMcpServerConfig>();
+    schemars::json_schema!({
+        "type": "object",
+        "additionalProperties": additional
+    })
 }
 
 /// Build the config schema for `config.toml`.
-pub fn config_schema() -> RootSchema {
-    SchemaSettings::draft07()
-        .with(|settings| {
-            settings.option_add_null_type = false;
-        })
-        .into_generator()
-        .into_root_schema_for::<ConfigToml>()
+pub fn config_schema() -> Schema {
+    let generator = SchemaSettings::draft2020_12()
+        .into_generator();
+    generator.into_root_schema_for::<ConfigToml>()
 }
 
 /// Canonicalize a JSON value by sorting its keys.
