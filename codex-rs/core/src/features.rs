@@ -119,6 +119,8 @@ pub enum Feature {
     MemoryTool,
     /// Append additional AGENTS.md guidance to user instructions.
     ChildAgentsMd,
+    /// Allow `detail: "original"` image outputs on supported models.
+    ImageDetailOriginal,
     /// Enforce UTF8 output in Powershell.
     PowershellUtf8,
     /// Compress request bodies (zstd) when sending streaming requests to codex-backend.
@@ -127,6 +129,8 @@ pub enum Feature {
     Collab,
     /// Enable apps.
     Apps,
+    /// Enable plugins.
+    Plugins,
     /// Route apps MCP calls through the configured gateway.
     AppsMcpGateway,
     /// Allow prompting and installing missing MCP dependencies.
@@ -143,6 +147,10 @@ pub enum Feature {
     CollaborationModes,
     /// Enable personality selection in the TUI.
     Personality,
+    /// Enable native artifact tools.
+    Artifact,
+    /// Enable Fast mode selection in the TUI and request layer.
+    FastMode,
     /// Enable voice transcription in the TUI composer.
     VoiceTranscription,
     /// Enable experimental realtime voice conversation mode in the TUI.
@@ -524,6 +532,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         default_enabled: false,
     },
     FeatureSpec {
+        id: Feature::ImageDetailOriginal,
+        key: "image_detail_original",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
         id: Feature::ApplyPatchFreeform,
         key: "apply_patch_freeform",
         stage: Stage::UnderDevelopment,
@@ -611,6 +625,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         default_enabled: false,
     },
     FeatureSpec {
+        id: Feature::Plugins,
+        key: "plugins",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
         id: Feature::AppsMcpGateway,
         key: "apps_mcp_gateway",
         stage: Stage::UnderDevelopment,
@@ -651,6 +671,18 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "personality",
         stage: Stage::Stable,
         default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::Artifact,
+        key: "artifact",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::FastMode,
+        key: "fast_mode",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::VoiceTranscription,
