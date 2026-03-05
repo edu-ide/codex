@@ -111,6 +111,8 @@ use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExitedReviewModeEvent;
+use codex_protocol::protocol::ImageGenerationBeginEvent;
+use codex_protocol::protocol::ImageGenerationEndEvent;
 use codex_protocol::protocol::ListCustomPromptsResponseEvent;
 use codex_protocol::protocol::ListSkillsResponseEvent;
 use codex_protocol::protocol::McpListToolsResponseEvent;
@@ -607,6 +609,7 @@ pub(crate) struct ChatWidget {
     retry_status_header: Option<String>,
     // Set when commentary output completes; once stream queues go idle we restore the status row.
     pending_status_indicator_restore: bool,
+    suppress_queue_autosend: bool,
     thread_id: Option<ThreadId>,
     thread_name: Option<String>,
     forked_from: Option<ThreadId>,
@@ -721,6 +724,7 @@ pub(crate) struct ActiveCellTranscriptKey {
     pub(crate) animation_tick: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UserMessage {
     text: String,
     local_images: Vec<LocalImageAttachment>,
@@ -732,6 +736,37 @@ pub(crate) struct UserMessage {
     remote_image_urls: Vec<String>,
     text_elements: Vec<TextElement>,
     mention_bindings: Vec<MentionBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+struct ThreadComposerState {
+    text: String,
+    local_images: Vec<LocalImageAttachment>,
+    remote_image_urls: Vec<String>,
+    text_elements: Vec<TextElement>,
+    mention_bindings: Vec<MentionBinding>,
+    pending_pastes: Vec<(String, String)>,
+}
+
+impl ThreadComposerState {
+    fn has_content(&self) -> bool {
+        !self.text.is_empty()
+            || !self.local_images.is_empty()
+            || !self.remote_image_urls.is_empty()
+            || !self.text_elements.is_empty()
+            || !self.mention_bindings.is_empty()
+            || !self.pending_pastes.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ThreadInputState {
+    composer: Option<ThreadComposerState>,
+    pending_steers: VecDeque<UserMessage>,
+    queued_user_messages: VecDeque<UserMessage>,
+    current_collaboration_mode: CollaborationMode,
+    active_collaboration_mask: Option<CollaborationModeMask>,
+    agent_turn_running: bool,
 }
 
 impl From<String> for UserMessage {
@@ -1623,6 +1658,9 @@ impl ChatWidget {
             items,
             ..Default::default()
         });
+        self.notify(Notification::PlanModePrompt {
+            title: PLAN_IMPLEMENTATION_TITLE.to_string(),
+        });
     }
 
     pub(crate) fn open_multi_agent_enable_prompt(&mut self) {
@@ -2021,6 +2059,89 @@ impl ChatWidget {
         );
     }
 
+    pub(crate) fn capture_thread_input_state(&self) -> Option<ThreadInputState> {
+        let composer = ThreadComposerState {
+            text: self.bottom_pane.composer_text(),
+            text_elements: self.bottom_pane.composer_text_elements(),
+            local_images: self.bottom_pane.composer_local_images(),
+            remote_image_urls: self.bottom_pane.remote_image_urls(),
+            mention_bindings: self.bottom_pane.composer_mention_bindings(),
+            pending_pastes: self.bottom_pane.composer_pending_pastes(),
+        };
+        Some(ThreadInputState {
+            composer: composer.has_content().then_some(composer),
+            pending_steers: self
+                .pending_steers
+                .iter()
+                .map(|pending| pending.user_message.clone())
+                .collect(),
+            queued_user_messages: self.queued_user_messages.clone(),
+            current_collaboration_mode: self.current_collaboration_mode.clone(),
+            active_collaboration_mask: self.active_collaboration_mask.clone(),
+            agent_turn_running: self.agent_turn_running,
+        })
+    }
+
+    pub(crate) fn restore_thread_input_state(&mut self, input_state: Option<ThreadInputState>) {
+        if let Some(input_state) = input_state {
+            self.current_collaboration_mode = input_state.current_collaboration_mode;
+            self.active_collaboration_mask = input_state.active_collaboration_mask;
+            self.agent_turn_running = input_state.agent_turn_running;
+            self.update_collaboration_mode_indicator();
+            self.refresh_model_display();
+            if let Some(composer) = input_state.composer {
+                let local_image_paths = composer
+                    .local_images
+                    .into_iter()
+                    .map(|img| img.path)
+                    .collect();
+                self.set_remote_image_urls(composer.remote_image_urls);
+                self.bottom_pane.set_composer_text_with_mention_bindings(
+                    composer.text,
+                    composer.text_elements,
+                    local_image_paths,
+                    composer.mention_bindings,
+                );
+                self.bottom_pane
+                    .set_composer_pending_pastes(composer.pending_pastes);
+            } else {
+                self.set_remote_image_urls(Vec::new());
+                self.bottom_pane.set_composer_text_with_mention_bindings(
+                    String::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+                self.bottom_pane.set_composer_pending_pastes(Vec::new());
+            }
+            self.pending_steers.clear();
+            self.queued_user_messages = input_state.pending_steers;
+            self.queued_user_messages
+                .extend(input_state.queued_user_messages);
+        } else {
+            self.agent_turn_running = false;
+            self.pending_steers.clear();
+            self.set_remote_image_urls(Vec::new());
+            self.bottom_pane.set_composer_text_with_mention_bindings(
+                String::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            self.bottom_pane.set_composer_pending_pastes(Vec::new());
+            self.queued_user_messages.clear();
+        }
+        self.turn_sleep_inhibitor
+            .set_turn_running(self.agent_turn_running);
+        self.update_task_running_state();
+        self.refresh_pending_input_preview();
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_queue_autosend_suppressed(&mut self, suppressed: bool) {
+        self.suppress_queue_autosend = suppressed;
+    }
+
     fn on_plan_update(&mut self, update: UpdatePlanArgs) {
         self.saw_plan_update_this_turn = true;
         self.add_to_history(history_cell::new_plan_update(update));
@@ -2159,6 +2280,20 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_view_image_tool_call(
             event.path,
             &self.config.cwd,
+        ));
+        self.request_redraw();
+    }
+
+    fn on_image_generation_begin(&mut self, _event: ImageGenerationBeginEvent) {
+        self.flush_answer_stream_with_separator();
+    }
+
+    fn on_image_generation_end(&mut self, event: ImageGenerationEndEvent) {
+        self.flush_answer_stream_with_separator();
+        self.add_to_history(history_cell::new_image_generation_call(
+            event.call_id,
+            event.status,
+            event.revised_prompt,
         ));
         self.request_redraw();
     }
@@ -2756,6 +2891,10 @@ impl ChatWidget {
 
     pub(crate) fn handle_request_user_input_now(&mut self, ev: RequestUserInputEvent) {
         self.flush_answer_stream_with_separator();
+        self.notify(Notification::UserInputRequested {
+            question_count: ev.questions.len(),
+            summary: Notification::user_input_request_summary(&ev.questions),
+        });
         self.bottom_pane.push_user_input_request(ev);
         self.request_redraw();
     }
@@ -2977,6 +3116,7 @@ impl ChatWidget {
             current_status_header: String::from("Working"),
             retry_status_header: None,
             pending_status_indicator_restore: false,
+            suppress_queue_autosend: false,
             thread_id: None,
             thread_name: None,
             forked_from: None,
@@ -3158,6 +3298,7 @@ impl ChatWidget {
             current_status_header: String::from("Working"),
             retry_status_header: None,
             pending_status_indicator_restore: false,
+            suppress_queue_autosend: false,
             thread_id: None,
             thread_name: None,
             forked_from: None,
@@ -3328,6 +3469,7 @@ impl ChatWidget {
             current_status_header: String::from("Working"),
             retry_status_header: None,
             pending_status_indicator_restore: false,
+            suppress_queue_autosend: false,
             thread_id: None,
             thread_name: None,
             forked_from: None,
@@ -3681,7 +3823,7 @@ impl ChatWidget {
                 self.open_model_popup();
             }
             SlashCommand::Fast => {
-                let next_tier = if self.config.service_tier.is_some() {
+                let next_tier = if matches!(self.config.service_tier, Some(ServiceTier::Fast)) {
                     None
                 } else {
                     Some(ServiceTier::Fast)
@@ -3976,7 +4118,8 @@ impl ChatWidget {
                     "on" => self.set_service_tier_selection(Some(ServiceTier::Fast)),
                     "off" => self.set_service_tier_selection(None),
                     "status" => {
-                        let status = if self.config.service_tier.is_some() {
+                        let status = if matches!(self.config.service_tier, Some(ServiceTier::Fast))
+                        {
                             "on"
                         } else {
                             "off"
@@ -4342,7 +4485,7 @@ impl ChatWidget {
             .personality
             .filter(|_| self.config.features.enabled(Feature::Personality))
             .filter(|_| self.current_model_supports_personality());
-        let service_tier = self.fast_mode_enabled().then_some(self.config.service_tier);
+        let service_tier = self.config.service_tier.map(Some);
         let op = Op::UserTurn {
             items,
             cwd: self.config.cwd.clone(),
@@ -4611,6 +4754,8 @@ impl ChatWidget {
             EventMsg::PatchApplyEnd(ev) => self.on_patch_apply_end(ev),
             EventMsg::ExecCommandEnd(ev) => self.on_exec_command_end(ev),
             EventMsg::ViewImageToolCall(ev) => self.on_view_image_tool_call(ev),
+            EventMsg::ImageGenerationBegin(ev) => self.on_image_generation_begin(ev),
+            EventMsg::ImageGenerationEnd(ev) => self.on_image_generation_end(ev),
             EventMsg::McpToolCallBegin(ev) => self.on_mcp_tool_call_begin(ev),
             EventMsg::McpToolCallEnd(ev) => self.on_mcp_tool_call_end(ev),
             EventMsg::WebSearchBegin(ev) => self.on_web_search_begin(ev),
@@ -4856,6 +5001,11 @@ impl ChatWidget {
         if !notification.allowed_for(&self.config.tui_notifications) {
             return;
         }
+        if let Some(existing) = self.pending_notification.as_ref()
+            && existing.priority() > notification.priority()
+        {
+            return;
+        }
         self.pending_notification = Some(notification);
         self.request_redraw();
     }
@@ -4880,7 +5030,10 @@ impl ChatWidget {
     }
 
     // If idle and there are queued inputs, submit exactly one to start the next turn.
-    fn maybe_send_next_queued_input(&mut self) {
+    pub(crate) fn maybe_send_next_queued_input(&mut self) {
+        if self.suppress_queue_autosend {
+            return;
+        }
         if self.bottom_pane.is_task_running() {
             return;
         }
@@ -6049,6 +6202,9 @@ impl ChatWidget {
             ],
             ..Default::default()
         });
+        self.notify(Notification::PlanModePrompt {
+            title: PLAN_MODE_REASONING_SCOPE_TITLE.to_string(),
+        });
     }
 
     /// Open a popup to choose the reasoning effort (stage 2) for the given model.
@@ -6939,12 +7095,15 @@ impl ChatWidget {
     }
 
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-    pub(crate) fn set_feature_enabled(&mut self, feature: Feature, enabled: bool) {
-        if enabled {
-            self.config.features.enable(feature);
-        } else {
-            self.config.features.disable(feature);
+    pub(crate) fn set_feature_enabled(&mut self, feature: Feature, enabled: bool) -> bool {
+        if let Err(err) = self.config.features.set_enabled(feature, enabled) {
+            tracing::warn!(
+                error = %err,
+                feature = feature.key(),
+                "failed to update constrained chat widget feature state"
+            );
         }
+        let enabled = self.config.features.enabled(feature);
         if feature == Feature::VoiceTranscription {
             self.bottom_pane.set_voice_transcription_enabled(enabled);
         }
@@ -6985,6 +7144,7 @@ impl ChatWidget {
                     ),
             );
         }
+        enabled
     }
 
     pub(crate) fn set_full_access_warning_acknowledged(&mut self, acknowledged: bool) {
@@ -7823,6 +7983,14 @@ impl ChatWidget {
     }
 
     #[cfg(test)]
+    pub(crate) fn queued_user_message_texts(&self) -> Vec<String> {
+        self.queued_user_messages
+            .iter()
+            .map(|message| message.text.clone())
+            .collect()
+    }
+
+    #[cfg(test)]
     pub(crate) fn pending_thread_approvals(&self) -> &[String] {
         self.bottom_pane.pending_thread_approvals()
     }
@@ -8248,11 +8416,28 @@ impl Renderable for ChatWidget {
     }
 }
 
+#[derive(Debug)]
 enum Notification {
-    AgentTurnComplete { response: String },
-    ExecApprovalRequested { command: String },
-    EditApprovalRequested { cwd: PathBuf, changes: Vec<PathBuf> },
-    ElicitationRequested { server_name: String },
+    AgentTurnComplete {
+        response: String,
+    },
+    ExecApprovalRequested {
+        command: String,
+    },
+    EditApprovalRequested {
+        cwd: PathBuf,
+        changes: Vec<PathBuf>,
+    },
+    ElicitationRequested {
+        server_name: String,
+    },
+    PlanModePrompt {
+        title: String,
+    },
+    UserInputRequested {
+        question_count: usize,
+        summary: Option<String>,
+    },
 }
 
 impl Notification {
@@ -8279,6 +8464,17 @@ impl Notification {
             Notification::ElicitationRequested { server_name } => {
                 format!("Approval requested by {server_name}")
             }
+            Notification::PlanModePrompt { title } => {
+                format!("Plan mode prompt: {title}")
+            }
+            Notification::UserInputRequested {
+                question_count,
+                summary,
+            } => match (*question_count, summary.as_deref()) {
+                (1, Some(summary)) => format!("Question requested: {summary}"),
+                (1, None) => "Question requested".to_string(),
+                (count, _) => format!("Questions requested: {count}"),
+            },
         }
     }
 
@@ -8288,6 +8484,19 @@ impl Notification {
             Notification::ExecApprovalRequested { .. }
             | Notification::EditApprovalRequested { .. }
             | Notification::ElicitationRequested { .. } => "approval-requested",
+            Notification::PlanModePrompt { .. } => "plan-mode-prompt",
+            Notification::UserInputRequested { .. } => "user-input-requested",
+        }
+    }
+
+    fn priority(&self) -> u8 {
+        match self {
+            Notification::AgentTurnComplete { .. } => 0,
+            Notification::ExecApprovalRequested { .. }
+            | Notification::EditApprovalRequested { .. }
+            | Notification::ElicitationRequested { .. }
+            | Notification::PlanModePrompt { .. }
+            | Notification::UserInputRequested { .. } => 1,
         }
     }
 
@@ -8311,6 +8520,22 @@ impl Notification {
             None
         } else {
             Some(truncate_text(trimmed, AGENT_NOTIFICATION_PREVIEW_GRAPHEMES))
+        }
+    }
+
+    fn user_input_request_summary(
+        questions: &[codex_protocol::request_user_input::RequestUserInputQuestion],
+    ) -> Option<String> {
+        let first_question = questions.first()?;
+        let summary = if first_question.header.trim().is_empty() {
+            first_question.question.trim()
+        } else {
+            first_question.header.trim()
+        };
+        if summary.is_empty() {
+            None
+        } else {
+            Some(truncate_text(summary, 30))
         }
     }
 }

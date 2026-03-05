@@ -23,11 +23,11 @@ use crate::compact::InitialContextInjection;
 use crate::compact::run_inline_auto_compact_task;
 use crate::compact::should_use_remote_compact_task;
 use crate::compact_remote::run_inline_remote_auto_compact_task;
+use crate::config::ManagedFeatures;
 use crate::connectors;
 use crate::exec_policy::ExecPolicyManager;
 use crate::features::FEATURES;
 use crate::features::Feature;
-use crate::features::Features;
 use crate::features::maybe_push_unstable_features_warning;
 #[cfg(test)]
 use crate::models_manager::collaboration_mode_presets::CollaborationModesConfig;
@@ -55,12 +55,6 @@ use async_channel::Receiver;
 use async_channel::Sender;
 use chrono::Local;
 use chrono::Utc;
-use codex_artifact_presentation::PresentationArtifactError;
-use codex_artifact_presentation::PresentationArtifactExecutionRequest;
-use codex_artifact_presentation::PresentationArtifactResponse;
-use codex_artifact_spreadsheet::SpreadsheetArtifactError;
-use codex_artifact_spreadsheet::SpreadsheetArtifactRequest;
-use codex_artifact_spreadsheet::SpreadsheetArtifactResponse;
 use codex_hooks::HookEvent;
 use codex_hooks::HookEventAfterAgent;
 use codex_hooks::HookPayload;
@@ -373,18 +367,24 @@ impl Codex {
         if let SessionSource::SubAgent(SubAgentSource::ThreadSpawn { depth, .. }) = session_source
             && depth >= config.agent_max_depth
         {
-            config.features.disable(Feature::Collab);
+            let _ = config.features.disable(Feature::Collab);
         }
 
         if config.features.enabled(Feature::JsRepl)
             && let Err(err) = resolve_compatible_node(config.js_repl_node_path.as_deref()).await
         {
-            let message = format!(
-                "Disabled `js_repl` for this session because the configured Node runtime is unavailable or incompatible. {err}"
-            );
+            let _ = config.features.disable(Feature::JsRepl);
+            let _ = config.features.disable(Feature::JsReplToolsOnly);
+            let message = if config.features.enabled(Feature::JsRepl) {
+                format!(
+                    "`js_repl` remains enabled because enterprise requirements pin it on, but the configured Node runtime is unavailable or incompatible. {err}"
+                )
+            } else {
+                format!(
+                    "Disabled `js_repl` for this session because the configured Node runtime is unavailable or incompatible. {err}"
+                )
+            };
             warn!("{message}");
-            config.features.disable(Feature::JsRepl);
-            config.features.disable(Feature::JsReplToolsOnly);
             config.startup_warnings.push(message);
         }
 
@@ -620,7 +620,7 @@ pub(crate) struct Session {
     state: Mutex<SessionState>,
     /// The set of enabled features should be invariant for the lifetime of the
     /// session.
-    features: Features,
+    features: ManagedFeatures,
     pending_mcp_server_refresh_config: Mutex<Option<McpServerRefreshConfig>>,
     pub(crate) conversation: Arc<RealtimeConversationManager>,
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
@@ -674,7 +674,7 @@ pub(crate) struct TurnContext {
     pub(crate) windows_sandbox_level: WindowsSandboxLevel,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) tools_config: ToolsConfig,
-    pub(crate) features: Features,
+    pub(crate) features: ManagedFeatures,
     pub(crate) ghost_snapshot: GhostSnapshotConfig,
     pub(crate) final_output_json_schema: Option<Value>,
     pub(crate) codex_linux_sandbox_exe: Option<PathBuf>,
@@ -1790,24 +1790,6 @@ impl Session {
     pub(crate) async fn clear_connector_selection(&self) {
         let mut state = self.state.lock().await;
         state.clear_connector_selection();
-    }
-
-    pub(crate) async fn execute_presentation_artifact(
-        &self,
-        request: PresentationArtifactExecutionRequest,
-        cwd: &Path,
-    ) -> Result<PresentationArtifactResponse, PresentationArtifactError> {
-        let mut state = self.state.lock().await;
-        state.artifacts.presentation.execute_requests(request, cwd)
-    }
-
-    pub(crate) async fn execute_spreadsheet_artifact(
-        &self,
-        request: SpreadsheetArtifactRequest,
-        cwd: &Path,
-    ) -> Result<SpreadsheetArtifactResponse, SpreadsheetArtifactError> {
-        let mut state = self.state.lock().await;
-        state.artifacts.spreadsheet.execute(request, cwd)
     }
 
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
@@ -3020,7 +3002,7 @@ impl Session {
         self.features.enabled(feature)
     }
 
-    pub(crate) fn features(&self) -> Features {
+    pub(crate) fn features(&self) -> ManagedFeatures {
         self.features.clone()
     }
 
@@ -3232,12 +3214,9 @@ impl Session {
         turn_context: &TurnContext,
         token_usage: Option<&TokenUsage>,
     ) {
-        {
+        if let Some(token_usage) = token_usage {
             let mut state = self.state.lock().await;
-            if let Some(token_usage) = token_usage {
-                state
-                    .update_token_info_from_usage(token_usage, turn_context.model_context_window());
-            }
+            state.update_token_info_from_usage(token_usage, turn_context.model_context_window());
         }
         self.send_token_count_event(turn_context).await;
     }
@@ -4451,11 +4430,9 @@ mod handlers {
         }
 
         let memory_root = crate::memories::memory_root(&config.codex_home);
-        if let Err(err) = tokio::fs::remove_dir_all(&memory_root).await
-            && err.kind() != std::io::ErrorKind::NotFound
-        {
+        if let Err(err) = crate::memories::clear_memory_root_contents(&memory_root).await {
             errors.push(format!(
-                "failed removing memory directory {}: {err}",
+                "failed clearing memory directory {}: {err}",
                 memory_root.display()
             ));
         }
@@ -4719,9 +4696,8 @@ async fn spawn_review_thread(
         .await;
     // For reviews, disable web_search and view_image regardless of global settings.
     let mut review_features = sess.features.clone();
-    review_features
-        .disable(crate::features::Feature::WebSearchRequest)
-        .disable(crate::features::Feature::WebSearchCached);
+    let _ = review_features.disable(crate::features::Feature::WebSearchRequest);
+    let _ = review_features.disable(crate::features::Feature::WebSearchCached);
     let review_web_search_mode = WebSearchMode::Disabled;
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &review_model_info,
@@ -5960,6 +5936,8 @@ fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::PatchApplyBegin(_)
         | EventMsg::PatchApplyEnd(_)
         | EventMsg::ViewImageToolCall(_)
+        | EventMsg::ImageGenerationBegin(_)
+        | EventMsg::ImageGenerationEnd(_)
         | EventMsg::ExecApprovalRequest(_)
         | EventMsg::RequestUserInput(_)
         | EventMsg::DynamicToolCallRequest(_)
@@ -6711,6 +6689,7 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::sync::Once;
     use std::time::Duration as StdDuration;
 
     struct InstructionsTestCase {
@@ -8177,10 +8156,16 @@ mod tests {
         })
     }
 
-    fn test_tracing_subscriber() -> impl tracing::Subscriber + Send + Sync {
-        let provider = SdkTracerProvider::builder().build();
-        let tracer = provider.tracer("codex-core-tests");
-        tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer))
+    fn init_test_tracing() {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let provider = SdkTracerProvider::builder().build();
+            let tracer = provider.tracer("codex-core-tests");
+            let subscriber = tracing_subscriber::registry()
+                .with(tracing_opentelemetry::layer().with_tracer(tracer));
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("global tracing subscriber should only be installed once");
+        });
     }
 
     async fn build_test_config(codex_home: &Path) -> Config {
@@ -8261,7 +8246,10 @@ mod tests {
     async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         let codex_home = tempfile::tempdir().expect("create temp dir");
         let mut config = build_test_config(codex_home.path()).await;
-        config.features.enable(Feature::ShellZshFork);
+        config
+            .features
+            .enable(Feature::ShellZshFork)
+            .expect("test config should allow shell_zsh_fork");
         config.zsh_path = None;
         let config = Arc::new(config);
 
@@ -8523,8 +8511,7 @@ mod tests {
             session: Arc::new(session),
         };
 
-        let subscriber = test_tracing_subscriber();
-        let _guard = tracing::subscriber::set_default(subscriber);
+        init_test_tracing();
 
         let request_parent = W3cTraceContext {
             traceparent: Some("00-00000000000000000000000000000011-0000000000000022-01".into()),
@@ -8558,8 +8545,7 @@ mod tests {
 
     #[test]
     fn submission_dispatch_span_prefers_submission_trace_context() {
-        let subscriber = test_tracing_subscriber();
-        let _guard = tracing::subscriber::set_default(subscriber);
+        init_test_tracing();
 
         let ambient_parent = W3cTraceContext {
             traceparent: Some("00-00000000000000000000000000000033-0000000000000044-01".into()),
@@ -8587,6 +8573,108 @@ mod tests {
         assert_eq!(
             trace_id,
             TraceId::from_hex("00000000000000000000000000000055").expect("trace id")
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_task_turn_span_inherits_dispatch_trace_context() {
+        struct TraceCaptureTask {
+            captured_trace: Arc<std::sync::Mutex<Option<W3cTraceContext>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl SessionTask for TraceCaptureTask {
+            fn kind(&self) -> TaskKind {
+                TaskKind::Regular
+            }
+
+            fn span_name(&self) -> &'static str {
+                "session_task.trace_capture"
+            }
+
+            async fn run(
+                self: Arc<Self>,
+                _session: Arc<SessionTaskContext>,
+                _ctx: Arc<TurnContext>,
+                _input: Vec<UserInput>,
+                _cancellation_token: CancellationToken,
+            ) -> Option<String> {
+                let mut trace = self
+                    .captured_trace
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                *trace = current_span_w3c_trace_context();
+                None
+            }
+        }
+
+        init_test_tracing();
+
+        let request_parent = W3cTraceContext {
+            traceparent: Some("00-00000000000000000000000000000011-0000000000000022-01".into()),
+            tracestate: Some("vendor=value".into()),
+        };
+        let request_span = tracing::info_span!("app_server.request");
+        assert!(set_parent_from_w3c_trace_context(
+            &request_span,
+            &request_parent
+        ));
+
+        let submission_trace = async {
+            current_span_w3c_trace_context().expect("request span should have trace context")
+        }
+        .instrument(request_span)
+        .await;
+
+        let dispatch_span = submission_dispatch_span(&Submission {
+            id: "sub-1".into(),
+            op: Op::Interrupt,
+            trace: Some(submission_trace.clone()),
+        });
+        let dispatch_span_id = dispatch_span.context().span().span_context().span_id();
+
+        let (sess, tc, rx) = make_session_and_context_with_rx().await;
+        let captured_trace = Arc::new(std::sync::Mutex::new(None));
+
+        async {
+            sess.spawn_task(
+                Arc::clone(&tc),
+                vec![UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                TraceCaptureTask {
+                    captured_trace: Arc::clone(&captured_trace),
+                },
+            )
+            .await;
+        }
+        .instrument(dispatch_span)
+        .await;
+
+        let evt = tokio::time::timeout(StdDuration::from_secs(2), rx.recv())
+            .await
+            .expect("timeout waiting for turn completion")
+            .expect("event");
+        assert!(matches!(evt.msg, EventMsg::TurnComplete(_)));
+
+        let task_trace = captured_trace
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .expect("turn task should capture the current span trace context");
+        let submission_context =
+            codex_otel::context_from_w3c_trace_context(&submission_trace).expect("submission");
+        let task_context =
+            codex_otel::context_from_w3c_trace_context(&task_trace).expect("task trace");
+
+        assert_eq!(
+            task_context.span().span_context().trace_id(),
+            submission_context.span().span_context().trace_id()
+        );
+        assert_ne!(
+            task_context.span().span_context().span_id(),
+            dispatch_span_id
         );
     }
 
@@ -8814,7 +8902,7 @@ mod tests {
     #[tokio::test]
     async fn record_model_warning_appends_user_message() {
         let (mut session, turn_context) = make_session_and_context().await;
-        let features = Features::with_defaults();
+        let features = crate::features::Features::with_defaults().into();
         session.features = features;
 
         session
@@ -9392,6 +9480,10 @@ mod tests {
     impl SessionTask for NeverEndingTask {
         fn kind(&self) -> TaskKind {
             self.kind
+        }
+
+        fn span_name(&self) -> &'static str {
+            "session_task.never_ending"
         }
 
         async fn run(
