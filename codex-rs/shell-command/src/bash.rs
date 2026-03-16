@@ -128,9 +128,6 @@ pub fn parse_shell_lc_single_command_prefix(command: &[String]) -> Option<Vec<St
     if root.has_error() {
         return None;
     }
-    if !has_named_descendant_kind(root, "heredoc_redirect") {
-        return None;
-    }
 
     let command_node = find_single_command_node(root)?;
     parse_heredoc_command_words(command_node, script)
@@ -532,7 +529,10 @@ mod tests {
             "-lc".to_string(),
             "echo hello > /tmp/out.txt".to_string(),
         ];
-        assert_eq!(parse_shell_lc_single_command_prefix(&command), None);
+        assert_eq!(
+            parse_shell_lc_single_command_prefix(&command),
+            Some(vec!["echo".to_string(), "hello".to_string()])
+        );
     }
 
     #[test]

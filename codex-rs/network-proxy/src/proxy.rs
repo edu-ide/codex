@@ -8,7 +8,6 @@ use crate::state::NetworkProxyState;
 use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
-use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::net::TcpListener as StdTcpListener;
@@ -433,8 +432,6 @@ impl NetworkProxy {
             return Ok(NetworkProxyHandle::noop());
         }
 
-        ensure_rustls_crypto_provider();
-
         if !unix_socket_permissions_supported() {
             warn!(
                 "allowUnixSockets and dangerouslyAllowAllUnixSockets are macOS-only; requests will be rejected on this platform"
@@ -784,6 +781,14 @@ mod tests {
         assert_eq!(
             env.get("WSS_PROXY"),
             Some(&"http://127.0.0.1:3128".to_string())
+        );
+        assert_eq!(
+            env.get("WS_PROXY"),
+            Some(&"http://codex-net-attempt-attempt-123@127.0.0.1:3128".to_string())
+        );
+        assert_eq!(
+            env.get("WSS_PROXY"),
+            Some(&"http://codex-net-attempt-attempt-123@127.0.0.1:3128".to_string())
         );
         assert_eq!(
             env.get("ALL_PROXY"),

@@ -96,6 +96,9 @@ limited mode.
 Websocket clients typically tunnel `wss://` through HTTPS `CONNECT`; those CONNECT targets still go
 through the same host allowlist/denylist checks.
 
+Websocket clients typically tunnel `wss://` through HTTPS `CONNECT`; those CONNECT targets still go
+through the same host allowlist/denylist checks.
+
 ## Library API
 
 `codex-network-proxy` can be embedded as a library with a thin API:
