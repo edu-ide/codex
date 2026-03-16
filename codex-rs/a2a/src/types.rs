@@ -10,16 +10,27 @@ use serde::{Deserialize, Serialize};
 // ================================================================
 
 /// Lifecycle states of a [`Task`].
+///
+/// Serializes as camelCase (v0.3 compat); deserializes both camelCase and
+/// SCREAMING_SNAKE_CASE (v1.0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TaskState {
+    #[serde(alias = "SUBMITTED")]
     Submitted,
+    #[serde(alias = "WORKING")]
     Working,
+    #[serde(alias = "COMPLETED")]
     Completed,
+    #[serde(alias = "FAILED")]
     Failed,
+    #[serde(alias = "CANCELED")]
     Canceled,
+    #[serde(alias = "INPUT_REQUIRED")]
     InputRequired,
+    #[serde(alias = "REJECTED")]
     Rejected,
+    #[serde(alias = "AUTH_REQUIRED")]
     AuthRequired,
 }
 
@@ -48,6 +59,12 @@ pub struct Task {
     pub history: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    /// ISO 8601 timestamp when the task was created (v1.0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    /// ISO 8601 timestamp when the task was last modified (v1.0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
 }
 
 /// Content part — uses oneOf semantics: exactly one of text/raw/url/data
@@ -91,7 +108,9 @@ impl Part {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Role {
+    #[serde(alias = "USER")]
     User,
+    #[serde(alias = "AGENT")]
     Agent,
 }
 
@@ -341,6 +360,58 @@ pub struct DeleteTaskPushNotificationConfigParams {
 }
 
 // ================================================================
+// v1.0 ListTasks / SubscribeToTask / GetExtendedAgentCard
+// ================================================================
+
+/// `GET /tasks` request query parameters (v1.0 `ListTasks` RPC).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTasksRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<TaskState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history_length: Option<i32>,
+    /// ISO 8601 timestamp — only tasks with status updated after this are returned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_timestamp_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_artifacts: Option<bool>,
+}
+
+/// `GET /tasks` response body (v1.0 `ListTasks` RPC).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTasksResponse {
+    pub tasks: Vec<Task>,
+    pub next_page_token: String,
+    pub page_size: i32,
+    pub total_size: i32,
+}
+
+/// `GET /tasks/{id}:subscribe` request (v1.0 `SubscribeToTask` RPC).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscribeToTaskRequest {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+}
+
+/// `GET /extendedAgentCard` request (v1.0 `GetExtendedAgentCard` RPC).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetExtendedAgentCardRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+}
+
+// ================================================================
 // Helpers
 // ================================================================
 
@@ -395,13 +466,14 @@ pub fn completed_task(
     result_text: impl Into<String>,
 ) -> Task {
     let text = result_text.into();
+    let now = now_iso8601();
     Task {
         id: task_id.into(),
         context_id: context_id.into(),
         status: TaskStatus {
             state: TaskState::Completed,
             message: Some(new_agent_message(&text)),
-            timestamp: Some(now_iso8601()),
+            timestamp: Some(now.clone()),
         },
         artifacts: vec![Artifact {
             artifact_id: uuid::Uuid::new_v4().to_string(),
@@ -413,6 +485,8 @@ pub fn completed_task(
         }],
         history: vec![],
         metadata: None,
+        created_at: Some(now.clone()),
+        last_modified: Some(now),
     }
 }
 
@@ -422,16 +496,19 @@ pub fn failed_task(
     context_id: impl Into<String>,
     error_msg: impl Into<String>,
 ) -> Task {
+    let now = now_iso8601();
     Task {
         id: task_id.into(),
         context_id: context_id.into(),
         status: TaskStatus {
             state: TaskState::Failed,
             message: Some(new_agent_message(error_msg)),
-            timestamp: Some(now_iso8601()),
+            timestamp: Some(now.clone()),
         },
         artifacts: vec![],
         history: vec![],
         metadata: None,
+        created_at: Some(now.clone()),
+        last_modified: Some(now),
     }
 }

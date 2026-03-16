@@ -17,7 +17,7 @@ use crate::store::TaskStore;
 use crate::types::*;
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::sse::{Event, Sse},
     response::{IntoResponse, Response},
@@ -133,33 +133,30 @@ impl<E: AgentExecutor, S: TaskStore> A2AServer<E, S> {
     /// Build the Axum router without starting the server.
     pub fn router(&self) -> Router {
         let state = self.make_state();
+        let a2a_routes = Self::a2a_routes();
 
         Router::new()
-            .route("/", post(handle_jsonrpc::<E, S>))
-            .route(
-                "/.well-known/agent-card.json",
-                get(handle_agent_card_v03::<E, S>),
-            )
-            .route("/.well-known/agent.json", get(handle_agent_card::<E, S>))
-            .route("/message:send", post(handle_send_message_http::<E, S>))
-            .route("/message:stream", post(handle_stream_message_http::<E, S>))
+            .merge(a2a_routes.clone())
             .route("/acp", post(handle_acp_post::<E, S>))
             .route("/acp/stream", get(handle_acp_stream::<E, S>))
-            .route(
-                "/tasks/{id}",
-                get(handle_get_task::<E, S>).post(handle_cancel_task_compat::<E, S>),
-            )
-            .route("/tasks/metadata", get(handle_list_task_metadata::<E, S>))
-            .route("/tasks/{id}/cancel", post(handle_cancel_task::<E, S>))
+            // Multi-tenancy: all A2A routes under /{tenant}/
+            .nest("/{tenant}", a2a_routes)
             .with_state(state)
     }
 
     /// Build the router WITHOUT /acp and /acp/stream routes.
-    /// Use this when an external ACP handler (e.g. codex-acp subprocess bridge)
-    /// will be merged separately.
     pub fn router_without_acp(&self) -> Router {
         let state = self.make_state();
+        let a2a_routes = Self::a2a_routes();
 
+        Router::new()
+            .merge(a2a_routes.clone())
+            .nest("/{tenant}", a2a_routes)
+            .with_state(state)
+    }
+
+    /// Core A2A routes shared between tenant and non-tenant paths.
+    fn a2a_routes() -> Router<A2AServerState<E, S>> {
         Router::new()
             .route("/", post(handle_jsonrpc::<E, S>))
             .route(
@@ -169,13 +166,21 @@ impl<E: AgentExecutor, S: TaskStore> A2AServer<E, S> {
             .route("/.well-known/agent.json", get(handle_agent_card::<E, S>))
             .route("/message:send", post(handle_send_message_http::<E, S>))
             .route("/message:stream", post(handle_stream_message_http::<E, S>))
+            .route("/tasks", get(handle_list_tasks::<E, S>))
             .route(
                 "/tasks/{id}",
                 get(handle_get_task::<E, S>).post(handle_cancel_task_compat::<E, S>),
             )
             .route("/tasks/metadata", get(handle_list_task_metadata::<E, S>))
             .route("/tasks/{id}/cancel", post(handle_cancel_task::<E, S>))
-            .with_state(state)
+            .route(
+                "/tasks/{id}:subscribe",
+                get(handle_subscribe_to_task::<E, S>),
+            )
+            .route(
+                "/extendedAgentCard",
+                get(handle_get_extended_agent_card::<E, S>),
+            )
     }
 
     /// Run the server (blocks until shutdown).
@@ -641,7 +646,8 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
     }
 
     match envelope.method.as_str() {
-        "message/send" => {
+        // v1.0 PascalCase method aliases
+        "SendMessage" | "message/send" => {
             let params: SendMessageRequest = match serde_json::from_value(envelope.params) {
                 Ok(v) => v,
                 Err(e) => {
@@ -664,7 +670,7 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                 ),
             }
         }
-        "tasks/get" => {
+        "GetTask" | "tasks/get" => {
             let params: JsonRpcTaskQueryParams = match serde_json::from_value(envelope.params) {
                 Ok(v) => v,
                 Err(e) => {
@@ -680,7 +686,7 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                 Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
             }
         }
-        "tasks/cancel" => {
+        "CancelTask" | "tasks/cancel" => {
             let params: JsonRpcTaskIdParams = match serde_json::from_value(envelope.params) {
                 Ok(v) => v,
                 Err(e) => {
@@ -696,7 +702,7 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                 Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
             }
         }
-        "message/stream" => {
+        "SendStreamingMessage" | "message/stream" => {
             let params: SendMessageRequest = match serde_json::from_value(envelope.params) {
                 Ok(v) => v,
                 Err(e) => {
@@ -716,7 +722,7 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                 &activated_extensions,
             )
         }
-        "tasks/resubscribe" => {
+        "SubscribeToTask" | "tasks/resubscribe" => {
             let params: JsonRpcTaskIdParams = match serde_json::from_value(envelope.params) {
                 Ok(v) => v,
                 Err(e) => {
@@ -733,7 +739,7 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                 Err(err) => jsonrpc_err(request_id, err, StatusCode::OK),
             }
         }
-        "tasks/pushNotificationConfig/set" => {
+        "CreateTaskPushNotificationConfig" | "tasks/pushNotificationConfig/set" => {
             let params: JsonRpcTaskPushNotificationConfigSetParams =
                 match serde_json::from_value(envelope.params) {
                     Ok(v) => v,
@@ -756,7 +762,7 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                 Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
             }
         }
-        "tasks/pushNotificationConfig/get" => {
+        "GetTaskPushNotificationConfig" | "tasks/pushNotificationConfig/get" => {
             let params: JsonRpcTaskPushNotificationConfigGetParams =
                 match serde_json::from_value(envelope.params) {
                     Ok(v) => v,
@@ -785,7 +791,7 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                 Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
             }
         }
-        "tasks/pushNotificationConfig/list" => {
+        "ListTaskPushNotificationConfigs" | "tasks/pushNotificationConfig/list" => {
             let params: ListTaskPushNotificationConfigParams =
                 match serde_json::from_value(envelope.params) {
                     Ok(v) => v,
@@ -804,7 +810,7 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                 Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
             }
         }
-        "tasks/pushNotificationConfig/delete" => {
+        "DeleteTaskPushNotificationConfig" | "tasks/pushNotificationConfig/delete" => {
             let params: JsonRpcTaskPushNotificationConfigDeleteParams =
                 match serde_json::from_value(envelope.params) {
                     Ok(v) => v,
@@ -823,7 +829,7 @@ async fn handle_jsonrpc<E: AgentExecutor, S: TaskStore>(
                 Err(err) => jsonrpc_err(envelope.id, err, StatusCode::OK),
             }
         }
-        "agent/getAuthenticatedExtendedCard" => {
+        "GetExtendedAgentCard" | "agent/getAuthenticatedExtendedCard" => {
             let card = state.executor.agent_card(&state.base_url);
             if card.capabilities.extended_agent_card.unwrap_or(false) {
                 jsonrpc_ok(envelope.id, card)
@@ -943,21 +949,25 @@ async fn handle_send_message<E: AgentExecutor, S: TaskStore>(
     // Non-blocking mode: return immediately with a submitted task,
     // while persisting terminal updates in the background.
     if !blocking {
+        let now = now_iso8601();
         let submitted_task = Task {
             id: task_id.clone(),
             context_id: context_id.clone(),
             status: TaskStatus {
                 state: TaskState::Submitted,
                 message: None,
-                timestamp: Some(now_iso8601()),
+                timestamp: Some(now.clone()),
             },
             artifacts: vec![],
             history: vec![incoming_message],
             metadata: request_metadata,
+            created_at: Some(now.clone()),
+            last_modified: Some(now),
         };
         state.store.save(submitted_task.clone()).await?;
         state.task_index.lock().await.insert(submitted_task.id.clone());
 
+        // Persist task index for ListTasks
         let store = Arc::clone(&state.store);
         let task_index = Arc::clone(&state.task_index);
         tokio::spawn(async move {
@@ -1377,6 +1387,81 @@ async fn handle_list_task_metadata<E: AgentExecutor, S: TaskStore>(
         }
     }
     Ok(Json(out))
+}
+
+/// `GET /tasks` — v1.0 ListTasks with filtering and pagination.
+async fn handle_list_tasks<E: AgentExecutor, S: TaskStore>(
+    State(state): State<A2AServerState<E, S>>,
+    Query(request): Query<ListTasksRequest>,
+) -> Result<Json<ListTasksResponse>, A2AError> {
+    // Ensure all tracked tasks are in the store for listing.
+    let response = state.store.list(&request).await?;
+    Ok(Json(response))
+}
+
+/// `GET /tasks/{id}:subscribe` — v1.0 SubscribeToTask.
+async fn handle_subscribe_to_task<E: AgentExecutor, S: TaskStore>(
+    State(state): State<A2AServerState<E, S>>,
+    Path(task_id): Path<String>,
+) -> Result<Response, A2AError> {
+    let task = state
+        .store
+        .load(&task_id)
+        .await?
+        .ok_or_else(|| A2AError::task_not_found(&task_id))?;
+
+    // If task is already in terminal state, return UnsupportedOperationError.
+    if is_terminal_state(task.status.state) {
+        return Err(A2AError::unsupported_operation(
+            "Task is already in a terminal state",
+        ));
+    }
+
+    // Send current task state first, then stream updates.
+    let initial = stream::once({
+        let task_json = serde_json::to_string(&task).unwrap_or_default();
+        async move { Ok::<Event, Infallible>(Event::default().event("task").data(task_json)) }
+    });
+
+    let maybe_bus = {
+        let guard = state.event_buses.lock().await;
+        guard.get(&task_id).map(|bus| bus.clone_sender())
+    };
+
+    if let Some(event_bus) = maybe_bus {
+        let stream = BroadcastStream::new(event_bus.subscribe()).filter_map(|result| match result {
+            Ok(event) => match &event {
+                ExecutionEvent::Task(task) => {
+                    Event::default().event("task").json_data(task).ok().map(Ok)
+                }
+                ExecutionEvent::Message(msg) => {
+                    Event::default().event("message").json_data(msg).ok().map(Ok)
+                }
+                ExecutionEvent::StatusUpdate(update) => {
+                    Event::default().event("status").json_data(update).ok().map(Ok)
+                }
+                ExecutionEvent::ArtifactUpdate(update) => {
+                    Event::default().event("artifact").json_data(update).ok().map(Ok)
+                }
+            },
+            Err(_) => None,
+        });
+        Ok(Sse::new(initial.chain(stream)).into_response())
+    } else {
+        Ok(Sse::new(initial).into_response())
+    }
+}
+
+/// `GET /extendedAgentCard` — v1.0 GetExtendedAgentCard.
+async fn handle_get_extended_agent_card<E: AgentExecutor, S: TaskStore>(
+    State(state): State<A2AServerState<E, S>>,
+) -> Result<Json<AgentCard>, A2AError> {
+    let card = state.executor.agent_card(&state.base_url);
+    if card.capabilities.extended_agent_card.unwrap_or(false) {
+        Ok(Json(card))
+    } else {
+        Err(A2AError::unsupported_operation("GetExtendedAgentCard"))
+    }
 }
 
 /// Compatibility handler for `POST /tasks/{id}:cancel`.

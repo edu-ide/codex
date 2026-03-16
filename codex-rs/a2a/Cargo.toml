@@ -18,7 +18,7 @@ server = ["dep:reqwest"]
 client = ["dep:reqwest"]
 
 [dependencies]
-axum = { workspace = true, features = ["json", "tokio", "http1"] }
+axum = { workspace = true, features = ["json", "tokio", "http1", "query"] }
 futures = { workspace = true }
 http = { workspace = true }
 reqwest = { workspace = true, features = ["json", "stream"], optional = true }
