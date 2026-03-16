@@ -1,5 +1,6 @@
 pub(crate) mod agent_jobs;
 pub mod apply_patch;
+pub mod remote_agent;
 mod artifacts;
 mod code_mode;
 pub mod remote_agent;
