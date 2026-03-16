@@ -1,5 +1,7 @@
 #![expect(clippy::expect_used)]
 
+use anyhow::Context as _;
+use anyhow::ensure;
 use codex_utils_cargo_bin::CargoBinError;
 use ctor::ctor;
 use tempfile::TempDir;
@@ -19,6 +21,7 @@ pub mod responses;
 pub mod streaming_sse;
 pub mod test_codex;
 pub mod test_codex_exec;
+pub mod zsh_fork;
 
 #[ctor]
 fn enable_deterministic_unified_exec_process_ids_for_tests() {
@@ -99,6 +102,42 @@ pub fn test_tmp_path_buf() -> PathBuf {
     test_tmp_path().into_path_buf()
 }
 
+/// Fetch a DotSlash resource and return the resolved executable/file path.
+pub fn fetch_dotslash_file(
+    dotslash_file: &std::path::Path,
+    dotslash_cache: Option<&std::path::Path>,
+) -> anyhow::Result<PathBuf> {
+    let mut command = std::process::Command::new("dotslash");
+    command.arg("--").arg("fetch").arg(dotslash_file);
+    if let Some(dotslash_cache) = dotslash_cache {
+        command.env("DOTSLASH_CACHE", dotslash_cache);
+    }
+    let output = command.output().with_context(|| {
+        format!(
+            "failed to run dotslash to fetch resource {}",
+            dotslash_file.display()
+        )
+    })?;
+    ensure!(
+        output.status.success(),
+        "dotslash fetch failed for {}: {}",
+        dotslash_file.display(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    let fetched_path = String::from_utf8(output.stdout)
+        .context("dotslash fetch output was not utf8")?
+        .trim()
+        .to_string();
+    ensure!(!fetched_path.is_empty(), "dotslash fetch output was empty");
+    let fetched_path = PathBuf::from(fetched_path);
+    ensure!(
+        fetched_path.is_file(),
+        "dotslash returned non-file path: {}",
+        fetched_path.display()
+    );
+    Ok(fetched_path)
+}
+
 /// Returns a default `Config` whose on-disk state is confined to the provided
 /// temporary directory. Using a per-test directory keeps tests hermetic and
 /// avoids clobbering a developer’s real `~/.codex`.
@@ -175,9 +214,12 @@ pub fn load_sse_fixture_with_id_from_str(raw: &str, id: &str) -> String {
         .collect()
 }
 
-pub async fn wait_for_event<F>(codex: &CodexThread, predicate: F) -> codex_core::protocol::EventMsg
+pub async fn wait_for_event<F>(
+    codex: &CodexThread,
+    predicate: F,
+) -> codex_protocol::protocol::EventMsg
 where
-    F: FnMut(&codex_core::protocol::EventMsg) -> bool,
+    F: FnMut(&codex_protocol::protocol::EventMsg) -> bool,
 {
     use tokio::time::Duration;
     wait_for_event_with_timeout(codex, predicate, Duration::from_secs(1)).await
@@ -185,7 +227,7 @@ where
 
 pub async fn wait_for_event_match<T, F>(codex: &CodexThread, matcher: F) -> T
 where
-    F: Fn(&codex_core::protocol::EventMsg) -> Option<T>,
+    F: Fn(&codex_protocol::protocol::EventMsg) -> Option<T>,
 {
     let ev = wait_for_event(codex, |ev| matcher(ev).is_some()).await;
     matcher(&ev).unwrap()
@@ -195,9 +237,9 @@ pub async fn wait_for_event_with_timeout<F>(
     codex: &CodexThread,
     mut predicate: F,
     wait_time: tokio::time::Duration,
-) -> codex_core::protocol::EventMsg
+) -> codex_protocol::protocol::EventMsg
 where
-    F: FnMut(&codex_core::protocol::EventMsg) -> bool,
+    F: FnMut(&codex_protocol::protocol::EventMsg) -> bool,
 {
     use tokio::time::Duration;
     use tokio::time::timeout;
@@ -429,6 +471,42 @@ macro_rules! skip_if_no_network {
                 "Skipping test because it cannot execute when network is disabled in a Codex sandbox."
             );
             return $return_value;
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! codex_linux_sandbox_exe_or_skip {
+    () => {{
+        #[cfg(target_os = "linux")]
+        {
+            match codex_utils_cargo_bin::cargo_bin("codex-linux-sandbox") {
+                Ok(path) => Some(path),
+                Err(err) => {
+                    eprintln!("codex-linux-sandbox binary not available, skipping test: {err}");
+                    return;
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }};
+    ($return_value:expr $(,)?) => {{
+        #[cfg(target_os = "linux")]
+        {
+            match codex_utils_cargo_bin::cargo_bin("codex-linux-sandbox") {
+                Ok(path) => Some(path),
+                Err(err) => {
+                    eprintln!("codex-linux-sandbox binary not available, skipping test: {err}");
+                    return $return_value;
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
         }
     }};
 }

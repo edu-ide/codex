@@ -265,6 +265,20 @@ fn find_single_command_node(root: Node<'_>) -> Option<Node<'_>> {
     single_command
 }
 
+fn has_named_descendant_kind(node: Node<'_>, kind: &str) -> bool {
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        if current.kind() == kind {
+            return true;
+        }
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    false
+}
+
 fn parse_double_quoted_string(node: Node, src: &str) -> Option<String> {
     if node.kind() != "string" {
         return None;

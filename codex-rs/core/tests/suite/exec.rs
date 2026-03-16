@@ -7,10 +7,12 @@ use codex_core::exec::ExecParams;
 use codex_core::exec::ExecToolCallOutput;
 use codex_core::exec::SandboxType;
 use codex_core::exec::process_exec_tool_call;
-use codex_core::protocol::SandboxPolicy;
 use codex_core::sandboxing::SandboxPermissions;
 use codex_core::spawn::CODEX_SANDBOX_ENV_VAR;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::NetworkSandboxPolicy;
+use codex_protocol::protocol::SandboxPolicy;
 use tempfile::TempDir;
 
 use codex_core::error::Result;
@@ -37,16 +39,26 @@ async fn run_test_cmd(tmp: TempDir, cmd: Vec<&str>) -> Result<ExecToolCallOutput
         expiration: 1000.into(),
         env: HashMap::new(),
         network: None,
-        network_attempt_id: None,
         sandbox_permissions: SandboxPermissions::UseDefault,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
+        windows_sandbox_private_desktop: false,
         justification: None,
         arg0: None,
     };
 
     let policy = SandboxPolicy::new_read_only_policy();
 
-    process_exec_tool_call(params, &policy, tmp.path(), &None, false, None).await
+    process_exec_tool_call(
+        params,
+        &policy,
+        &FileSystemSandboxPolicy::from(&policy),
+        NetworkSandboxPolicy::from(&policy),
+        tmp.path(),
+        &None,
+        false,
+        None,
+    )
+    .await
 }
 
 /// Command succeeds with exit code 0 normally

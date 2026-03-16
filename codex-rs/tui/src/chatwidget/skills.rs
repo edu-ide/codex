@@ -14,13 +14,14 @@ use crate::skills_helpers::skill_description;
 use crate::skills_helpers::skill_display_name;
 use codex_chatgpt::connectors::AppInfo;
 use codex_core::connectors::connector_mention_slug;
-use codex_core::protocol::ListSkillsResponseEvent;
-use codex_core::protocol::SkillMetadata as ProtocolSkillMetadata;
-use codex_core::protocol::SkillsListEntry;
+use codex_core::mention_syntax::TOOL_MENTION_SIGIL;
 use codex_core::skills::model::SkillDependencies;
 use codex_core::skills::model::SkillInterface;
 use codex_core::skills::model::SkillMetadata;
 use codex_core::skills::model::SkillToolDependency;
+use codex_protocol::protocol::ListSkillsResponseEvent;
+use codex_protocol::protocol::SkillMetadata as ProtocolSkillMetadata;
+use codex_protocol::protocol::SkillsListEntry;
 
 impl ChatWidget {
     pub(crate) fn open_skills_list(&mut self) {
@@ -78,7 +79,7 @@ impl ChatWidget {
                 let display_name = skill_display_name(&core_skill).to_string();
                 let description = skill_description(&core_skill).to_string();
                 let name = core_skill.name.clone();
-                let path = core_skill.path;
+                let path = core_skill.path_to_skills_md;
                 SkillsToggleItem {
                     name: display_name,
                     skill_name: name,
@@ -190,8 +191,9 @@ fn protocol_skill_to_core(skill: &ProtocolSkillMetadata) -> SkillMetadata {
                     .collect(),
             }),
         policy: None,
-        permissions: None,
-        path: skill.path.clone(),
+        permission_profile: None,
+        managed_network_override: None,
+        path_to_skills_md: skill.path.clone(),
         scope: skill.scope,
         kind: None,
         agent_card_url: None,
@@ -231,23 +233,23 @@ pub(crate) fn find_skill_mentions_with_tool_mentions(
     let mut matches: Vec<SkillMetadata> = Vec::new();
 
     for skill in skills {
-        if seen_paths.contains(&skill.path) {
+        if seen_paths.contains(&skill.path_to_skills_md) {
             continue;
         }
-        let path_str = skill.path.to_string_lossy();
+        let path_str = skill.path_to_skills_md.to_string_lossy();
         if mention_skill_paths.contains(path_str.as_ref()) {
-            seen_paths.insert(skill.path.clone());
+            seen_paths.insert(skill.path_to_skills_md.clone());
             seen_names.insert(skill.name.clone());
             matches.push(skill.clone());
         }
     }
 
     for skill in skills {
-        if seen_paths.contains(&skill.path) {
+        if seen_paths.contains(&skill.path_to_skills_md) {
             continue;
         }
         if mentions.names.contains(&skill.name) && seen_names.insert(skill.name.clone()) {
-            seen_paths.insert(skill.path.clone());
+            seen_paths.insert(skill.path_to_skills_md.clone());
             matches.push(skill.clone());
         }
     }
@@ -299,6 +301,10 @@ pub(crate) struct ToolMentions {
 }
 
 fn extract_tool_mentions_from_text(text: &str) -> ToolMentions {
+    extract_tool_mentions_from_text_with_sigil(text, TOOL_MENTION_SIGIL)
+}
+
+fn extract_tool_mentions_from_text_with_sigil(text: &str, sigil: char) -> ToolMentions {
     let text_bytes = text.as_bytes();
     let mut names: HashSet<String> = HashSet::new();
     let mut linked_paths: HashMap<String, String> = HashMap::new();
@@ -308,10 +314,10 @@ fn extract_tool_mentions_from_text(text: &str) -> ToolMentions {
         let byte = text_bytes[index];
         if byte == b'['
             && let Some((name, path, end_index)) =
-                parse_linked_tool_mention(text, text_bytes, index)
+                parse_linked_tool_mention(text, text_bytes, index, sigil)
         {
             if !is_common_env_var(name) {
-                if !is_app_or_mcp_path(path) {
+                if is_skill_path(path) {
                     names.insert(name.to_string());
                 }
                 linked_paths
@@ -322,7 +328,7 @@ fn extract_tool_mentions_from_text(text: &str) -> ToolMentions {
             continue;
         }
 
-        if byte != b'$' {
+        if byte != sigil as u8 {
             index += 1;
             continue;
         }
@@ -361,13 +367,14 @@ fn parse_linked_tool_mention<'a>(
     text: &'a str,
     text_bytes: &[u8],
     start: usize,
+    sigil: char,
 ) -> Option<(&'a str, &'a str, usize)> {
-    let dollar_index = start + 1;
-    if text_bytes.get(dollar_index) != Some(&b'$') {
+    let sigil_index = start + 1;
+    if text_bytes.get(sigil_index) != Some(&(sigil as u8)) {
         return None;
     }
 
-    let name_start = dollar_index + 1;
+    let name_start = sigil_index + 1;
     let first_name_byte = text_bytes.get(name_start)?;
     if !is_mention_name_char(*first_name_byte) {
         return None;
@@ -436,7 +443,7 @@ fn is_mention_name_char(byte: u8) -> bool {
 }
 
 fn is_skill_path(path: &str) -> bool {
-    !is_app_or_mcp_path(path)
+    !path.starts_with("app://") && !path.starts_with("mcp://") && !path.starts_with("plugin://")
 }
 
 fn normalize_skill_path(path: &str) -> &str {
@@ -446,8 +453,4 @@ fn normalize_skill_path(path: &str) -> &str {
 fn app_id_from_path(path: &str) -> Option<&str> {
     path.strip_prefix("app://")
         .filter(|value| !value.is_empty())
-}
-
-fn is_app_or_mcp_path(path: &str) -> bool {
-    path.starts_with("app://") || path.starts_with("mcp://")
 }
