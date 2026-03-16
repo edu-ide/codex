@@ -588,6 +588,130 @@ impl A2AClient {
             "HTTP error for {method}: {status}. Response: {body}"
         ))
     }
+
+    // ────────────────────────────────────────────────────────────
+    // HTTP REST v1.0 methods (POST /v1/message:send, etc.)
+    // ────────────────────────────────────────────────────────────
+
+    /// Send a message via HTTP REST (v1.0).
+    ///
+    /// `POST {base}/v1/message:send` with JSON body.
+    pub async fn send_message_http(
+        &self,
+        request: SendMessageRequest,
+    ) -> Result<SendMessageResponse, ClientError> {
+        let base = self.endpoint.trim_end_matches('/');
+        let url = format!("{}/v1/message:send", base);
+
+        let mut req = self
+            .http
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json");
+        if let Some(ext) = extension_header_value(&request.message.extensions) {
+            req = req
+                .header(HTTP_EXTENSION_HEADER, ext.clone())
+                .header(LEGACY_HTTP_EXTENSION_HEADER, ext);
+        }
+        let resp = req.json(&request).send().await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+
+        if !status.is_success() {
+            return Err(self.parse_http_error("v1/message:send", status, &body));
+        }
+
+        serde_json::from_str(&body).map_err(ClientError::Json)
+    }
+
+    /// Send a message via HTTP REST with streaming (v1.0).
+    ///
+    /// `POST {base}/v1/message:stream` returns SSE events.
+    pub async fn send_message_stream_http(
+        &self,
+        request: SendMessageRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<Result<StreamEvent, ClientError>>, ClientError> {
+        let base = self.endpoint.trim_end_matches('/');
+        let url = format!("{}/v1/message:stream", base);
+
+        let mut req = self
+            .http
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream");
+        if let Some(ext) = extension_header_value(&request.message.extensions) {
+            req = req
+                .header(HTTP_EXTENSION_HEADER, ext.clone())
+                .header(LEGACY_HTTP_EXTENSION_HEADER, ext);
+        }
+        let resp = req.json(&request).send().await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(self.parse_http_error("v1/message:stream", status, &body));
+        }
+
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+
+        tokio::spawn(async move {
+            let body = match resp.text().await {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = tx.send(Err(ClientError::Http(e))).await;
+                    return;
+                }
+            };
+
+            let mut buffer = String::new();
+            for line in body.lines() {
+                if let Some(data) = line.strip_prefix("data: ") {
+                    buffer = data.to_string();
+                } else if line.starts_with("data:") {
+                    buffer = line[5..].to_string();
+                } else if line.is_empty() && !buffer.is_empty() {
+                    let event = parse_sse_event_data(&buffer);
+                    let is_terminal = matches!(
+                        &event,
+                        Ok(StreamEvent::Task(t))
+                            if matches!(
+                                t.status.state,
+                                TaskState::Completed | TaskState::Failed | TaskState::Canceled
+                            )
+                    );
+                    if tx.send(event).await.is_err() {
+                        return;
+                    }
+                    if is_terminal {
+                        return;
+                    }
+                    buffer.clear();
+                }
+            }
+            if !buffer.is_empty() {
+                let _ = tx.send(parse_sse_event_data(&buffer)).await;
+            }
+        });
+
+        Ok(rx)
+    }
+
+    /// Fetch agent card from v1.0 endpoint `/.well-known/agent.json`.
+    pub async fn fetch_agent_card_v1(&self) -> Result<serde_json::Value, ClientError> {
+        let base = self.endpoint.trim_end_matches('/');
+        let card_url = format!("{base}/.well-known/agent.json");
+        let resp = self
+            .http
+            .get(&card_url)
+            .header("Accept", "application/json")
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            // Fall back to v0.3 endpoint
+            return self.fetch_agent_card().await;
+        }
+        Ok(resp.json().await?)
+    }
 }
 
 // ============================================================
