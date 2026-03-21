@@ -73,7 +73,7 @@ impl ToolHandler for RemoteAgentHandler {
             subscribe: false,
         });
 
-        let base_url = self.url.replace("/.well-known/agent-card.json", "");
+        let base_url = self.url.replace("/.well-known/agent.json", "");
         let client = a2a_rs::client::A2AClient::new(base_url);
         
         let task_id = uuid::Uuid::new_v4().to_string();

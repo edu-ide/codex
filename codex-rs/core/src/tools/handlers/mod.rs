@@ -10,6 +10,8 @@ mod mcp_resource;
 pub(crate) mod multi_agents;
 mod plan;
 mod read_file;
+// ── ilhae-agent extensions (isolated from upstream) ──
+pub(crate) mod remote_agent;
 mod request_permissions;
 mod request_user_input;
 mod shell;

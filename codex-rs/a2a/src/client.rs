@@ -248,11 +248,11 @@ impl A2AClient {
 
     /// Create a client by fetching the agent card from the base URL.
     ///
-    /// Fetches `{base_url}/.well-known/agent-card.json` (v0.3) and extracts
+    /// Fetches `{base_url}/.well-known/agent.json` (v0.3) and extracts
     /// the service endpoint URL.
     pub async fn from_base_url(base_url: &str) -> Result<Self, ClientError> {
         let base = base_url.trim_end_matches('/');
-        let card_url = format!("{base}/.well-known/agent-card.json");
+        let card_url = format!("{base}/.well-known/agent.json");
 
         let http = HttpClient::new();
         let resp = http
@@ -303,11 +303,11 @@ impl A2AClient {
         self.agent_card.as_ref()
     }
 
-    /// Fetch the agent card from `/.well-known/agent-card.json` (v0.3 format).
+    /// Fetch the agent card from `/.well-known/agent.json` (v0.3 format).
     pub async fn fetch_agent_card(&self) -> Result<serde_json::Value, ClientError> {
         // Derive base URL from endpoint
         let base = self.endpoint.trim_end_matches('/');
-        let card_url = format!("{base}/.well-known/agent-card.json");
+        let card_url = format!("{base}/.well-known/agent.json");
         let resp = self
             .http
             .get(&card_url)
