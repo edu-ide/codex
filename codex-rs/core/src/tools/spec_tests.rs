@@ -2962,3 +2962,37 @@ fn chat_tools_include_top_level_name() {
         })]
     );
 }
+
+#[test]
+fn llama_server_tool_serialization_converts_supported_tools_to_functions_only() {
+    let tools = vec![
+        ToolSpec::LocalShell {},
+        create_apply_patch_freeform_tool(),
+        create_js_repl_tool(),
+        ToolSpec::WebSearch {
+            external_web_access: Some(false),
+            filters: None,
+            user_location: None,
+            search_context_size: None,
+            search_content_types: None,
+        },
+    ];
+
+    let responses_json = create_tools_json_for_responses_api_with_provider(
+        &tools,
+        crate::model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID,
+    )
+    .unwrap();
+
+    let tool_names = responses_json
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(|name| name.as_str()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(tool_names, vec!["local_shell", "apply_patch", "js_repl"]);
+    assert!(
+        responses_json
+            .iter()
+            .all(|tool| tool.get("type") == Some(&json!("function")))
+    );
+}

@@ -5076,6 +5076,12 @@ fn test_set_default_oss_provider() -> std::io::Result<()> {
     assert!(content.contains("oss_provider = \"ollama\""));
     assert!(!content.contains("oss_provider = \"lmstudio\""));
 
+    // Test switching to llama-server
+    set_default_oss_provider(codex_home, LLAMA_SERVER_OSS_PROVIDER_ID)?;
+    let content = std::fs::read_to_string(&config_path)?;
+    assert!(content.contains("oss_provider = \"llama-server\""));
+    assert!(!content.contains("oss_provider = \"ollama\""));
+
     // Test invalid provider
     let result = set_default_oss_provider(codex_home, "invalid_provider");
     assert!(result.is_err());

@@ -36,8 +36,25 @@ fn main() {
     }
 
     if let Err(err) = try_build_vendored_bwrap() {
+        if has_system_bwrap() {
+            println!(
+                "cargo:warning=failed to compile vendored bubblewrap; falling back to system bwrap from PATH: {err}"
+            );
+            return;
+        }
+
         panic!("failed to compile vendored bubblewrap for Linux target: {err}");
     }
+}
+
+fn has_system_bwrap() -> bool {
+    let Some(path_var) = env::var_os("PATH") else {
+        return false;
+    };
+
+    env::split_paths(&path_var)
+        .map(|dir| dir.join("bwrap"))
+        .any(|candidate| candidate.is_file())
 }
 
 fn try_build_vendored_bwrap() -> Result<(), String> {

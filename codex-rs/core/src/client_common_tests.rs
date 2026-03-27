@@ -199,6 +199,43 @@ fn reserializes_shell_outputs_for_function_and_custom_tool_calls() {
 }
 
 #[test]
+fn llama_server_keeps_function_style_apply_patch_outputs_unmodified() {
+    let raw_output = r#"{"output":"hello","metadata":{"exit_code":0,"duration_seconds":0.5}}"#;
+    let prompt = Prompt {
+        input: vec![
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                namespace: None,
+                arguments: "{}".to_string(),
+                call_id: "call-1".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "call-1".to_string(),
+                output: FunctionCallOutputPayload::from_text(raw_output.to_string()),
+            },
+        ],
+        tools: vec![tools::ToolSpec::Freeform(tools::FreeformTool {
+            name: "apply_patch".to_string(),
+            description: "patch".to_string(),
+            format: tools::FreeformToolFormat {
+                r#type: "grammar".to_string(),
+                syntax: "lark".to_string(),
+                definition: "start:".to_string(),
+            },
+        })],
+        ..Prompt::default()
+    };
+
+    assert_eq!(
+        prompt.get_formatted_input_for_provider(Some(
+            crate::model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID
+        )),
+        prompt.input
+    );
+}
+
+#[test]
 fn tool_search_output_namespace_serializes_with_deferred_child_tools() {
     let namespace = tools::ToolSearchOutputTool::Namespace(tools::ResponsesApiNamespace {
         name: "mcp__codex_apps__calendar".to_string(),

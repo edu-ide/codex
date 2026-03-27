@@ -294,8 +294,8 @@ pub async fn run_main(
             .push("web_search=\"live\"".to_string());
     }
 
-    // When using `--oss`, let the bootstrapper pick the model (defaulting to
-    // gpt-oss:20b) and ensure it is present locally. Also, force the built‑in
+    // When using `--oss`, let the bootstrapper pick a provider-specific local
+    // default model and ensure the provider is reachable. Also, force the built‑in
     let raw_overrides = cli.config_overrides.raw_overrides.clone();
     // `oss` model provider.
     let overrides_cli = codex_utils_cli::CliConfigOverrides { raw_overrides };

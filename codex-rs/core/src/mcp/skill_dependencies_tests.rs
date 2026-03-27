@@ -14,6 +14,8 @@ fn skill_with_tools(tools: Vec<SkillToolDependency>) -> SkillMetadata {
         policy: None,
         path_to_skills_md: PathBuf::from("skill"),
         scope: SkillScope::User,
+        kind: None,
+        agent_card_url: None,
     }
 }
 
