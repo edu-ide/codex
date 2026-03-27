@@ -256,10 +256,7 @@ pub(crate) fn create_tool_for_codex_tool_call_reply_param() -> Tool {
     }
 }
 
-fn create_tool_input_schema(
-    schema: schemars::Schema,
-    panic_message: &str,
-) -> Arc<JsonObject> {
+fn create_tool_input_schema(schema: schemars::Schema, panic_message: &str) -> Arc<JsonObject> {
     #[expect(clippy::expect_used)]
     let schema_value = serde_json::to_value(&schema).expect(panic_message);
     let mut schema_object = match schema_value {

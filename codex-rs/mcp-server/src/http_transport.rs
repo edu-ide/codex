@@ -32,8 +32,7 @@ pub struct HttpState {
     pub incoming_tx: mpsc::Sender<crate::IncomingMessage>,
     /// Map of pending request IDs → oneshot senders that will receive the
     /// JSON-RPC response from the processor.
-    pub pending:
-        Arc<Mutex<HashMap<String, oneshot::Sender<OutgoingJsonRpcMessage>>>>,
+    pub pending: Arc<Mutex<HashMap<String, oneshot::Sender<OutgoingJsonRpcMessage>>>>,
     /// Sender for SSE event broadcast.
     pub sse_tx: tokio::sync::broadcast::Sender<String>,
 }
@@ -93,8 +92,7 @@ async fn handle_mcp_post(
 
         if wants_sse {
             // Return SSE stream: first the response, then ongoing notifications.
-            let (sse_tx, sse_rx) =
-                mpsc::channel::<Result<Event, std::convert::Infallible>>(64);
+            let (sse_tx, sse_rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(64);
 
             // Wait for the response in a spawned task and push it as SSE event.
             let broadcast_rx = state.sse_tx.subscribe();
@@ -102,9 +100,7 @@ async fn handle_mcp_post(
                 // 1. Send the response once ready.
                 if let Ok(resp) = rx.await {
                     if let Ok(json) = serde_json::to_string(&resp) {
-                        let _ = sse_tx
-                            .send(Ok(Event::default().data(json)))
-                            .await;
+                        let _ = sse_tx.send(Ok(Event::default().data(json))).await;
                     }
                 }
                 // 2. Forward broadcast notifications.
@@ -112,11 +108,7 @@ async fn handle_mcp_post(
                 loop {
                     match broadcast_rx.recv().await {
                         Ok(data) => {
-                            if sse_tx
-                                .send(Ok(Event::default().data(data)))
-                                .await
-                                .is_err()
-                            {
+                            if sse_tx.send(Ok(Event::default().data(data))).await.is_err() {
                                 break;
                             }
                         }
@@ -131,8 +123,7 @@ async fn handle_mcp_post(
         }
 
         // Non-SSE: wait for the JSON-RPC response and return it as JSON.
-        match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await
-        {
+        match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
             Ok(Ok(resp)) => {
                 return (
                     StatusCode::OK,
@@ -166,11 +157,7 @@ async fn handle_mcp_sse(State(state): State<HttpState>) -> impl IntoResponse {
         loop {
             match broadcast_rx.recv().await {
                 Ok(data) => {
-                    if tx
-                        .send(Ok(Event::default().data(data)))
-                        .await
-                        .is_err()
-                    {
+                    if tx.send(Ok(Event::default().data(data))).await.is_err() {
                         break;
                     }
                 }
