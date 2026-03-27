@@ -5,6 +5,7 @@ use crate::client_common::tools::ToolSpec;
 use crate::config::AgentRoleConfig;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp_connection_manager::ToolInfo;
+use crate::model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
 use crate::models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use crate::original_image_detail::can_request_original_image_detail;
 use crate::shell::Shell;
@@ -2346,6 +2347,126 @@ pub fn create_tools_json_for_responses_api(
     }
 
     Ok(tools_json)
+}
+
+pub fn create_tools_json_for_responses_api_with_provider(
+    tools: &[ToolSpec],
+    provider_id: &str,
+) -> crate::error::Result<Vec<serde_json::Value>> {
+    if provider_id == LLAMA_SERVER_OSS_PROVIDER_ID {
+        return create_tools_json_for_llama_server(tools);
+    }
+
+    create_tools_json_for_responses_api(tools)
+}
+
+fn create_tools_json_for_llama_server(
+    tools: &[ToolSpec],
+) -> crate::error::Result<Vec<serde_json::Value>> {
+    let mut tools_json = Vec::new();
+
+    for tool in tools {
+        let Some(tool) = llama_server_tool_spec(tool) else {
+            continue;
+        };
+        let json = serde_json::to_value(tool)?;
+        tools_json.push(json);
+    }
+
+    Ok(tools_json)
+}
+
+fn llama_server_tool_spec(tool: &ToolSpec) -> Option<ToolSpec> {
+    match tool {
+        ToolSpec::Function(tool) => Some(ToolSpec::Function(tool.clone())),
+        ToolSpec::LocalShell {} => Some(create_local_shell_json_tool()),
+        ToolSpec::Freeform(tool) if tool.name == "apply_patch" => {
+            Some(create_apply_patch_json_tool())
+        }
+        ToolSpec::Freeform(tool) if tool.name == "js_repl" => Some(create_js_repl_json_tool()),
+        ToolSpec::ToolSearch { .. }
+        | ToolSpec::ImageGeneration { .. }
+        | ToolSpec::WebSearch { .. }
+        | ToolSpec::Freeform(_) => None,
+    }
+}
+
+fn create_local_shell_json_tool() -> ToolSpec {
+    let mut properties = BTreeMap::from([
+        (
+            "command".to_string(),
+            JsonSchema::Array {
+                items: Box::new(JsonSchema::String { description: None }),
+                description: Some("The command to execute.".to_string()),
+            },
+        ),
+        (
+            "workdir".to_string(),
+            JsonSchema::String {
+                description: Some("The working directory to execute the command in.".to_string()),
+            },
+        ),
+        (
+            "timeout_ms".to_string(),
+            JsonSchema::Number {
+                description: Some("The timeout for the command in milliseconds.".to_string()),
+            },
+        ),
+    ]);
+    properties.extend(create_approval_parameters(
+        /*exec_permission_approvals_enabled*/ false,
+    ));
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "local_shell".to_string(),
+        description:
+            "Runs a local shell command and returns its output. The command is passed directly to execvp(). Always set `workdir` when possible."
+                .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["command".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+        output_schema: None,
+    })
+}
+
+fn create_js_repl_json_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "code".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "Raw JavaScript source to execute in the persistent Node kernel.".to_string(),
+                ),
+            },
+        ),
+        (
+            "timeout_ms".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Optional timeout override in milliseconds for this execution.".to_string(),
+                ),
+            },
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "js_repl".to_string(),
+        description:
+            "Runs JavaScript in a persistent Node kernel with top-level await. Send JSON with a `code` string and optional `timeout_ms`."
+                .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["code".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+        output_schema: None,
+    })
 }
 
 fn push_tool_spec(

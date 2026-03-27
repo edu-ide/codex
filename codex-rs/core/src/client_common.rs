@@ -1,6 +1,7 @@
 use crate::client_common::tools::ToolSpec;
 use crate::config::types::Personality;
 use crate::error::Result;
+use crate::model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
 pub use codex_api::common::ResponseEvent;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::FunctionCallOutputBody;
@@ -45,7 +46,10 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    pub(crate) fn get_formatted_input(&self) -> Vec<ResponseItem> {
+    pub(crate) fn get_formatted_input_for_provider(
+        &self,
+        provider_id: Option<&str>,
+    ) -> Vec<ResponseItem> {
         let mut input = self.input.clone();
 
         // when using the *Freeform* apply_patch tool specifically, tool outputs
@@ -53,7 +57,9 @@ impl Prompt {
         // the Function tool - note that this differs from the check above for
         // instructions. We declare the result as a named variable for clarity.
         let is_freeform_apply_patch_tool_present = self.tools.iter().any(|tool| match tool {
-            ToolSpec::Freeform(f) => f.name == "apply_patch",
+            ToolSpec::Freeform(f) => {
+                f.name == "apply_patch" && provider_id != Some(LLAMA_SERVER_OSS_PROVIDER_ID)
+            }
             _ => false,
         });
         if is_freeform_apply_patch_tool_present {

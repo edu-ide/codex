@@ -58,11 +58,11 @@ pub struct Cli {
     pub model: Option<String>,
 
     /// Convenience flag to select the local open source model provider. Equivalent to -c
-    /// model_provider=oss; verifies a local LM Studio or Ollama server is running.
+    /// model_provider=oss; verifies a local LM Studio, Ollama, or llama-server is running.
     #[arg(long = "oss", default_value_t = false)]
     pub oss: bool,
 
-    /// Specify which local provider to use (lmstudio or ollama).
+    /// Specify which local provider to use (lmstudio, ollama, or llama-server).
     /// If not specified with --oss, will use config default or show selection.
     #[arg(long = "local-provider")]
     pub oss_provider: Option<String>,

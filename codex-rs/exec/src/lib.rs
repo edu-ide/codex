@@ -49,6 +49,7 @@ use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStartedNotification;
 use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
+use codex_core::LLAMA_SERVER_OSS_PROVIDER_ID;
 use codex_core::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_core::OLLAMA_OSS_PROVIDER_ID;
 use codex_core::auth::AuthConfig;
@@ -296,7 +297,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
             Some(provider)
         } else {
             return Err(anyhow::anyhow!(
-                "No default OSS provider configured. Use --local-provider=provider or set oss_provider to one of: {LMSTUDIO_OSS_PROVIDER_ID}, {OLLAMA_OSS_PROVIDER_ID} in config.toml"
+                "No default OSS provider configured. Use --local-provider=provider or set oss_provider to one of: {LMSTUDIO_OSS_PROVIDER_ID}, {OLLAMA_OSS_PROVIDER_ID}, {LLAMA_SERVER_OSS_PROVIDER_ID} in config.toml"
             ));
         }
     } else {

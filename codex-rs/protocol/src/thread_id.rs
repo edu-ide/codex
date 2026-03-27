@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use schemars::JsonSchema;
 use schemars::SchemaGenerator;
-use schemars::Schema;
+use schemars::schema::Schema;
 use serde::Deserialize;
 use serde::Serialize;
 use ts_rs::TS;
@@ -83,8 +83,8 @@ impl<'de> Deserialize<'de> for ThreadId {
 }
 
 impl JsonSchema for ThreadId {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        std::borrow::Cow::Borrowed("ThreadId")
+    fn schema_name() -> String {
+        "ThreadId".to_string()
     }
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {

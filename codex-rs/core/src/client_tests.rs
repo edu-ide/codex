@@ -18,6 +18,7 @@ fn test_model_client(session_source: SessionSource) -> ModelClient {
     ModelClient::new(
         None,
         ThreadId::new(),
+        crate::model_provider_info::OPENAI_PROVIDER_ID.to_string(),
         provider,
         session_source,
         None,

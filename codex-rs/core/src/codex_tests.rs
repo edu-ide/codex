@@ -250,6 +250,7 @@ fn test_model_client_session() -> crate::client::ModelClientSession {
         None,
         ThreadId::try_from("00000000-0000-4000-8000-000000000001")
             .expect("test thread id should be valid"),
+        crate::model_provider_info::OPENAI_PROVIDER_ID.to_string(),
         crate::model_provider_info::ModelProviderInfo::create_openai_provider(
             /* base_url */ None,
         ),
@@ -2676,6 +2677,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         model_client: ModelClient::new(
             Some(auth_manager.clone()),
             conversation_id,
+            config.model_provider_id.clone(),
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
             config.model_verbosity,
@@ -3513,6 +3515,7 @@ pub(crate) async fn make_session_and_context_with_dynamic_tools_and_rx(
         model_client: ModelClient::new(
             Some(Arc::clone(&auth_manager)),
             conversation_id,
+            config.model_provider_id.clone(),
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
             config.model_verbosity,
