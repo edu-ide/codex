@@ -176,6 +176,7 @@ fn codex_apps_mcp_server_config(config: &Config, auth: Option<&CodexAuth>) -> Mc
         disabled_tools: None,
         scopes: None,
         oauth_resource: None,
+        tools: HashMap::new(),
     }
 }
 
@@ -252,7 +253,7 @@ fn effective_mcp_servers(
 pub async fn collect_mcp_snapshot(config: &Config) -> McpListToolsResponseEvent {
     let auth_manager = AuthManager::shared(
         config.codex_home.clone(),
-        false,
+        /*enable_codex_api_key_env*/ false,
         config.cli_auth_credentials_store_mode,
     );
     let auth = auth_manager.auth().await;

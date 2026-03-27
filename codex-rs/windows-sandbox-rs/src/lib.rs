@@ -1,3 +1,7 @@
+// Rust 2024 surfaces this lint across the crate; keep the edition bump separate
+// from the eventual unsafe cleanup.
+#![allow(unsafe_op_in_unsafe_fn)]
+
 macro_rules! windows_modules {
     ($($name:ident),+ $(,)?) => {
         $(#[cfg(target_os = "windows")] mod $name;)+
@@ -25,6 +29,14 @@ windows_modules!(
 );
 
 #[cfg(target_os = "windows")]
+#[path = "conpty/mod.rs"]
+mod conpty;
+
+#[cfg(target_os = "windows")]
+#[path = "elevated/ipc_framed.rs"]
+pub mod ipc_framed;
+
+#[cfg(target_os = "windows")]
 #[path = "setup_orchestrator.rs"]
 mod setup;
 
@@ -36,6 +48,7 @@ mod setup_error;
 
 #[cfg(target_os = "windows")]
 pub use acl::add_deny_write_ace;
+
 #[cfg(target_os = "windows")]
 pub use acl::allow_null_device;
 #[cfg(target_os = "windows")]
@@ -55,9 +68,13 @@ pub use cap::load_or_create_cap_sids;
 #[cfg(target_os = "windows")]
 pub use cap::workspace_cap_sid_for_cwd;
 #[cfg(target_os = "windows")]
+pub use conpty::spawn_conpty_process_as_user;
+#[cfg(target_os = "windows")]
 pub use dpapi::protect as dpapi_protect;
 #[cfg(target_os = "windows")]
 pub use dpapi::unprotect as dpapi_unprotect;
+#[cfg(target_os = "windows")]
+pub use elevated_impl::ElevatedSandboxCaptureRequest;
 #[cfg(target_os = "windows")]
 pub use elevated_impl::run_windows_sandbox_capture as run_windows_sandbox_capture_elevated;
 #[cfg(target_os = "windows")]
@@ -71,17 +88,33 @@ pub use identity::require_logon_sandbox_creds;
 #[cfg(target_os = "windows")]
 pub use identity::sandbox_setup_is_complete;
 #[cfg(target_os = "windows")]
-pub use logging::log_note;
-#[cfg(target_os = "windows")]
 pub use logging::LOG_FILE_NAME;
+#[cfg(target_os = "windows")]
+pub use logging::log_note;
 #[cfg(target_os = "windows")]
 pub use path_normalization::canonicalize_path;
 #[cfg(target_os = "windows")]
-pub use policy::parse_policy;
-#[cfg(target_os = "windows")]
 pub use policy::SandboxPolicy;
 #[cfg(target_os = "windows")]
+pub use policy::parse_policy;
+#[cfg(target_os = "windows")]
+pub use process::PipeSpawnHandles;
+#[cfg(target_os = "windows")]
+pub use process::StderrMode;
+#[cfg(target_os = "windows")]
+pub use process::StdinMode;
+#[cfg(target_os = "windows")]
 pub use process::create_process_as_user;
+#[cfg(target_os = "windows")]
+pub use process::read_handle_loop;
+#[cfg(target_os = "windows")]
+pub use process::spawn_process_with_pipes;
+#[cfg(target_os = "windows")]
+pub use setup::SETUP_VERSION;
+#[cfg(target_os = "windows")]
+pub use setup::SandboxSetupRequest;
+#[cfg(target_os = "windows")]
+pub use setup::SetupRootOverrides;
 #[cfg(target_os = "windows")]
 pub use setup::run_elevated_setup;
 #[cfg(target_os = "windows")]
@@ -95,7 +128,11 @@ pub use setup::sandbox_dir;
 #[cfg(target_os = "windows")]
 pub use setup::sandbox_secrets_dir;
 #[cfg(target_os = "windows")]
-pub use setup::SETUP_VERSION;
+pub use setup_error::SetupErrorCode;
+#[cfg(target_os = "windows")]
+pub use setup_error::SetupErrorReport;
+#[cfg(target_os = "windows")]
+pub use setup_error::SetupFailure;
 #[cfg(target_os = "windows")]
 pub use setup_error::extract_failure as extract_setup_failure;
 #[cfg(target_os = "windows")]
@@ -104,12 +141,6 @@ pub use setup_error::sanitize_setup_metric_tag_value;
 pub use setup_error::setup_error_path;
 #[cfg(target_os = "windows")]
 pub use setup_error::write_setup_error_report;
-#[cfg(target_os = "windows")]
-pub use setup_error::SetupErrorCode;
-#[cfg(target_os = "windows")]
-pub use setup_error::SetupErrorReport;
-#[cfg(target_os = "windows")]
-pub use setup_error::SetupFailure;
 #[cfg(target_os = "windows")]
 pub use token::convert_string_sid_to_sid;
 #[cfg(target_os = "windows")]
@@ -121,11 +152,13 @@ pub use token::create_workspace_write_token_with_caps_from;
 #[cfg(target_os = "windows")]
 pub use token::get_current_token_for_restriction;
 #[cfg(target_os = "windows")]
+pub use windows_impl::CaptureResult;
+#[cfg(target_os = "windows")]
 pub use windows_impl::run_windows_sandbox_capture;
 #[cfg(target_os = "windows")]
-pub use windows_impl::run_windows_sandbox_legacy_preflight;
+pub use windows_impl::run_windows_sandbox_capture_with_extra_deny_write_paths;
 #[cfg(target_os = "windows")]
-pub use windows_impl::CaptureResult;
+pub use windows_impl::run_windows_sandbox_legacy_preflight;
 #[cfg(target_os = "windows")]
 pub use winutil::quote_windows_arg;
 #[cfg(target_os = "windows")]
@@ -140,13 +173,13 @@ pub use workspace_acl::protect_workspace_agents_dir;
 pub use workspace_acl::protect_workspace_codex_dir;
 
 #[cfg(not(target_os = "windows"))]
+pub use stub::CaptureResult;
+#[cfg(not(target_os = "windows"))]
 pub use stub::apply_world_writable_scan_and_denies;
 #[cfg(not(target_os = "windows"))]
 pub use stub::run_windows_sandbox_capture;
 #[cfg(not(target_os = "windows"))]
 pub use stub::run_windows_sandbox_legacy_preflight;
-#[cfg(not(target_os = "windows"))]
-pub use stub::CaptureResult;
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
@@ -154,8 +187,8 @@ mod windows_impl {
     use super::acl::add_deny_write_ace;
     use super::acl::allow_null_device;
     use super::acl::revoke_ace;
-    use super::allow::compute_allow_paths;
     use super::allow::AllowDenyPaths;
+    use super::allow::compute_allow_paths;
     use super::cap::load_or_create_cap_sids;
     use super::cap::workspace_cap_sid_for_cwd;
     use super::env::apply_no_network_to_env;
@@ -165,8 +198,8 @@ mod windows_impl {
     use super::logging::log_start;
     use super::logging::log_success;
     use super::path_normalization::canonicalize_path;
-    use super::policy::parse_policy;
     use super::policy::SandboxPolicy;
+    use super::policy::parse_policy;
     use super::process::create_process_as_user;
     use super::token::convert_string_sid_to_sid;
     use super::token::create_workspace_write_token_with_caps_from;
@@ -182,13 +215,13 @@ mod windows_impl {
     use std::ptr;
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::Foundation::GetLastError;
-    use windows_sys::Win32::Foundation::SetHandleInformation;
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Foundation::HANDLE_FLAG_INHERIT;
+    use windows_sys::Win32::Foundation::SetHandleInformation;
     use windows_sys::Win32::System::Pipes::CreatePipe;
     use windows_sys::Win32::System::Threading::GetExitCodeProcess;
-    use windows_sys::Win32::System::Threading::WaitForSingleObject;
     use windows_sys::Win32::System::Threading::INFINITE;
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
     type PipeHandles = ((HANDLE, HANDLE), (HANDLE, HANDLE), (HANDLE, HANDLE));
 
@@ -243,8 +276,33 @@ mod windows_impl {
         codex_home: &Path,
         command: Vec<String>,
         cwd: &Path,
+        env_map: HashMap<String, String>,
+        timeout_ms: Option<u64>,
+        use_private_desktop: bool,
+    ) -> Result<CaptureResult> {
+        run_windows_sandbox_capture_with_extra_deny_write_paths(
+            policy_json_or_preset,
+            sandbox_policy_cwd,
+            codex_home,
+            command,
+            cwd,
+            env_map,
+            timeout_ms,
+            &[],
+            use_private_desktop,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_windows_sandbox_capture_with_extra_deny_write_paths(
+        policy_json_or_preset: &str,
+        sandbox_policy_cwd: &Path,
+        codex_home: &Path,
+        command: Vec<String>,
+        cwd: &Path,
         mut env_map: HashMap<String, String>,
         timeout_ms: Option<u64>,
+        additional_deny_write_paths: &[PathBuf],
         use_private_desktop: bool,
     ) -> Result<CaptureResult> {
         let policy = parse_policy(policy_json_or_preset)?;
@@ -270,7 +328,7 @@ mod windows_impl {
         }
         if !policy.has_full_disk_read_access() {
             anyhow::bail!(
-                "Restricted read-only access is not yet supported by the Windows sandbox backend"
+                "Restricted read-only access requires the elevated Windows sandbox backend"
             );
         }
         let caps = load_or_create_cap_sids(codex_home)?;
@@ -301,21 +359,26 @@ mod windows_impl {
         };
 
         unsafe {
-            if is_workspace_write {
-                if let Ok(base) = super::token::get_current_token_for_restriction() {
-                    if let Ok(bytes) = super::token::get_logon_sid_bytes(base) {
-                        let mut tmp = bytes.clone();
-                        let psid2 = tmp.as_mut_ptr() as *mut c_void;
-                        allow_null_device(psid2);
-                    }
-                    windows_sys::Win32::Foundation::CloseHandle(base);
+            if is_workspace_write
+                && let Ok(base) = super::token::get_current_token_for_restriction()
+            {
+                if let Ok(bytes) = super::token::get_logon_sid_bytes(base) {
+                    let mut tmp = bytes.clone();
+                    let psid2 = tmp.as_mut_ptr() as *mut c_void;
+                    allow_null_device(psid2);
                 }
+                windows_sys::Win32::Foundation::CloseHandle(base);
             }
         }
 
         let persist_aces = is_workspace_write;
-        let AllowDenyPaths { allow, deny } =
+        let AllowDenyPaths { allow, mut deny } =
             compute_allow_paths(&policy, sandbox_policy_cwd, &current_dir, &env_map);
+        for path in additional_deny_write_paths {
+            if path.exists() {
+                deny.insert(path.clone());
+            }
+        }
         let canonical_cwd = canonicalize_path(&current_dir);
         let mut guards: Vec<(PathBuf, *mut c_void)> = Vec::new();
         unsafe {
@@ -325,23 +388,24 @@ mod windows_impl {
                 } else {
                     psid_generic
                 };
-                if let Ok(added) = add_allow_ace(p, psid) {
-                    if added {
-                        if persist_aces {
-                            if p.is_dir() {
-                                // best-effort seeding omitted intentionally
-                            }
-                        } else {
-                            guards.push((p.clone(), psid));
+                if let Ok(added) = add_allow_ace(p, psid)
+                    && added
+                {
+                    if persist_aces {
+                        if p.is_dir() {
+                            // best-effort seeding omitted intentionally
                         }
+                    } else {
+                        guards.push((p.clone(), psid));
                     }
                 }
             }
             for p in &deny {
-                if let Ok(added) = add_deny_write_ace(p, psid_generic) {
-                    if added && !persist_aces {
-                        guards.push((p.clone(), psid_generic));
-                    }
+                if let Ok(added) = add_deny_write_ace(p, psid_generic)
+                    && added
+                    && !persist_aces
+                {
+                    guards.push((p.clone(), psid_generic));
                 }
             }
             allow_null_device(psid_generic);
@@ -572,8 +636,8 @@ mod windows_impl {
 
 #[cfg(not(target_os = "windows"))]
 mod stub {
-    use anyhow::bail;
     use anyhow::Result;
+    use anyhow::bail;
     use codex_protocol::protocol::SandboxPolicy;
     use std::collections::HashMap;
     use std::path::Path;

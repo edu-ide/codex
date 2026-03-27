@@ -4,11 +4,11 @@
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::io::Result as IoResult;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::Config;
+use codex_exec_server::EnvironmentManager;
 use codex_utils_cli::CliConfigOverrides;
 
 use rmcp::model::ClientNotification;
@@ -28,10 +28,10 @@ use tracing_subscriber::prelude::*;
 mod codex_tool_config;
 mod codex_tool_runner;
 mod exec_approval;
+pub mod http_transport;
 pub(crate) mod message_processor;
 mod outgoing_message;
 mod patch_approval;
-pub mod http_transport;
 
 use crate::message_processor::MessageProcessor;
 use crate::outgoing_message::OutgoingMessage;
@@ -52,7 +52,14 @@ const OTEL_SERVICE_NAME: &str = "codex_mcp_server";
 type IncomingMessage = JsonRpcMessage<ClientRequest, Value, ClientNotification>;
 
 /// Shared pending map type for routing MCP responses to their requestors.
-type PendingMap = Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<crate::outgoing_message::OutgoingJsonRpcMessage>>>>;
+type PendingMap = Arc<
+    tokio::sync::Mutex<
+        HashMap<
+            String,
+            tokio::sync::oneshot::Sender<crate::outgoing_message::OutgoingJsonRpcMessage>,
+        >,
+    >,
+>;
 
 /// Options for controlling which transports to start.
 #[derive(Default)]
@@ -81,6 +88,7 @@ pub async fn run_main_with_transport(
     cli_config_overrides: CliConfigOverrides,
     transport: TransportOptions,
 ) -> IoResult<()> {
+    let environment_manager = Arc::new(EnvironmentManager::from_env());
     // Parse CLI overrides once and derive the base Config eagerly so later
     // components do not need to work with raw TOML values.
     let cli_kv_overrides = cli_config_overrides.parse_overrides().map_err(|e| {
@@ -168,26 +176,22 @@ pub async fn run_main_with_transport(
         // Start the outgoing interceptor that routes responses to HTTP
         // handlers and/or stdout.
         let write_stdout = !transport.http_only;
-        let interceptor_handle = tokio::spawn(
-            http_transport::outgoing_http_interceptor(
-                outgoing_rx.take().expect("outgoing_rx already taken"),
-                shared_pending.clone(),
-                sse_tx,
-                write_stdout,
-            ),
-        );
+        let interceptor_handle = tokio::spawn(http_transport::outgoing_http_interceptor(
+            outgoing_rx.take().expect("outgoing_rx already taken"),
+            shared_pending.clone(),
+            sse_tx,
+            write_stdout,
+        ));
 
         let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
         info!("HTTP MCP server listening on http://{addr}/mcp");
 
-        let listener = tokio::net::TcpListener::bind(addr)
-            .await
-            .map_err(|e| {
-                std::io::Error::new(
-                    ErrorKind::AddrInUse,
-                    format!("failed to bind HTTP server to {addr}: {e}"),
-                )
-            })?;
+        let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+            std::io::Error::new(
+                ErrorKind::AddrInUse,
+                format!("failed to bind HTTP server to {addr}: {e}"),
+            )
+        })?;
 
         let server_handle = tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, router).await {
@@ -207,8 +211,7 @@ pub async fn run_main_with_transport(
             use tokio::io::AsyncWriteExt;
             let mut stdout = io::stdout();
             while let Some(outgoing_message) = outgoing_rx.recv().await {
-                let msg: crate::outgoing_message::OutgoingJsonRpcMessage =
-                    outgoing_message.into();
+                let msg: crate::outgoing_message::OutgoingJsonRpcMessage = outgoing_message.into();
 
                 // Route responses to pending requestors (from A2A executor).
                 let id_str = extract_outgoing_id(&msg);
@@ -249,7 +252,8 @@ pub async fn run_main_with_transport(
         let mut processor = MessageProcessor::new(
             outgoing_message_sender,
             arg0_paths,
-            std::sync::Arc::new(config),
+            Arc::new(config),
+            environment_manager,
         );
         async move {
             while let Some(msg) = incoming_rx.recv().await {

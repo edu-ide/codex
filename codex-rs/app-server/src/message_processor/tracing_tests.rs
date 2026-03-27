@@ -24,6 +24,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::LoaderOverrides;
+use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
@@ -236,11 +237,10 @@ fn build_test_processor(
         outgoing,
         arg0_paths: Arg0DispatchPaths::default(),
         config,
+        environment_manager: Arc::new(EnvironmentManager::new(/*exec_server_url*/ None)),
         cli_overrides: Vec::new(),
         loader_overrides: LoaderOverrides::default(),
         cloud_requirements: CloudRequirementsLoader::default(),
-        auth_manager: None,
-        thread_manager: None,
         feedback: CodexFeedback::new(),
         log_db: None,
         config_warnings: Vec::new(),
@@ -392,6 +392,7 @@ async fn read_response<T: serde::de::DeserializeOwned>(
         let crate::outgoing_message::OutgoingEnvelope::ToConnection {
             connection_id,
             message,
+            ..
         } = envelope
         else {
             continue;
@@ -422,6 +423,7 @@ async fn read_thread_started_notification(
             crate::outgoing_message::OutgoingEnvelope::ToConnection {
                 connection_id,
                 message,
+                ..
             } => {
                 if connection_id != TEST_CONNECTION_ID {
                     continue;
@@ -580,7 +582,7 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
         parent_span_id: remote_parent_span_id,
         context: remote_trace,
     } = RemoteTrace::new("00000000000000000000000000000077", "0000000000000088");
-    let _: TurnStartResponse = harness
+    let turn_start_response: TurnStartResponse = harness
         .request(
             ClientRequest::TurnStart {
                 request_id: RequestId::Integer(3),
@@ -628,6 +630,10 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
     assert_eq!(server_request_span.parent_span_id, remote_parent_span_id);
     assert!(server_request_span.parent_span_is_remote);
     assert_eq!(server_request_span.span_context.trace_id(), remote_trace_id);
+    assert_eq!(
+        span_attr(server_request_span, "turn.id"),
+        Some(turn_start_response.turn.id.as_str())
+    );
     assert_span_descends_from(&spans, core_turn_span, server_request_span);
     harness.shutdown().await;
 

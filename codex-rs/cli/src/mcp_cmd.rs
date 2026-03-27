@@ -306,6 +306,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
         disabled_tools: None,
         scopes: None,
         oauth_resource: None,
+        tools: HashMap::new(),
     };
 
     servers.insert(name.clone(), new_entry);
@@ -321,8 +322,11 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
     match oauth_login_support(&transport).await {
         McpOAuthLoginSupport::Supported(oauth_config) => {
             println!("Detected OAuth support. Starting OAuth flow…");
-            let resolved_scopes =
-                resolve_oauth_scopes(None, None, oauth_config.discovered_scopes.clone());
+            let resolved_scopes = resolve_oauth_scopes(
+                /*explicit_scopes*/ None,
+                /*configured_scopes*/ None,
+                oauth_config.discovered_scopes.clone(),
+            );
             perform_oauth_login_retry_without_scopes(
                 &name,
                 &oauth_config.url,
@@ -330,7 +334,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
                 oauth_config.http_headers,
                 oauth_config.env_http_headers,
                 &resolved_scopes,
-                None,
+                /*oauth_resource*/ None,
                 config.mcp_oauth_callback_port,
                 config.mcp_oauth_callback_url.as_deref(),
             )
@@ -387,7 +391,7 @@ async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs)
         .await
         .context("failed to load configuration")?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(config.codex_home.clone())));
-    let mcp_servers = mcp_manager.effective_servers(&config, None);
+    let mcp_servers = mcp_manager.effective_servers(&config, /*auth*/ None);
 
     let LoginArgs { name, scopes } = login_args;
 
@@ -438,7 +442,7 @@ async fn run_logout(config_overrides: &CliConfigOverrides, logout_args: LogoutAr
         .await
         .context("failed to load configuration")?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(config.codex_home.clone())));
-    let mcp_servers = mcp_manager.effective_servers(&config, None);
+    let mcp_servers = mcp_manager.effective_servers(&config, /*auth*/ None);
 
     let LogoutArgs { name } = logout_args;
 
@@ -468,7 +472,7 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
         .await
         .context("failed to load configuration")?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(config.codex_home.clone())));
-    let mcp_servers = mcp_manager.effective_servers(&config, None);
+    let mcp_servers = mcp_manager.effective_servers(&config, /*auth*/ None);
 
     let mut entries: Vec<_> = mcp_servers.iter().collect();
     entries.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -717,7 +721,7 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
         .await
         .context("failed to load configuration")?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(config.codex_home.clone())));
-    let mcp_servers = mcp_manager.effective_servers(&config, None);
+    let mcp_servers = mcp_manager.effective_servers(&config, /*auth*/ None);
 
     let Some(server) = mcp_servers.get(&get_args.name) else {
         bail!("No MCP server named '{name}' found.", name = get_args.name);

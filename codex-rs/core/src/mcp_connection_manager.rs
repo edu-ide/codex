@@ -1231,12 +1231,11 @@ fn normalize_codex_apps_tool_name(
         return tool_name.to_string();
     }
 
-    let tool_name = sanitize_name(tool_name).replace('-', "_");
+    let tool_name = sanitize_name(tool_name);
 
     if let Some(connector_name) = connector_name
         .map(str::trim)
         .map(sanitize_name)
-        .map(|name| name.replace('-', "_"))
         .filter(|name| !name.is_empty())
         && let Some(stripped) = tool_name.strip_prefix(&connector_name)
         && !stripped.is_empty()
@@ -1247,7 +1246,6 @@ fn normalize_codex_apps_tool_name(
     if let Some(connector_id) = connector_id
         .map(str::trim)
         .map(sanitize_name)
-        .map(|name| name.replace('-', "_"))
         .filter(|name| !name.is_empty())
         && let Some(stripped) = tool_name.strip_prefix(&connector_id)
         && !stripped.is_empty()
@@ -1442,7 +1440,12 @@ async fn make_rmcp_client(
         } => {
             let command_os: OsString = command.into();
             let args_os: Vec<OsString> = args.into_iter().map(Into::into).collect();
-            RmcpClient::new_stdio_client(command_os, args_os, env, &env_vars, cwd)
+            let env_os = env.map(|env| {
+                env.into_iter()
+                    .map(|(key, value)| (key.into(), value.into()))
+                    .collect::<HashMap<_, _>>()
+            });
+            RmcpClient::new_stdio_client(command_os, args_os, env_os, &env_vars, cwd)
                 .await
                 .map_err(|err| StartupOutcomeError::from(anyhow!(err)))
         }
@@ -1587,7 +1590,9 @@ async fn list_tools_for_client_uncached(
     client: &Arc<RmcpClient>,
     timeout: Option<Duration>,
 ) -> Result<Vec<ToolInfo>> {
-    let resp = client.list_tools_with_connector_ids(None, timeout).await?;
+    let resp = client
+        .list_tools_with_connector_ids(/*params*/ None, timeout)
+        .await?;
     let tools = resp
         .tools
         .into_iter()

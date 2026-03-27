@@ -40,9 +40,10 @@ fn ignores_non_proc_mount_errors() {
 #[test]
 fn inserts_bwrap_argv0_before_command_separator() {
     let sandbox_policy = SandboxPolicy::new_read_only_policy();
-    let argv = build_bwrap_argv(
+    let mut argv = build_bwrap_argv(
         vec!["/bin/true".to_string()],
         &FileSystemSandboxPolicy::from(&sandbox_policy),
+        Path::new("/"),
         Path::new("/"),
         BwrapOptions {
             mount_proc: true,
@@ -50,6 +51,11 @@ fn inserts_bwrap_argv0_before_command_separator() {
         },
     )
     .args;
+    apply_inner_command_argv0_for_launcher(
+        &mut argv,
+        true,
+        "/tmp/codex-arg0-session/codex-linux-sandbox".to_string(),
+    );
     assert_eq!(
         argv,
         vec![
@@ -74,11 +80,79 @@ fn inserts_bwrap_argv0_before_command_separator() {
 }
 
 #[test]
+fn rewrites_inner_command_path_when_bwrap_lacks_argv0() {
+    let sandbox_policy = SandboxPolicy::new_read_only_policy();
+    let mut argv = build_bwrap_argv(
+        vec!["/bin/true".to_string()],
+        &FileSystemSandboxPolicy::from(&sandbox_policy),
+        Path::new("/"),
+        Path::new("/"),
+        BwrapOptions {
+            mount_proc: true,
+            network_mode: BwrapNetworkMode::FullAccess,
+        },
+    )
+    .args;
+    apply_inner_command_argv0_for_launcher(
+        &mut argv,
+        false,
+        "/tmp/codex-arg0-session/codex-linux-sandbox".to_string(),
+    );
+
+    assert!(!argv.iter().any(|arg| arg == "--argv0"));
+    assert!(
+        argv.windows(2)
+            .any(|window| { window == ["--", "/tmp/codex-arg0-session/codex-linux-sandbox"] })
+    );
+}
+
+#[test]
+fn rewrites_bwrap_helper_command_not_nested_user_command_when_current_exe_appears_later() {
+    let nested_current_exe = std::env::current_exe()
+        .expect("current exe")
+        .to_string_lossy()
+        .into_owned();
+    let mut argv = vec![
+        "bwrap".to_string(),
+        "--".to_string(),
+        "/tmp/helper-symlink".to_string(),
+        "--sandbox-policy-cwd".to_string(),
+        "/tmp/cwd".to_string(),
+        "--".to_string(),
+        nested_current_exe.clone(),
+        "--codex-run-as-apply-patch".to_string(),
+        "patch".to_string(),
+    ];
+
+    apply_inner_command_argv0_for_launcher(
+        &mut argv,
+        false,
+        "/tmp/argv0-fallback-helper".to_string(),
+    );
+
+    assert_eq!(
+        argv,
+        vec![
+            "bwrap".to_string(),
+            "--".to_string(),
+            "/tmp/argv0-fallback-helper".to_string(),
+            "--sandbox-policy-cwd".to_string(),
+            "/tmp/cwd".to_string(),
+            "--".to_string(),
+            nested_current_exe,
+            "--codex-run-as-apply-patch".to_string(),
+            "patch".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn inserts_unshare_net_when_network_isolation_requested() {
     let sandbox_policy = SandboxPolicy::new_read_only_policy();
     let argv = build_bwrap_argv(
         vec!["/bin/true".to_string()],
         &FileSystemSandboxPolicy::from(&sandbox_policy),
+        Path::new("/"),
         Path::new("/"),
         BwrapOptions {
             mount_proc: true,
@@ -95,6 +169,7 @@ fn inserts_unshare_net_when_proxy_only_network_mode_requested() {
     let argv = build_bwrap_argv(
         vec!["/bin/true".to_string()],
         &FileSystemSandboxPolicy::from(&sandbox_policy),
+        Path::new("/"),
         Path::new("/"),
         BwrapOptions {
             mount_proc: true,
@@ -164,6 +239,7 @@ fn managed_proxy_preflight_argv_is_wrapped_for_full_access_policy() {
     let mode = bwrap_network_mode(NetworkSandboxPolicy::Enabled, true);
     let argv = build_preflight_bwrap_argv(
         Path::new("/"),
+        Path::new("/"),
         &FileSystemSandboxPolicy::from(&SandboxPolicy::DangerFullAccess),
         mode,
     )
@@ -176,6 +252,7 @@ fn managed_proxy_inner_command_includes_route_spec() {
     let sandbox_policy = SandboxPolicy::new_read_only_policy();
     let args = build_inner_seccomp_command(InnerSeccompCommandArgs {
         sandbox_policy_cwd: Path::new("/tmp"),
+        command_cwd: Some(Path::new("/tmp/link")),
         sandbox_policy: &sandbox_policy,
         file_system_sandbox_policy: &FileSystemSandboxPolicy::from(&sandbox_policy),
         network_sandbox_policy: NetworkSandboxPolicy::Restricted,
@@ -193,6 +270,7 @@ fn inner_command_includes_split_policy_flags() {
     let sandbox_policy = SandboxPolicy::new_read_only_policy();
     let args = build_inner_seccomp_command(InnerSeccompCommandArgs {
         sandbox_policy_cwd: Path::new("/tmp"),
+        command_cwd: Some(Path::new("/tmp/link")),
         sandbox_policy: &sandbox_policy,
         file_system_sandbox_policy: &FileSystemSandboxPolicy::from(&sandbox_policy),
         network_sandbox_policy: NetworkSandboxPolicy::Restricted,
@@ -203,6 +281,10 @@ fn inner_command_includes_split_policy_flags() {
 
     assert!(args.iter().any(|arg| arg == "--file-system-sandbox-policy"));
     assert!(args.iter().any(|arg| arg == "--network-sandbox-policy"));
+    assert!(
+        args.windows(2)
+            .any(|window| { window == ["--command-cwd", "/tmp/link"] })
+    );
 }
 
 #[test]
@@ -210,6 +292,7 @@ fn non_managed_inner_command_omits_route_spec() {
     let sandbox_policy = SandboxPolicy::new_read_only_policy();
     let args = build_inner_seccomp_command(InnerSeccompCommandArgs {
         sandbox_policy_cwd: Path::new("/tmp"),
+        command_cwd: Some(Path::new("/tmp/link")),
         sandbox_policy: &sandbox_policy,
         file_system_sandbox_policy: &FileSystemSandboxPolicy::from(&sandbox_policy),
         network_sandbox_policy: NetworkSandboxPolicy::Restricted,
@@ -227,6 +310,7 @@ fn managed_proxy_inner_command_requires_route_spec() {
         let sandbox_policy = SandboxPolicy::new_read_only_policy();
         build_inner_seccomp_command(InnerSeccompCommandArgs {
             sandbox_policy_cwd: Path::new("/tmp"),
+            command_cwd: Some(Path::new("/tmp/link")),
             sandbox_policy: &sandbox_policy,
             file_system_sandbox_policy: &FileSystemSandboxPolicy::from(&sandbox_policy),
             network_sandbox_policy: NetworkSandboxPolicy::Restricted,
@@ -301,6 +385,7 @@ fn resolve_sandbox_policies_rejects_mismatched_legacy_and_split_inputs() {
         Some(NetworkSandboxPolicy::Enabled),
     )
     .expect_err("mismatched legacy and split policies should fail");
+
     assert!(
         matches!(
             err,

@@ -7,9 +7,9 @@ use serde_json::Value;
 use crate::codex::Session;
 use crate::compact::content_items_to_text;
 use crate::event_mapping::is_contextual_user_message_content;
-use crate::truncate::approx_bytes_for_tokens;
-use crate::truncate::approx_token_count;
-use crate::truncate::approx_tokens_from_byte_count;
+use codex_utils_output_truncation::approx_bytes_for_tokens;
+use codex_utils_output_truncation::approx_token_count;
+use codex_utils_output_truncation::approx_tokens_from_byte_count;
 
 use super::GUARDIAN_MAX_MESSAGE_ENTRY_TOKENS;
 use super::GUARDIAN_MAX_MESSAGE_TRANSCRIPT_TOKENS;
@@ -264,20 +264,22 @@ pub(crate) fn collect_guardian_transcript_entries(
                     serde_json::to_string(action).ok(),
                 )
             }),
-            ResponseItem::FunctionCallOutput { call_id, output }
-            | ResponseItem::CustomToolCallOutput { call_id, output } => {
-                output.body.to_text().and_then(|text| {
-                    non_empty_entry(
-                        GuardianTranscriptEntryKind::Tool(
-                            tool_names_by_call_id.get(call_id).map_or_else(
-                                || "tool result".to_string(),
-                                |name| format!("tool {name} result"),
-                            ),
-                        ),
-                        text,
-                    )
-                })
+            ResponseItem::FunctionCallOutput {
+                call_id, output, ..
             }
+            | ResponseItem::CustomToolCallOutput {
+                call_id, output, ..
+            } => output.body.to_text().and_then(|text| {
+                non_empty_entry(
+                    GuardianTranscriptEntryKind::Tool(
+                        tool_names_by_call_id.get(call_id).map_or_else(
+                            || "tool result".to_string(),
+                            |name| format!("tool {name} result"),
+                        ),
+                    ),
+                    text,
+                )
+            }),
             _ => None,
         };
 
@@ -427,6 +429,11 @@ fn guardian_output_contract_prompt() -> &'static str {
 /// Keep the prompt in a dedicated markdown file so reviewers can audit prompt
 /// changes directly without diffing through code. The output contract is
 /// appended from code so it stays near `guardian_output_schema()`.
+///
+/// Keep `policy.md` aligned with any OpenAI-specific guardian override deployed
+/// via workspace-managed `requirements.toml` policies. General/default guardian
+/// instruction changes should be mirrored there unless the divergence is
+/// intentionally OpenAI-specific.
 pub(crate) fn guardian_policy_prompt() -> String {
     let prompt = include_str!("policy.md").trim_end();
     format!("{prompt}\n\n{}\n", guardian_output_contract_prompt())

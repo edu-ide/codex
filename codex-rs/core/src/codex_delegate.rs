@@ -4,6 +4,7 @@ use std::sync::Arc;
 use async_channel::Receiver;
 use async_channel::Sender;
 use codex_async_utils::OrCancelExt;
+use codex_exec_server::EnvironmentManager;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
@@ -22,7 +23,6 @@ use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_protocol::user_input::UserInput;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -77,10 +77,13 @@ pub(crate) async fn run_codex_thread_interactive(
         config,
         auth_manager,
         models_manager,
+        environment_manager: Arc::new(EnvironmentManager::new(
+            parent_ctx.environment.exec_server_url().map(str::to_owned),
+        )),
         skills_manager: Arc::clone(&parent_session.services.skills_manager),
         plugins_manager: Arc::clone(&parent_session.services.plugins_manager),
         mcp_manager: Arc::clone(&parent_session.services.mcp_manager),
-        file_watcher: Arc::clone(&parent_session.services.file_watcher),
+        skills_watcher: Arc::clone(&parent_session.services.skills_watcher),
         conversation_history: initial_history.unwrap_or(InitialHistory::New),
         session_source: SessionSource::SubAgent(subagent_source),
         agent_control: parent_session.services.agent_control.clone(),
@@ -88,6 +91,8 @@ pub(crate) async fn run_codex_thread_interactive(
         persist_extended_history: false,
         metrics_service_name: None,
         inherited_shell_snapshot: None,
+        user_shell_override: None,
+        inherited_exec_policy: Some(Arc::clone(&parent_session.services.exec_policy)),
         parent_trace: None,
     })
     .await?;
@@ -431,7 +436,6 @@ async fn handle_exec_approval(
         network_approval_context,
         proposed_execpolicy_amendment,
         additional_permissions,
-        skill_metadata,
         available_decisions,
         ..
     } = event;
@@ -475,13 +479,12 @@ async fn handle_exec_approval(
                 network_approval_context,
                 proposed_execpolicy_amendment,
                 additional_permissions,
-                skill_metadata,
                 available_decisions,
             ),
             parent_session,
             &approval_id_for_op,
             cancel_token,
-            None,
+            /*review_cancel_token*/ None,
         )
         .await
     };
@@ -516,7 +519,7 @@ async fn handle_patch_approval(
         let change_count = changes.len();
         let maybe_files = changes
             .keys()
-            .map(|path| AbsolutePathBuf::from_absolute_path(parent_ctx.cwd.join(path)).ok())
+            .map(|path| parent_ctx.cwd.join(path).ok())
             .collect::<Option<Vec<_>>>();
         if let Some(files) = maybe_files {
             let review_cancel = cancel_token.child_token();
@@ -552,7 +555,7 @@ async fn handle_patch_approval(
                 Arc::clone(parent_ctx),
                 GuardianApprovalRequest::ApplyPatch {
                     id: approval_id.clone(),
-                    cwd: parent_ctx.cwd.clone(),
+                    cwd: parent_ctx.cwd.to_path_buf(),
                     files,
                     change_count,
                     patch,
@@ -587,7 +590,7 @@ async fn handle_patch_approval(
             parent_session,
             &approval_id,
             cancel_token,
-            None,
+            /*review_cancel_token*/ None,
         )
         .await
     };
@@ -675,7 +678,7 @@ async fn maybe_auto_review_mcp_request_user_input(
         Arc::clone(parent_session),
         Arc::clone(parent_ctx),
         build_guardian_mcp_tool_review_request(&event.call_id, &invocation, metadata.as_ref()),
-        None,
+        /*retry_reason*/ None,
         review_cancel.clone(),
     );
     let decision = await_approval_with_cancel(
