@@ -12,3 +12,4 @@ codex-core = { workspace = true }
 codex-lmstudio = { workspace = true }
 codex-ollama = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }

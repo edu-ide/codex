@@ -314,7 +314,7 @@ fn make_connector(id: &str, name: &str) -> AppInfo {
 
 #[test]
 fn assistant_message_stream_parsers_can_be_seeded_from_output_item_added_text() {
-    let mut parsers = AssistantMessageStreamParsers::new(false);
+    let mut parsers = AssistantMessageStreamParsers::new(false, false);
     let item_id = "msg-1";
 
     let seeded = parsers.seed_item_text(item_id, "hello <oai-mem-citation>doc");
@@ -331,7 +331,7 @@ fn assistant_message_stream_parsers_can_be_seeded_from_output_item_added_text() 
 
 #[test]
 fn assistant_message_stream_parsers_seed_buffered_prefix_stays_out_of_finish_tail() {
-    let mut parsers = AssistantMessageStreamParsers::new(false);
+    let mut parsers = AssistantMessageStreamParsers::new(false, false);
     let item_id = "msg-1";
 
     let seeded = parsers.seed_item_text(item_id, "hello <oai-mem-");
@@ -348,7 +348,7 @@ fn assistant_message_stream_parsers_seed_buffered_prefix_stays_out_of_finish_tai
 
 #[test]
 fn assistant_message_stream_parsers_seed_plan_parser_across_added_and_delta_boundaries() {
-    let mut parsers = AssistantMessageStreamParsers::new(true);
+    let mut parsers = AssistantMessageStreamParsers::new(true, false);
     let item_id = "msg-1";
 
     let seeded = parsers.seed_item_text(item_id, "Intro\n<proposed");
@@ -372,6 +372,20 @@ fn assistant_message_stream_parsers_seed_plan_parser_across_added_and_delta_boun
     );
     assert_eq!(tail.visible_text, "");
     assert!(tail.plan_segments.is_empty());
+}
+
+#[test]
+fn assistant_message_stream_parsers_hide_think_tags_when_enabled() {
+    let mut parsers = AssistantMessageStreamParsers::new(false, true);
+    let item_id = "msg-1";
+
+    let seeded = parsers.seed_item_text(item_id, "before<th");
+    let parsed = parsers.parse_delta(item_id, "ink>hidden</think>after");
+    let tail = parsers.finish_item(item_id);
+
+    assert_eq!(seeded.visible_text, "before");
+    assert_eq!(parsed.visible_text, "after");
+    assert!(tail.is_empty());
 }
 
 fn make_mcp_tool(

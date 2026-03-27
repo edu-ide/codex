@@ -83,6 +83,7 @@ use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
+use codex_utils_oss::hydrate_oss_model_name;
 use event_processor_with_human_output::EventProcessorWithHumanOutput;
 use event_processor_with_jsonl_output::EventProcessorWithJsonOutput;
 use serde_json::Value;
@@ -345,12 +346,16 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         additional_writable_roots: add_dir,
     };
 
-    let config = ConfigBuilder::default()
+    let mut config = ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
         .cloud_requirements(cloud_requirements)
         .build()
         .await?;
+
+    if oss && let Err(err) = hydrate_oss_model_name(&mut config).await {
+        warn!(error = %err, "failed to resolve OSS model name");
+    }
 
     #[allow(clippy::print_stderr)]
     match check_execpolicy_for_warnings(&config.config_layer_stack).await {

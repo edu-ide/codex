@@ -54,6 +54,7 @@ use codex_terminal_detection::terminal_info;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
+use codex_utils_oss::hydrate_oss_model_name;
 use color_eyre::eyre::WrapErr;
 use cwd_prompt::CwdPromptAction;
 use cwd_prompt::CwdPromptOutcome;
@@ -785,12 +786,16 @@ pub async fn run_main(
         ..Default::default()
     };
 
-    let config = load_config_or_exit(
+    let mut config = load_config_or_exit(
         cli_kv_overrides.clone(),
         overrides.clone(),
         cloud_requirements.clone(),
     )
     .await;
+
+    if cli.oss && let Err(err) = hydrate_oss_model_name(&mut config).await {
+        warn!(error = %err, "failed to resolve OSS model name");
+    }
 
     #[allow(clippy::print_stderr)]
     match check_execpolicy_for_warnings(&config.config_layer_stack).await {

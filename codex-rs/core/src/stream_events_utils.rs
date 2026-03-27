@@ -27,6 +27,7 @@ use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_utils_stream_parser::strip_proposed_plan_blocks;
+use codex_utils_stream_parser::strip_think_blocks;
 use futures::Future;
 use tracing::debug;
 use tracing::instrument;
@@ -61,8 +62,17 @@ pub(crate) fn image_generation_artifact_path(
         .join(format!("{}.png", sanitize(call_id)))
 }
 
-fn strip_hidden_assistant_markup(text: &str, plan_mode: bool) -> String {
-    let (without_citations, _) = strip_citations(text);
+fn should_hide_think_tags(provider_id: &str) -> bool {
+    provider_id == crate::LLAMA_SERVER_OSS_PROVIDER_ID
+}
+
+fn strip_hidden_assistant_markup(text: &str, plan_mode: bool, hide_think_tags: bool) -> String {
+    let text = if hide_think_tags {
+        strip_think_blocks(text)
+    } else {
+        text.to_string()
+    };
+    let (without_citations, _) = strip_citations(&text);
     if plan_mode {
         strip_proposed_plan_blocks(&without_citations)
     } else {
@@ -73,11 +83,17 @@ fn strip_hidden_assistant_markup(text: &str, plan_mode: bool) -> String {
 fn strip_hidden_assistant_markup_and_parse_memory_citation(
     text: &str,
     plan_mode: bool,
+    hide_think_tags: bool,
 ) -> (
     String,
     Option<codex_protocol::memory_citation::MemoryCitation>,
 ) {
-    let (without_citations, citations) = strip_citations(text);
+    let text = if hide_think_tags {
+        strip_think_blocks(text)
+    } else {
+        text.to_string()
+    };
+    let (without_citations, citations) = strip_citations(&text);
     let visible_text = if plan_mode {
         strip_proposed_plan_blocks(&without_citations)
     } else {
@@ -255,7 +271,11 @@ pub(crate) async fn handle_output_item_done(
             }
             record_completed_response_item(ctx.sess.as_ref(), ctx.turn_context.as_ref(), &item)
                 .await;
-            let last_agent_message = last_assistant_message_from_item(&item, plan_mode);
+            let last_agent_message = last_assistant_message_from_item(
+                &item,
+                plan_mode,
+                should_hide_think_tags(&ctx.turn_context.config.model_provider_id),
+            );
 
             output.last_agent_message = last_agent_message;
         }
@@ -325,6 +345,7 @@ pub(crate) async fn handle_non_tool_response_item(
     plan_mode: bool,
 ) -> Option<TurnItem> {
     debug!(?item, "Output item");
+    let hide_think_tags = should_hide_think_tags(&turn_context.config.model_provider_id);
 
     match item {
         ResponseItem::Message { .. }
@@ -341,7 +362,11 @@ pub(crate) async fn handle_non_tool_response_item(
                     })
                     .collect::<String>();
                 let (stripped, memory_citation) =
-                    strip_hidden_assistant_markup_and_parse_memory_citation(&combined, plan_mode);
+                    strip_hidden_assistant_markup_and_parse_memory_citation(
+                        &combined,
+                        plan_mode,
+                        hide_think_tags,
+                    );
                 agent_message.content =
                     vec![codex_protocol::items::AgentMessageContent::Text { text: stripped }];
                 agent_message.memory_citation = memory_citation;
@@ -412,12 +437,13 @@ pub(crate) async fn handle_non_tool_response_item(
 pub(crate) fn last_assistant_message_from_item(
     item: &ResponseItem,
     plan_mode: bool,
+    hide_think_tags: bool,
 ) -> Option<String> {
     if let Some(combined) = raw_assistant_output_text_from_item(item) {
         if combined.is_empty() {
             return None;
         }
-        let stripped = strip_hidden_assistant_markup(&combined, plan_mode);
+        let stripped = strip_hidden_assistant_markup(&combined, plan_mode, hide_think_tags);
         if stripped.trim().is_empty() {
             return None;
         }

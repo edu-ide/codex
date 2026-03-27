@@ -10,6 +10,7 @@ use codex_protocol::openai_models::WebSearchToolType;
 use codex_protocol::openai_models::default_input_modalities;
 
 use crate::config::Config;
+use crate::OPENAI_PROVIDER_ID;
 use codex_features::Feature;
 use codex_utils_output_truncation::approx_bytes_for_tokens;
 use tracing::warn;
@@ -51,6 +52,15 @@ pub(crate) fn with_config_overrides(mut model: ModelInfo, config: &Config) -> Mo
         model.base_instructions = base_instructions.clone();
         model.model_messages = None;
     } else if !config.features.enabled(Feature::Personality) {
+        model.model_messages = None;
+    }
+
+    if config.base_instructions.is_none()
+        && model.used_fallback_model_metadata
+        && config.model_provider_id != OPENAI_PROVIDER_ID
+    {
+        model.base_instructions =
+            local_backend_base_instructions(&model.slug, &config.model_provider_id);
         model.model_messages = None;
     }
 
@@ -107,6 +117,12 @@ fn local_personality_messages_for_slug(slug: &str) -> Option<ModelMessages> {
         }),
         _ => None,
     }
+}
+
+fn local_backend_base_instructions(model_slug: &str, provider_id: &str) -> String {
+    format!(
+        "You are Codex running through a local model provider.\nCurrent provider: `{provider_id}`.\nCurrent backend model slug: `{model_slug}`.\nDo not claim to be GPT-5.4 or any other OpenAI-hosted model unless the backend model slug explicitly says so.\nIf the user asks what model you are, answer that you are Codex running on `{model_slug}` via `{provider_id}`.\n\n{BASE_INSTRUCTIONS}"
+    )
 }
 
 #[cfg(test)]

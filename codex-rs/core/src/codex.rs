@@ -6672,24 +6672,27 @@ impl PlanModeStreamState {
 #[derive(Debug, Default)]
 struct AssistantMessageStreamParsers {
     plan_mode: bool,
+    hide_think_tags: bool,
     parsers_by_item: HashMap<String, AssistantTextStreamParser>,
 }
 
 type ParsedAssistantTextDelta = AssistantTextChunk;
 
 impl AssistantMessageStreamParsers {
-    fn new(plan_mode: bool) -> Self {
+    fn new(plan_mode: bool, hide_think_tags: bool) -> Self {
         Self {
             plan_mode,
+            hide_think_tags,
             parsers_by_item: HashMap::new(),
         }
     }
 
     fn parser_mut(&mut self, item_id: &str) -> &mut AssistantTextStreamParser {
         let plan_mode = self.plan_mode;
+        let hide_think_tags = self.hide_think_tags;
         self.parsers_by_item
             .entry(item_id.to_string())
-            .or_insert_with(|| AssistantTextStreamParser::new(plan_mode))
+            .or_insert_with(|| AssistantTextStreamParser::new(plan_mode, hide_think_tags))
     }
 
     fn seed_item_text(&mut self, item_id: &str, text: &str) -> ParsedAssistantTextDelta {
@@ -7144,7 +7147,11 @@ async fn handle_assistant_item_done_in_plan_mode(
         }
 
         record_completed_response_item(sess, turn_context, item).await;
-        if let Some(agent_message) = last_assistant_message_from_item(item, /*plan_mode*/ true) {
+        if let Some(agent_message) = last_assistant_message_from_item(
+            item,
+            /*plan_mode*/ true,
+            turn_context.config.model_provider_id == crate::LLAMA_SERVER_OSS_PROVIDER_ID,
+        ) {
             *last_agent_message = Some(agent_message);
         }
         return true;
@@ -7218,7 +7225,9 @@ async fn try_run_sampling_request(
     let mut active_item: Option<TurnItem> = None;
     let mut should_emit_turn_diff = false;
     let plan_mode = turn_context.collaboration_mode.mode == ModeKind::Plan;
-    let mut assistant_message_stream_parsers = AssistantMessageStreamParsers::new(plan_mode);
+    let hide_think_tags = turn_context.config.model_provider_id == crate::LLAMA_SERVER_OSS_PROVIDER_ID;
+    let mut assistant_message_stream_parsers =
+        AssistantMessageStreamParsers::new(plan_mode, hide_think_tags);
     let mut plan_mode_state = plan_mode.then(|| PlanModeStreamState::new(&turn_context.sub_id));
     let receiving_span = trace_span!("receiving_stream");
     let outcome: CodexResult<SamplingRequestResult> = loop {
@@ -7515,7 +7524,11 @@ async fn try_run_sampling_request(
 
 pub(super) fn get_last_assistant_message_from_turn(responses: &[ResponseItem]) -> Option<String> {
     for item in responses.iter().rev() {
-        if let Some(message) = last_assistant_message_from_item(item, /*plan_mode*/ false) {
+        if let Some(message) = last_assistant_message_from_item(
+            item,
+            /*plan_mode*/ false,
+            false,
+        ) {
             return Some(message);
         }
     }
