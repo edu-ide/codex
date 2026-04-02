@@ -1,8 +1,6 @@
 [package]
 name = "codex-network-proxy"
 edition = "2024"
-version = { workspace = true }
-license.workspace = true
 
 [lib]
 name = "codex_network_proxy"
@@ -11,33 +9,90 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-chrono = { workspace = true }
-codex-utils-absolute-path = { workspace = true }
-codex-utils-home-dir = { workspace = true }
-codex-utils-rustls-provider = { workspace = true }
-globset = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-time = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
-tracing = { workspace = true }
-url = { workspace = true }
-rama-core = { version = "=0.3.0-alpha.4" }
-rama-http = { version = "=0.3.0-alpha.4" }
-rama-http-backend = { version = "=0.3.0-alpha.4", features = ["tls"] }
-rama-net = { version = "=0.3.0-alpha.4", features = ["http", "tls"] }
-rama-socks5 = { version = "=0.3.0-alpha.4" }
-rama-tcp = { version = "=0.3.0-alpha.4", features = ["http"] }
-rama-tls-rustls = { version = "=0.3.0-alpha.4", features = ["http"] }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+[package.license]
+workspace = true
 
-[target.'cfg(target_family = "unix")'.dependencies]
-rama-unix = { version = "=0.3.0-alpha.4" }
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.chrono]
+version = "0.4.43"
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.codex-utils-home-dir]
+workspace = true
+
+[dependencies.codex-utils-rustls-provider]
+workspace = true
+
+[dependencies.globset]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.thiserror]
+version = "2.0.17"
+
+[dependencies.time]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "full",]
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.url]
+version = "2"
+
+[dependencies.rama-core]
+version = "=0.3.0-alpha.4"
+
+[dependencies.rama-http]
+version = "=0.3.0-alpha.4"
+
+[dependencies.rama-http-backend]
+version = "=0.3.0-alpha.4"
+features = [ "tls",]
+
+[dependencies.rama-net]
+version = "=0.3.0-alpha.4"
+features = [ "http", "tls",]
+
+[dependencies.rama-socks5]
+version = "=0.3.0-alpha.4"
+
+[dependencies.rama-tcp]
+version = "=0.3.0-alpha.4"
+features = [ "http",]
+
+[dependencies.rama-tls-rustls]
+version = "=0.3.0-alpha.4"
+features = [ "http",]
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true
+
+[target."cfg(target_family = \"unix\")".dependencies.rama-unix]
+version = "=0.3.0-alpha.4"

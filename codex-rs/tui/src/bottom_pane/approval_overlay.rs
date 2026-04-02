@@ -17,6 +17,9 @@ use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use codex_features::Features;
+use codex_ilhae::IlhaeInteractiveRequestDto;
+use codex_ilhae::IlhaeInteractiveOptionDto;
+use codex_ilhae::IlhaeInteractiveOptionKind;
 use codex_protocol::ThreadId;
 use codex_protocol::mcp::RequestId;
 use codex_protocol::models::PermissionProfile;
@@ -61,6 +64,11 @@ pub(crate) enum ApprovalRequest {
         reason: Option<String>,
         permissions: RequestPermissionProfile,
     },
+    AcpPermission {
+        thread_id: ThreadId,
+        thread_label: Option<String>,
+        request: IlhaeInteractiveRequestDto,
+    },
     ApplyPatch {
         thread_id: ThreadId,
         thread_label: Option<String>,
@@ -83,6 +91,7 @@ impl ApprovalRequest {
         match self {
             ApprovalRequest::Exec { thread_id, .. }
             | ApprovalRequest::Permissions { thread_id, .. }
+            | ApprovalRequest::AcpPermission { thread_id, .. }
             | ApprovalRequest::ApplyPatch { thread_id, .. }
             | ApprovalRequest::McpElicitation { thread_id, .. } => *thread_id,
         }
@@ -92,6 +101,7 @@ impl ApprovalRequest {
         match self {
             ApprovalRequest::Exec { thread_label, .. }
             | ApprovalRequest::Permissions { thread_label, .. }
+            | ApprovalRequest::AcpPermission { thread_label, .. }
             | ApprovalRequest::ApplyPatch { thread_label, .. }
             | ApprovalRequest::McpElicitation { thread_label, .. } => thread_label.as_deref(),
         }
@@ -170,6 +180,10 @@ impl ApprovalOverlay {
                 permissions_options(),
                 "Would you like to grant these permissions?".to_string(),
             ),
+            ApprovalRequest::AcpPermission { request, .. } => (
+                acp_permission_options(&request.options),
+                "How should ilhae respond to this ACP permission request?".to_string(),
+            ),
             ApprovalRequest::ApplyPatch { .. } => (
                 patch_options(),
                 "Would you like to make the following edits?".to_string(),
@@ -228,6 +242,10 @@ impl ApprovalOverlay {
                     },
                     ApprovalDecision::Review(decision),
                 ) => self.handle_permissions_decision(call_id, permissions, decision.clone()),
+                (
+                    ApprovalRequest::AcpPermission { request, .. },
+                    ApprovalDecision::AcpPermission(option_id),
+                ) => self.handle_acp_permission_decision(&request.request_id, option_id.clone()),
                 (ApprovalRequest::ApplyPatch { id, .. }, ApprovalDecision::Review(decision)) => {
                     self.handle_patch_decision(id, decision.clone());
                 }
@@ -319,6 +337,18 @@ impl ApprovalOverlay {
         };
         self.app_event_tx
             .patch_approval(thread_id, id.to_string(), decision);
+    }
+
+    fn handle_acp_permission_decision(&self, id: &str, option_id: Option<String>) {
+        let Some(thread_id) = self
+            .current_request
+            .as_ref()
+            .map(ApprovalRequest::thread_id)
+        else {
+            return;
+        };
+        self.app_event_tx
+            .resolve_acp_permission(thread_id, id.to_string(), option_id);
     }
 
     fn handle_elicitation_decision(
@@ -429,6 +459,9 @@ impl BottomPaneView for ApprovalOverlay {
                     ..
                 } => {
                     self.handle_permissions_decision(call_id, permissions, ReviewDecision::Abort);
+                }
+                ApprovalRequest::AcpPermission { request, .. } => {
+                    self.handle_acp_permission_decision(&request.request_id, None);
                 }
                 ApprovalRequest::ApplyPatch { id, .. } => {
                     self.handle_patch_decision(id, ReviewDecision::Abort);
@@ -563,6 +596,29 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
             }
             Box::new(Paragraph::new(header).wrap(Wrap { trim: false }))
         }
+        ApprovalRequest::AcpPermission {
+            thread_label,
+            request,
+            ..
+        } => {
+            let mut header: Vec<Line<'static>> = Vec::new();
+            if let Some(thread_label) = thread_label {
+                header.push(Line::from(vec![
+                    "Thread: ".into(),
+                    thread_label.clone().bold(),
+                ]));
+                header.push(Line::from(""));
+            }
+            header.push(Line::from(vec![
+                "Title: ".into(),
+                request.title.clone().bold(),
+            ]));
+            header.push(Line::from(""));
+            if let Some(reason) = &request.reason {
+                header.push(Line::from(vec!["Reason: ".into(), reason.clone().italic()]));
+            }
+            Box::new(Paragraph::new(header).wrap(Wrap { trim: false }))
+        }
         ApprovalRequest::ApplyPatch {
             thread_label,
             reason,
@@ -621,6 +677,7 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
 #[derive(Clone)]
 enum ApprovalDecision {
     Review(ReviewDecision),
+    AcpPermission(Option<String>),
     McpElicitation(ElicitationAction),
 }
 
@@ -817,6 +874,42 @@ fn permissions_options() -> Vec<ApprovalOption> {
             additional_shortcuts: vec![key_hint::plain(KeyCode::Char('n'))],
         },
     ]
+}
+
+fn acp_permission_options(options: &[IlhaeInteractiveOptionDto]) -> Vec<ApprovalOption> {
+    let mut items = options
+        .iter()
+        .map(|option| ApprovalOption {
+            label: option.label.clone(),
+            decision: ApprovalDecision::AcpPermission(Some(option.id.clone())),
+            display_shortcut: match option.kind {
+                IlhaeInteractiveOptionKind::ApproveOnce => {
+                    Some(key_hint::plain(KeyCode::Char('y')))
+                }
+                IlhaeInteractiveOptionKind::ApproveSession => {
+                    Some(key_hint::plain(KeyCode::Char('a')))
+                }
+                IlhaeInteractiveOptionKind::RejectOnce => {
+                    Some(key_hint::plain(KeyCode::Char('d')))
+                }
+                IlhaeInteractiveOptionKind::RejectSession => {
+                    Some(key_hint::plain(KeyCode::Char('r')))
+                }
+                IlhaeInteractiveOptionKind::Cancel => {
+                    Some(key_hint::plain(KeyCode::Esc))
+                }
+                IlhaeInteractiveOptionKind::Custom => None,
+            },
+            additional_shortcuts: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    items.push(ApprovalOption {
+        label: "Cancel this request".to_string(),
+        decision: ApprovalDecision::AcpPermission(None),
+        display_shortcut: Some(key_hint::plain(KeyCode::Esc)),
+        additional_shortcuts: vec![key_hint::plain(KeyCode::Char('c'))],
+    });
+    items
 }
 
 fn elicitation_options() -> Vec<ApprovalOption> {

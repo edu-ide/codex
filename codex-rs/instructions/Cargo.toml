@@ -1,8 +1,5 @@
 [package]
-edition.workspace = true
-license.workspace = true
 name = "codex-instructions"
-version.workspace = true
 
 [lib]
 doctest = false
@@ -12,9 +9,21 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-codex-protocol = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+[package.edition]
+workspace = true
 
-[dev-dependencies]
-pretty_assertions = { workspace = true }
+[package.license]
+workspace = true
+
+[package.version]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dev-dependencies.pretty_assertions]
+workspace = true

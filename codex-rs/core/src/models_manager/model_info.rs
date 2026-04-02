@@ -9,8 +9,8 @@ use codex_protocol::openai_models::TruncationPolicyConfig;
 use codex_protocol::openai_models::WebSearchToolType;
 use codex_protocol::openai_models::default_input_modalities;
 
-use crate::config::Config;
 use crate::OPENAI_PROVIDER_ID;
+use crate::config::Config;
 use codex_features::Feature;
 use codex_utils_output_truncation::approx_bytes_for_tokens;
 use tracing::warn;

@@ -40,7 +40,63 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-pub struct ApplyPatchHandler;
+use crate::tools::handlers::lsp_manager::LspServerManager;
+
+pub struct ApplyPatchHandler {
+    lsp_manager: Arc<LspServerManager>,
+}
+
+impl ApplyPatchHandler {
+    pub fn new(lsp_manager: Arc<LspServerManager>) -> Self {
+        Self { lsp_manager }
+    }
+
+    async fn append_diagnostics(
+        &self,
+        cwd: &Path,
+        file_paths: &[AbsolutePathBuf],
+        mut content: String,
+    ) -> String {
+        let mut has_diags = false;
+        let mut diags_str = String::new();
+
+        for path in file_paths {
+            let path_str = path.as_path().display().to_string();
+            let ext = Path::new(&path_str)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            if ext.is_empty() {
+                continue;
+            }
+
+            let root_uri = format!("file://{}", cwd.display());
+            if let Ok(diags) = self
+                .lsp_manager
+                .get_current_diagnostics(ext, &root_uri, &path_str)
+                .await
+            {
+                if !diags.is_empty() {
+                    has_diags = true;
+                    diags_str.push_str(&format!("\nDiagnostics for {}:\n", path_str));
+                    for diag in diags {
+                        if let Some(msg) = diag.get("message").and_then(|m| m.as_str()) {
+                            // Optionally extract line number or just message
+                            diags_str.push_str(&format!("- {}\n", msg));
+                        }
+                    }
+                }
+            }
+        }
+
+        if has_diags {
+            content.push_str("\n\nLSP Diagnostics Error/Warning Report (After Edit):\n");
+            content.push_str(&diags_str);
+        }
+
+        content
+    }
+}
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("tool_apply_patch.lark");
 
@@ -160,12 +216,12 @@ impl ToolHandler for ApplyPatchHandler {
             ..
         } = invocation;
 
-        let patch_input = match payload {
+        let (patch_input, expected_mtime) = match payload {
             ToolPayload::Function { arguments } => {
                 let args: ApplyPatchToolArgs = parse_arguments(&arguments)?;
-                args.input
+                (args.input, args.expected_mtime)
             }
-            ToolPayload::Custom { input } => input,
+            ToolPayload::Custom { input } => (input, None),
             _ => {
                 return Err(FunctionCallError::RespondToModel(
                     "apply_patch handler received unsupported payload".to_string(),
@@ -181,12 +237,42 @@ impl ToolHandler for ApplyPatchHandler {
             codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
                 let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
                     effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes).await;
+
+                // Concurrency Guard: Check mtime if expected_mtime was provided
+                if let Some(expected_str) = expected_mtime {
+                    if let Ok(expected_val) = expected_str.parse::<f64>() {
+                        for path in &file_paths {
+                            if let Ok(metadata) = std::fs::metadata(path.as_path()) {
+                                if let Ok(mtime) = metadata.modified() {
+                                    let current_val = mtime
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_secs_f64())
+                                        .unwrap_or(0.0);
+
+                                    // Use a small epsilon for float comparison if needed, but f64 is usually exact for timestamps from the same source
+                                    if (current_val - expected_val).abs() > 0.001 {
+                                        return Err(FunctionCallError::RespondToModel(format!(
+                                            "Concurrency Error: File {} has been modified since it was last read. Current mtime: {}, Expected: {}. Please re-read the file before applying changes.",
+                                            path.as_path().display(),
+                                            current_val,
+                                            expected_val
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 match apply_patch::apply_patch(turn.as_ref(), &file_system_sandbox_policy, changes)
                     .await
                 {
                     InternalApplyPatchInvocation::Output(item) => {
                         let content = item?;
-                        Ok(ApplyPatchToolOutput::from_text(content))
+                        let final_content = self
+                            .append_diagnostics(cwd.as_path(), &file_paths, content)
+                            .await;
+                        Ok(ApplyPatchToolOutput::from_text(final_content))
                     }
                     InternalApplyPatchInvocation::DelegateToExec(apply) => {
                         let changes = convert_apply_patch_to_protocol(&apply.action);
@@ -202,7 +288,7 @@ impl ToolHandler for ApplyPatchHandler {
 
                         let req = ApplyPatchRequest {
                             action: apply.action,
-                            file_paths,
+                            file_paths: file_paths.clone(),
                             changes,
                             exec_approval_requirement: apply.exec_approval_requirement,
                             additional_permissions: effective_additional_permissions
@@ -237,7 +323,10 @@ impl ToolHandler for ApplyPatchHandler {
                             Some(&tracker),
                         );
                         let content = emitter.finish(event_ctx, out).await?;
-                        Ok(ApplyPatchToolOutput::from_text(content))
+                        let final_content = self
+                            .append_diagnostics(cwd.as_path(), &file_paths, content)
+                            .await;
+                        Ok(ApplyPatchToolOutput::from_text(final_content))
                     }
                 }
             }
@@ -379,10 +468,18 @@ pub(crate) fn create_apply_patch_json_tool() -> ToolSpec {
             description: Some(r#"The entire contents of the apply_patch command"#.to_string()),
         },
     );
+    properties.insert(
+        "expected_mtime".to_string(),
+        JsonSchema::String {
+            description: Some(r#"The expected last modified time of the file (from read_file metadata). Provides a safety guard against concurrent edits."#.to_string()),
+        },
+    );
 
     ToolSpec::Function(ResponsesApiTool {
         name: "apply_patch".to_string(),
         description: r#"Use the `apply_patch` tool to edit files.
+If you previously read the file using `read_file`, you SHOULD provide the `expected_mtime` from the metadata to prevent overwriting concurrent changes.
+
 Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:
 
 *** Begin Patch
@@ -449,8 +546,7 @@ It is important to remember:
 - You must include a header with your intended action (Add/Delete/Update)
 - You must prefix new lines with `+` even when creating a new file
 - File references can only be relative, NEVER ABSOLUTE.
-"#
-        .to_string(),
+"#.to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::Object {

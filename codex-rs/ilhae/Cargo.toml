@@ -1,0 +1,119 @@
+[package]
+name = "codex-ilhae"
+version = "0.1.0"
+edition = "2024"
+description = "Ilhae proxy runtime — universal proxy daemon for Desktop, Mobile, Telegram, Discord, Slack"
+
+[lib]
+name = "codex_ilhae"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ilhae-proxy"
+path = "src/main.rs"
+
+[features]
+default = []
+channels = ["dep:codex-channels"]
+
+[dependencies]
+# Channels (optional, feature-gated)
+codex-channels = { path = "../channels", optional = true }
+
+# ── codex-core for deep integration ──
+codex-core = { path = "../core" }
+codex-protocol = { path = "../protocol" }
+codex-app-server = { path = "../app-server" }
+codex-app-server-client = { path = "../app-server-client" }
+codex-app-server-protocol = { path = "../app-server-protocol" }
+
+# ACP protocol — use local symposium-acp fork (sacp 11-alpha)
+sacp = { path = "../../../symposium-acp/src/sacp" }
+sacp-tokio = { path = "../../../symposium-acp/src/sacp-tokio" }
+sacp-conductor = { path = "../../../symposium-acp/src/sacp-conductor" }
+agent-client-protocol-schema = { path = "../../../acp-schema" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-tungstenite = "0.26"
+futures = "0.3"
+futures-util = "0.3"
+
+# HTTP Server
+axum = { version = "0.7", features = ["json"] }
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Storage
+dirs = "6"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Utilities
+schemars = "1"
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+regex = "1"
+toml = "0.8"
+toml_edit = "0.22"
+base64 = "0.22"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# MCP
+rmcp = { version = "1.1.0" }
+
+# Browser automation
+action-browser-rs = { path = "../../../action-browser-rs", default-features = false, features = ["cdp", "playwright"] }
+
+# Channel system architecture
+strum = { version = "0.26", features = ["derive"] }
+strum_macros = "0.26"
+enum_dispatch = "0.3"
+inventory = "0.3"
+async-trait = "0.1"
+
+# Semantic search
+fastembed = "4"
+sqlite-vec = "0.1"
+zerocopy = { version = "0.8", features = ["derive"] }
+
+# Internal
+ilhae-common = { path = "../../../ilhae-common" }
+brain-session-rs = { path = "../../../brain-session-rs" }
+brain-knowledge-rs = { path = "../../../brain-knowledge-rs" }
+brain-artifact-rs = { path = "../../../brain-artifact-rs" }
+brain-rs = { path = "../../../brain-rs" }
+a2a-rs = { path = "../../../a2a-rs", default-features = false, features = ["client", "server"] }
+a2a-acp-adapter = { path = "../../../a2a-acp-adapter" }
+codex-acp = { path = "../../../codex-acp" }
+shell-words = "1"
+walkdir = "2.5.0"
+sysinfo = "0.38.4"
+dashmap = "6"
+moka = { version = "0.12", features = ["sync"] }
+
+# Telegram (brought from channels for re-export convenience)
+teloxide = { version = "0.13", features = ["macros"] }
+reqwest = { version = "0.12", features = ["json"] }
+# Discord
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
+# Slack
+slack-morphism = { version = "2.0", features = ["hyper"] }
+
+[dev-dependencies]
+a2a-rs = { path = "../../../a2a-rs", features = ["server", "client"] }
+uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+dirs = "6"
+tempfile = "3"
+
+[patch.crates-io]
+agent-client-protocol-schema = { path = "../../../acp-schema" }

@@ -31,12 +31,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     arg0_dispatch_or_else(|arg0_paths| async move {
-        run_main_with_transport(
-            arg0_paths,
-            CliConfigOverrides::default(),
-            transport,
-        )
-        .await?;
+        run_main_with_transport(arg0_paths, CliConfigOverrides::default(), transport).await?;
         Ok(())
     })
 }

@@ -104,6 +104,7 @@ use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequestResolvedNotification;
 use codex_app_server_protocol::SkillSummary;
+use codex_app_server_protocol::SkillsChangedNotification;
 use codex_app_server_protocol::SkillsConfigWriteParams;
 use codex_app_server_protocol::SkillsConfigWriteResponse;
 use codex_app_server_protocol::SkillsListParams;
@@ -468,6 +469,14 @@ impl CodexMessageProcessor {
     pub(crate) fn clear_plugin_related_caches(&self) {
         self.thread_manager.plugins_manager().clear_cache();
         self.thread_manager.skills_manager().clear_cache();
+    }
+
+    async fn notify_skills_changed(&self) {
+        self.outgoing
+            .send_server_notification(ServerNotification::SkillsChanged(
+                SkillsChangedNotification {},
+            ))
+            .await;
     }
 
     pub(crate) async fn maybe_start_plugin_startup_tasks_for_latest_config(&self) {
@@ -2224,6 +2233,10 @@ impl CodexMessageProcessor {
                     description: tool.description,
                     input_schema: tool.input_schema,
                     defer_loading: tool.defer_loading,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
                 })
                 .collect()
         };
@@ -6013,6 +6026,9 @@ impl CodexMessageProcessor {
             Ok(()) => {
                 self.thread_manager.plugins_manager().clear_cache();
                 self.thread_manager.skills_manager().clear_cache();
+
+                self.notify_skills_changed().await;
+
                 self.outgoing
                     .send_response(
                         request_id,
@@ -6076,6 +6092,7 @@ impl CodexMessageProcessor {
                 };
 
                 self.clear_plugin_related_caches();
+                self.notify_skills_changed().await;
 
                 let plugin_mcp_servers = load_plugin_mcp_servers(result.installed_path.as_path());
 
@@ -6235,6 +6252,7 @@ impl CodexMessageProcessor {
         match uninstall_result {
             Ok(()) => {
                 self.clear_plugin_related_caches();
+                self.notify_skills_changed().await;
                 self.outgoing
                     .send_response(request_id, PluginUninstallResponse {})
                     .await;

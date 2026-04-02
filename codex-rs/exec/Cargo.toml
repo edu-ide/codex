@@ -1,73 +1,144 @@
-[package]
-name = "codex-exec"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-autotests = false
-
 [[bin]]
 name = "codex-exec"
 path = "src/main.rs"
-
-[lib]
-name = "codex_exec"
-path = "src/lib.rs"
 
 [[test]]
 name = "all"
 path = "tests/all.rs"
 
+[package]
+name = "codex-exec"
+autotests = false
+
+[lib]
+name = "codex_exec"
+path = "src/lib.rs"
+
 [lints]
 workspace = true
 
-[dependencies]
-anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-codex-arg0 = { workspace = true }
-codex-app-server-client = { workspace = true }
-codex-app-server-protocol = { workspace = true }
-codex-cloud-requirements = { workspace = true }
-codex-core = { workspace = true }
-codex-feedback = { workspace = true }
-codex-git-utils = { workspace = true }
-codex-otel = { workspace = true }
-codex-protocol = { workspace = true }
-codex-utils-absolute-path = { workspace = true }
-codex-utils-cli = { workspace = true }
-codex-utils-oss = { workspace = true }
-owo-colors = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-supports-color = { workspace = true }
-tokio = { workspace = true, features = [
-    "io-std",
-    "macros",
-    "process",
-    "rt-multi-thread",
-    "signal",
-] }
-tracing = { workspace = true, features = ["log"] }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
-ts-rs = { workspace = true, features = [
-    "uuid-impl",
-    "serde-json-impl",
-    "no-serde-warnings",
-] }
-uuid = { workspace = true }
+[package.version]
+workspace = true
 
+[package.edition]
+workspace = true
 
-[dev-dependencies]
-assert_cmd = { workspace = true }
-codex-apply-patch = { workspace = true }
-codex-utils-cargo-bin = { workspace = true }
-core_test_support = { workspace = true }
-libc = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-predicates = { workspace = true }
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-uuid = { workspace = true }
-walkdir = { workspace = true }
-wiremock = { workspace = true }
+[package.license]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.codex-arg0]
+workspace = true
+
+[dependencies.codex-app-server-client]
+workspace = true
+
+[dependencies.codex-app-server-protocol]
+workspace = true
+
+[dependencies.codex-cloud-requirements]
+workspace = true
+
+[dependencies.codex-core]
+workspace = true
+
+[dependencies.codex-feedback]
+workspace = true
+
+[dependencies.codex-git-utils]
+workspace = true
+
+[dependencies.codex-otel]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.codex-utils-cli]
+workspace = true
+
+[dependencies.codex-utils-oss]
+workspace = true
+
+[dependencies.owo-colors]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.supports-color]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "io-std", "macros", "process", "rt-multi-thread", "signal",]
+
+[dependencies.tracing]
+version = "0.1.44"
+features = [ "log",]
+
+[dependencies.tracing-subscriber]
+version = "0.3.22"
+features = [ "env-filter",]
+
+[dependencies.ts-rs]
+workspace = true
+features = [ "uuid-impl", "serde-json-impl", "no-serde-warnings",]
+
+[dependencies.uuid]
+version = "1"
+
+[dev-dependencies.assert_cmd]
+workspace = true
+
+[dev-dependencies.codex-apply-patch]
+workspace = true
+
+[dev-dependencies.codex-utils-cargo-bin]
+workspace = true
+
+[dev-dependencies.core_test_support]
+workspace = true
+
+[dev-dependencies.libc]
+workspace = true
+
+[dev-dependencies.opentelemetry]
+workspace = true
+
+[dev-dependencies.opentelemetry_sdk]
+workspace = true
+
+[dev-dependencies.predicates]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true
+
+[dev-dependencies.tracing-opentelemetry]
+workspace = true
+
+[dev-dependencies.uuid]
+version = "1"
+
+[dev-dependencies.walkdir]
+workspace = true
+
+[dev-dependencies.wiremock]
+workspace = true

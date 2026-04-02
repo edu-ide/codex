@@ -1,8 +1,5 @@
 [package]
-edition.workspace = true
-license.workspace = true
 name = "codex-analytics"
-version.workspace = true
 
 [lib]
 doctest = false
@@ -12,20 +9,47 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-codex-app-server-protocol = { workspace = true }
-codex-git-utils = { workspace = true }
-codex-login = { workspace = true }
-codex-plugin = { workspace = true }
-codex-protocol = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-sha1 = { workspace = true }
-tokio = { workspace = true, features = [
-    "macros",
-    "rt-multi-thread",
-] }
-tracing = { workspace = true, features = ["log"] }
+[package.edition]
+workspace = true
 
-[dev-dependencies]
-pretty_assertions = { workspace = true }
-serde_json = { workspace = true }
+[package.license]
+workspace = true
+
+[package.version]
+workspace = true
+
+[dependencies.codex-app-server-protocol]
+workspace = true
+
+[dependencies.codex-git-utils]
+workspace = true
+
+[dependencies.codex-login]
+workspace = true
+
+[dependencies.codex-plugin]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.sha1]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "macros", "rt-multi-thread",]
+
+[dependencies.tracing]
+version = "0.1.44"
+features = [ "log",]
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.serde_json]
+workspace = true

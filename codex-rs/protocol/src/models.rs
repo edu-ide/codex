@@ -1184,7 +1184,13 @@ impl From<crate::dynamic_tools::DynamicToolCallOutputContentItem>
 #[derive(Debug, Default, Clone, PartialEq, JsonSchema, TS)]
 pub struct FunctionCallOutputPayload {
     pub body: FunctionCallOutputBody,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub success: Option<bool>,
+    /// Actionable feedback or guidance for the agent
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
@@ -1220,6 +1226,7 @@ impl FunctionCallOutputPayload {
         Self {
             body: FunctionCallOutputBody::Text(content),
             success: None,
+            hint: None,
         }
     }
 
@@ -1227,6 +1234,7 @@ impl FunctionCallOutputPayload {
         Self {
             body: FunctionCallOutputBody::ContentItems(content_items),
             success: None,
+            hint: None,
         }
     }
 
@@ -1283,6 +1291,7 @@ impl<'de> Deserialize<'de> for FunctionCallOutputPayload {
         Ok(FunctionCallOutputPayload {
             body,
             success: None,
+            hint: None,
         })
     }
 }
@@ -1320,12 +1329,14 @@ impl CallToolResult {
                     return FunctionCallOutputPayload {
                         body: FunctionCallOutputBody::Text(serialized_structured_content),
                         success: Some(self.success()),
+                        hint: None,
                     };
                 }
                 Err(err) => {
                     return FunctionCallOutputPayload {
                         body: FunctionCallOutputBody::Text(err.to_string()),
                         success: Some(false),
+                        hint: None,
                     };
                 }
             }
@@ -1337,6 +1348,7 @@ impl CallToolResult {
                 return FunctionCallOutputPayload {
                     body: FunctionCallOutputBody::Text(err.to_string()),
                     success: Some(false),
+                    hint: None,
                 };
             }
         };
@@ -1351,6 +1363,7 @@ impl CallToolResult {
         FunctionCallOutputPayload {
             body,
             success: Some(self.success()),
+            hint: None,
         }
     }
 

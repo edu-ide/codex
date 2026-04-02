@@ -74,9 +74,11 @@ pub(crate) fn seek_sequence(
     // ------------------------------------------------------------------
 
     fn normalise(s: &str) -> String {
-        s.trim()
-            .chars()
-            .map(|c| match c {
+        let mut result = String::with_capacity(s.len());
+        let mut in_ws = false;
+
+        for c in s.trim().chars() {
+            let nc = match c {
                 // Various dash / hyphen code-points → ASCII '-'
                 '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
                 | '\u{2212}' => '-',
@@ -89,8 +91,19 @@ pub(crate) fn seek_sequence(
                 | '\u{2007}' | '\u{2008}' | '\u{2009}' | '\u{200A}' | '\u{202F}' | '\u{205F}'
                 | '\u{3000}' => ' ',
                 other => other,
-            })
-            .collect::<String>()
+            };
+
+            if nc.is_whitespace() {
+                if !in_ws {
+                    result.push(' ');
+                    in_ws = true;
+                }
+            } else {
+                result.push(nc);
+                in_ws = false;
+            }
+        }
+        result
     }
 
     for i in search_start..=lines.len().saturating_sub(pattern.len()) {
@@ -158,6 +171,17 @@ mod tests {
         assert_eq!(
             seek_sequence(&lines, &pattern, /*start*/ 0, /*eof*/ false),
             None
+        );
+    }
+
+    #[test]
+    fn test_normalise_collapses_whitespace() {
+        let lines = to_vec(&["  foo \t bar  "]);
+        // Pattern has different whitespace density but same words.
+        let pattern = to_vec(&["foo bar"]);
+        assert_eq!(
+            seek_sequence(&lines, &pattern, /*start*/ 0, /*eof*/ false),
+            Some(0)
         );
     }
 }

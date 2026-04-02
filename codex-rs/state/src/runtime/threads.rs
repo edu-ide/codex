@@ -75,6 +75,10 @@ ORDER BY position ASC
                 description: row.try_get("description")?,
                 input_schema,
                 defer_loading: row.try_get("defer_loading")?,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
             });
         }
         Ok(Some(tools))

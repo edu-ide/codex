@@ -1,25 +1,56 @@
 [package]
 name = "codex-chatgpt"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 
 [lints]
 workspace = true
 
-[dependencies]
-anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-codex-connectors = { workspace = true }
-codex-core = { workspace = true }
-codex-login = { workspace = true }
-codex-utils-cli = { workspace = true }
-codex-utils-cargo-bin = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
-codex-git-utils = { workspace = true }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.codex-connectors]
+workspace = true
+
+[dependencies.codex-core]
+workspace = true
+
+[dependencies.codex-login]
+workspace = true
+
+[dependencies.codex-utils-cli]
+workspace = true
+
+[dependencies.codex-utils-cargo-bin]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "full",]
+
+[dependencies.codex-git-utils]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true

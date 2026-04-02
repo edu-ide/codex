@@ -314,7 +314,9 @@ fn make_connector(id: &str, name: &str) -> AppInfo {
 
 #[test]
 fn assistant_message_stream_parsers_can_be_seeded_from_output_item_added_text() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false, /*hide_think_tags*/ false);
+    let mut parsers = AssistantMessageStreamParsers::new(
+        /*plan_mode*/ false, /*hide_think_tags*/ false,
+    );
     let item_id = "msg-1";
 
     let seeded = parsers.seed_item_text(item_id, "hello <oai-mem-citation>doc");
@@ -331,7 +333,9 @@ fn assistant_message_stream_parsers_can_be_seeded_from_output_item_added_text() 
 
 #[test]
 fn assistant_message_stream_parsers_seed_buffered_prefix_stays_out_of_finish_tail() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false, /*hide_think_tags*/ false);
+    let mut parsers = AssistantMessageStreamParsers::new(
+        /*plan_mode*/ false, /*hide_think_tags*/ false,
+    );
     let item_id = "msg-1";
 
     let seeded = parsers.seed_item_text(item_id, "hello <oai-mem-");
@@ -348,7 +352,8 @@ fn assistant_message_stream_parsers_seed_buffered_prefix_stays_out_of_finish_tai
 
 #[test]
 fn assistant_message_stream_parsers_seed_plan_parser_across_added_and_delta_boundaries() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ true, /*hide_think_tags*/ false);
+    let mut parsers =
+        AssistantMessageStreamParsers::new(/*plan_mode*/ true, /*hide_think_tags*/ false);
     let item_id = "msg-1";
 
     let seeded = parsers.seed_item_text(item_id, "Intro\n<proposed");

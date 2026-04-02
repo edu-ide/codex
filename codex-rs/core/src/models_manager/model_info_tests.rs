@@ -48,7 +48,15 @@ fn fallback_local_model_instructions_include_backend_identity() {
     let updated = with_config_overrides(model, &config);
 
     assert!(updated.base_instructions.contains("Qwen3.5-27B.Q6_K.gguf"));
-    assert!(updated.base_instructions.contains(LLAMA_SERVER_OSS_PROVIDER_ID));
-    assert!(updated.base_instructions.contains("Do not claim to be GPT-5.4"));
+    assert!(
+        updated
+            .base_instructions
+            .contains(LLAMA_SERVER_OSS_PROVIDER_ID)
+    );
+    assert!(
+        updated
+            .base_instructions
+            .contains("Do not claim to be GPT-5.4")
+    );
     assert_eq!(updated.model_messages, None);
 }

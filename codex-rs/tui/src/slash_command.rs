@@ -1,3 +1,4 @@
+use codex_protocol::commands::{CommandCategory, CommandMeta};
 use strum::IntoEnumIterator;
 use strum_macros::AsRefStr;
 use strum_macros::EnumIter;
@@ -36,6 +37,7 @@ pub enum SlashCommand {
     Diff,
     Copy,
     Mention,
+    Help,
     Status,
     DebugConfig,
     Title,
@@ -84,6 +86,7 @@ impl SlashCommand {
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Copy => "copy the latest Codex output to your clipboard",
             SlashCommand::Mention => "mention a file",
+            SlashCommand::Help => "show available slash commands",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::DebugConfig => "show config layers and requirement sources for debugging",
@@ -115,6 +118,37 @@ impl SlashCommand {
             SlashCommand::Logout => "log out of Codex",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
+        }
+    }
+
+    pub fn to_meta(self) -> CommandMeta {
+        let name = self.command().to_string();
+        let help_text = self.description().to_string();
+
+        CommandMeta {
+            name,
+            help_text,
+            usage_example: None,
+            is_experimental: matches!(
+                self,
+                SlashCommand::Realtime | SlashCommand::Collab | SlashCommand::Plan
+            ),
+            is_visible: self.is_visible_internal(),
+            available_during_task: self.available_during_task(),
+            category: match self {
+                SlashCommand::Model | SlashCommand::Fast | SlashCommand::Personality => {
+                    CommandCategory::System
+                }
+                SlashCommand::Mcp | SlashCommand::Apps | SlashCommand::Plugins => {
+                    CommandCategory::Mcp
+                }
+                SlashCommand::Review | SlashCommand::Plan => CommandCategory::Experimental,
+                _ => CommandCategory::System,
+            },
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
         }
     }
 
@@ -163,6 +197,7 @@ impl SlashCommand {
             | SlashCommand::Copy
             | SlashCommand::Rename
             | SlashCommand::Mention
+            | SlashCommand::Help
             | SlashCommand::Skills
             | SlashCommand::Status
             | SlashCommand::DebugConfig
@@ -186,7 +221,11 @@ impl SlashCommand {
         }
     }
 
-    fn is_visible(self) -> bool {
+    pub fn is_visible(self) -> bool {
+        self.is_visible_internal()
+    }
+
+    fn is_visible_internal(self) -> bool {
         match self {
             SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
             SlashCommand::Copy => !cfg!(target_os = "android"),

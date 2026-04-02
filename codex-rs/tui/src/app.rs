@@ -7,7 +7,9 @@ use crate::app_event::RealtimeAudioDeviceKind;
 #[cfg(target_os = "windows")]
 use crate::app_event::WindowsSandboxEnableMode;
 use crate::app_event_sender::AppEventSender;
-use crate::app_server_session::AppServerSession;
+use crate::app_server_session::ConversationRuntime;
+use crate::app_server_session::ConversationTurnRequest;
+use crate::app_server_session::SelectedConversationRuntime as AppServerSession;
 use crate::app_server_session::AppServerStartedThread;
 use crate::app_server_session::ThreadSessionState;
 use crate::bottom_pane::ApprovalRequest;
@@ -91,6 +93,12 @@ use codex_core::models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONF
 #[cfg(target_os = "windows")]
 use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_features::Feature;
+use codex_ilhae::capabilities::EngineCapabilityProfile;
+use codex_ilhae::capabilities::engine_capability_profile;
+use codex_ilhae::helpers::ILHAE_AGENT_ID;
+use codex_ilhae::current_native_backend_capability_profile;
+use codex_ilhae::native_runtime_context;
+use codex_ilhae::types::NOTIF_APP_SESSION_EVENT;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::ExecApprovalRequestEvent;
@@ -992,6 +1000,7 @@ pub(crate) struct App {
     primary_session_configured: Option<ThreadSessionState>,
     pending_primary_events: VecDeque<ThreadBufferedEvent>,
     pending_app_server_requests: PendingAppServerRequests,
+    backend_capabilities: EngineCapabilityProfile,
 }
 
 #[derive(Default)]
@@ -1038,6 +1047,22 @@ fn active_turn_missing_steer_error(error: &TypedRequestError) -> bool {
 }
 
 impl App {
+    fn sync_backend_capabilities(&mut self) {
+        self.backend_capabilities = current_native_backend_capability_profile()
+            .unwrap_or_else(|| engine_capability_profile(ILHAE_AGENT_ID));
+        self.chat_widget.set_backend_command_capabilities(
+            self.backend_capabilities.supports_fork,
+            self.backend_capabilities.supports_terminal_streaming,
+        );
+    }
+
+    fn backend_capability_denied(&mut self, feature: &str) {
+        self.chat_widget.add_error_message(format!(
+            "Current backend '{}' does not support {feature}.",
+            self.backend_capabilities.engine
+        ));
+    }
+
     pub fn chatwidget_init_for_forked_or_resumed_thread(
         &self,
         tui: &mut tui::Tui,
@@ -1085,6 +1110,7 @@ impl App {
         self.apply_runtime_policy_overrides(&mut config);
         self.config = config;
         self.chat_widget.sync_plugin_mentions_config(&self.config);
+        self.sync_backend_capabilities();
         Ok(())
     }
 
@@ -1677,12 +1703,26 @@ impl App {
 
     async fn interactive_request_for_thread_request(
         &self,
+        app_server: &AppServerSession,
         thread_id: ThreadId,
         request: &ServerRequest,
     ) -> Option<ThreadInteractiveRequest> {
         let thread_label = Some(self.thread_label(thread_id));
         match request {
             ServerRequest::CommandExecutionRequestApproval { params, .. } => {
+                let approval_id = params
+                    .approval_id
+                    .clone()
+                    .unwrap_or_else(|| params.item_id.clone());
+                if let Some(prompt) = app_server.acp_permission_prompt(&approval_id).await {
+                    return Some(ThreadInteractiveRequest::Approval(
+                        ApprovalRequest::AcpPermission {
+                            thread_id,
+                            thread_label,
+                            request: prompt,
+                        },
+                    ));
+                }
                 let network_approval_context = params
                     .network_approval_context
                     .clone()
@@ -1707,10 +1747,7 @@ impl App {
                 Some(ThreadInteractiveRequest::Approval(ApprovalRequest::Exec {
                     thread_id,
                     thread_label,
-                    id: params
-                        .approval_id
-                        .clone()
-                        .unwrap_or_else(|| params.item_id.clone()),
+                    id: approval_id,
                     command: params
                         .command
                         .as_deref()
@@ -1795,6 +1832,21 @@ impl App {
         }
     }
 
+    async fn flush_ilhae_runtime_events(&mut self, app_server: &mut AppServerSession) {
+        let Some(runtime) = native_runtime_context() else {
+            return;
+        };
+        while let Some(event) = app_server.next_ilhae_event().await {
+            runtime
+                .cx_cache
+                .notify_desktop(
+                    NOTIF_APP_SESSION_EVENT,
+                    serde_json::to_value(&event).unwrap_or(serde_json::Value::Null),
+                )
+                .await;
+        }
+    }
+
     async fn submit_active_thread_op(
         &mut self,
         app_server: &mut AppServerSession,
@@ -1854,7 +1906,11 @@ impl App {
     /// while request-token invalidation would add cross-cutting async state for a
     /// low-severity path.
     fn fetch_mcp_inventory(&mut self, app_server: &AppServerSession) {
-        let request_handle = app_server.request_handle();
+        let Some(request_handle) = app_server.request_handle() else {
+            self.chat_widget
+                .add_error_message("MCP inventory is unavailable for the current backend.".to_string());
+            return;
+        };
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let result = fetch_all_mcp_server_statuses(request_handle)
@@ -1865,7 +1921,11 @@ impl App {
     }
 
     fn fetch_plugins_list(&mut self, app_server: &AppServerSession, cwd: PathBuf) {
-        let request_handle = app_server.request_handle();
+        let Some(request_handle) = app_server.request_handle() else {
+            self.chat_widget
+                .add_error_message("Plugin listing is unavailable for the current backend.".to_string());
+            return;
+        };
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let result = fetch_plugins_list(request_handle, cwd.clone())
@@ -1881,7 +1941,11 @@ impl App {
         cwd: PathBuf,
         params: PluginReadParams,
     ) {
-        let request_handle = app_server.request_handle();
+        let Some(request_handle) = app_server.request_handle() else {
+            self.chat_widget
+                .add_error_message("Plugin detail is unavailable for the current backend.".to_string());
+            return;
+        };
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let result = fetch_plugin_detail(request_handle, params)
@@ -1899,7 +1963,11 @@ impl App {
         plugin_name: String,
         plugin_display_name: String,
     ) {
-        let request_handle = app_server.request_handle();
+        let Some(request_handle) = app_server.request_handle() else {
+            self.chat_widget
+                .add_error_message("Plugin install is unavailable for the current backend.".to_string());
+            return;
+        };
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let cwd_for_event = cwd.clone();
@@ -1925,7 +1993,11 @@ impl App {
         plugin_id: String,
         plugin_display_name: String,
     ) {
-        let request_handle = app_server.request_handle();
+        let Some(request_handle) = app_server.request_handle() else {
+            self.chat_widget
+                .add_error_message("Plugin uninstall is unavailable for the current backend.".to_string());
+            return;
+        };
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let cwd_for_event = cwd.clone();
@@ -2059,7 +2131,7 @@ impl App {
                 let Some(turn_id) = self.active_turn_id_for_thread(thread_id).await else {
                     return Ok(false);
                 };
-                app_server.turn_interrupt(thread_id, turn_id).await?;
+                app_server.interrupt_turn(thread_id, turn_id).await?;
                 Ok(true)
             }
             AppCommandView::UserTurn {
@@ -2078,6 +2150,10 @@ impl App {
             } => {
                 let mut should_start_turn = true;
                 if let Some(turn_id) = self.active_turn_id_for_thread(thread_id).await {
+                    if !self.backend_capabilities.supports_steer {
+                        self.backend_capability_denied("turn steering");
+                        return Ok(true);
+                    }
                     match app_server
                         .turn_steer(thread_id, turn_id, items.to_vec())
                         .await
@@ -2103,22 +2179,22 @@ impl App {
                 }
                 if should_start_turn {
                     app_server
-                        .turn_start(
+                        .send_turn(ConversationTurnRequest {
                             thread_id,
-                            items.to_vec(),
-                            cwd.clone(),
+                            items: items.to_vec(),
+                            cwd: cwd.clone(),
                             approval_policy,
-                            approvals_reviewer
+                            approvals_reviewer: approvals_reviewer
                                 .unwrap_or(self.chat_widget.config_ref().approvals_reviewer),
-                            sandbox_policy.clone(),
-                            model.to_string(),
+                            sandbox_policy: sandbox_policy.clone(),
+                            model: model.to_string(),
                             effort,
-                            *summary,
-                            *service_tier,
-                            collaboration_mode.clone(),
-                            *personality,
-                            final_output_json_schema.clone(),
-                        )
+                            summary: *summary,
+                            service_tier: *service_tier,
+                            collaboration_mode: collaboration_mode.clone(),
+                            personality: *personality,
+                            output_schema: final_output_json_schema.clone(),
+                        })
                         .await?;
                 }
                 Ok(true)
@@ -2163,6 +2239,10 @@ impl App {
                 Ok(true)
             }
             AppCommandView::CleanBackgroundTerminals => {
+                if !self.backend_capabilities.supports_terminal_streaming {
+                    self.backend_capability_denied("background terminal management");
+                    return Ok(true);
+                }
                 app_server
                     .thread_background_terminals_clean(thread_id)
                     .await?;
@@ -2406,11 +2486,12 @@ impl App {
 
     async fn enqueue_thread_request(
         &mut self,
+        app_server: &AppServerSession,
         thread_id: ThreadId,
         request: ServerRequest,
     ) -> Result<()> {
         let inactive_interactive_request = if self.active_thread_id != Some(thread_id) {
-            self.interactive_request_for_thread_request(thread_id, &request)
+            self.interactive_request_for_thread_request(app_server, thread_id, &request)
                 .await
         } else {
             None
@@ -2530,7 +2611,30 @@ impl App {
                         .await?;
                 }
                 ThreadBufferedEvent::Request(request) => {
-                    self.enqueue_thread_request(thread_id, request).await?;
+                    let (sender, store) = {
+                        let channel = self.ensure_thread_channel(thread_id);
+                        (channel.sender.clone(), Arc::clone(&channel.store))
+                    };
+                    let should_send = {
+                        let mut guard = store.lock().await;
+                        guard.push_request(request.clone());
+                        guard.active
+                    };
+                    if should_send {
+                        match sender.try_send(ThreadBufferedEvent::Request(request)) {
+                            Ok(()) => {}
+                            Err(TrySendError::Full(event)) => {
+                                tokio::spawn(async move {
+                                    if let Err(err) = sender.send(event).await {
+                                        tracing::warn!("thread {thread_id} event channel closed: {err}");
+                                    }
+                                });
+                            }
+                            Err(TrySendError::Closed(_)) => {
+                                tracing::warn!("thread {thread_id} event channel closed");
+                            }
+                        }
+                    }
                 }
                 ThreadBufferedEvent::HistoryEntryResponse(event) => {
                     self.enqueue_thread_history_entry_response(thread_id, event)
@@ -2560,7 +2664,31 @@ impl App {
 
     async fn enqueue_primary_thread_request(&mut self, request: ServerRequest) -> Result<()> {
         if let Some(thread_id) = self.primary_thread_id {
-            return self.enqueue_thread_request(thread_id, request).await;
+            let (sender, store) = {
+                let channel = self.ensure_thread_channel(thread_id);
+                (channel.sender.clone(), Arc::clone(&channel.store))
+            };
+            let should_send = {
+                let mut guard = store.lock().await;
+                guard.push_request(request.clone());
+                guard.active
+            };
+            if should_send {
+                match sender.try_send(ThreadBufferedEvent::Request(request)) {
+                    Ok(()) => {}
+                    Err(TrySendError::Full(event)) => {
+                        tokio::spawn(async move {
+                            if let Err(err) = sender.send(event).await {
+                                tracing::warn!("thread {thread_id} event channel closed: {err}");
+                            }
+                        });
+                    }
+                    Err(TrySendError::Closed(_)) => {
+                        tracing::warn!("thread {thread_id} event channel closed");
+                    }
+                }
+            }
+            return Ok(());
         }
         self.pending_primary_events
             .push_back(ThreadBufferedEvent::Request(request));
@@ -3595,7 +3723,27 @@ impl App {
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
+            backend_capabilities: current_native_backend_capability_profile()
+                .unwrap_or_else(|| engine_capability_profile(ILHAE_AGENT_ID)),
         };
+        app.sync_backend_capabilities();
+        if let Some(runtime) = native_runtime_context() {
+            let mut settings_events = runtime.settings_store.subscribe();
+            let tx = app.app_event_tx.clone();
+            tokio::spawn(async move {
+                loop {
+                    match settings_events.recv().await {
+                        Ok(event) => {
+                            if event.key == "agent.command" {
+                                tx.send(AppEvent::RefreshBackendCapabilities);
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+        }
         if let Some(started) = initial_started_thread {
             app.enqueue_primary_thread_session(started.session, started.turns)
                 .await?;
@@ -3700,7 +3848,10 @@ impl App {
                     }
                     app_server_event = app_server.next_event(), if listen_for_app_server_events => {
                         match app_server_event {
-                            Some(event) => app.handle_app_server_event(&app_server, event).await,
+                            Some(event) => {
+                                app.handle_app_server_event(&app_server, event).await;
+                                app.flush_ilhae_runtime_events(&mut app_server).await;
+                            }
                             None => {
                                 listen_for_app_server_events = false;
                                 tracing::warn!("app-server event stream closed");
@@ -3827,7 +3978,7 @@ impl App {
                     .await;
             }
             AppEvent::OpenResumePicker => {
-                let picker_app_server = match crate::start_app_server_for_picker(
+                let picker_app_server = match crate::start_session_lookup_runtime_for_picker(
                     &self.config,
                     &match self.remote_app_server_url.clone() {
                         Some(websocket_url) => crate::AppServerTarget::Remote {
@@ -3847,7 +3998,7 @@ impl App {
                         return Ok(AppRunControl::Continue);
                     }
                 };
-                match crate::resume_picker::run_resume_picker_with_app_server(
+                match crate::resume_picker::run_resume_picker_with_runtime(
                     tui,
                     &self.config,
                     /*show_all*/ false,
@@ -3951,6 +4102,11 @@ impl App {
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::ForkCurrentSession => {
+                if !self.backend_capabilities.supports_fork {
+                    self.backend_capability_denied("session forking");
+                    tui.frame_requester().schedule_frame();
+                    return Ok(AppRunControl::Continue);
+                }
                 self.session_telemetry.counter(
                     "codex.thread.fork",
                     /*inc*/ 1,
@@ -4075,6 +4231,38 @@ impl App {
                 self.submit_thread_op(app_server, thread_id, op.into())
                     .await?;
             }
+            AppEvent::ResolveAcpPermission {
+                thread_id,
+                id,
+                option_id,
+            } => {
+                let replay_decision = if option_id.is_some() {
+                    codex_protocol::protocol::ReviewDecision::Approved
+                } else {
+                    codex_protocol::protocol::ReviewDecision::Abort
+                };
+                match app_server.resolve_acp_permission_request(&id, option_id).await {
+                Ok(()) => {
+                    self.note_thread_outbound_op(
+                        thread_id,
+                        &AppCommand::exec_approval(
+                            id.clone(),
+                            None,
+                            replay_decision,
+                        ),
+                    )
+                    .await;
+                    self.pending_app_server_requests
+                        .resolve_notification(&RequestId::String(id));
+                    self.refresh_pending_thread_approvals().await;
+                }
+                Err(err) => {
+                    self.chat_widget.add_error_message(format!(
+                        "Failed to resolve ACP permission request for thread {thread_id}: {err}"
+                    ));
+                }
+            }
+            },
             AppEvent::ThreadHistoryEntryResponse { thread_id, event } => {
                 self.enqueue_thread_history_entry_response(thread_id, event)
                     .await?;
@@ -4245,6 +4433,9 @@ impl App {
             AppEvent::UpdateModel(model) => {
                 self.chat_widget.set_model(&model);
             }
+            AppEvent::RefreshBackendCapabilities => {
+                self.sync_backend_capabilities();
+            }
             AppEvent::UpdateCollaborationMode(mask) => {
                 self.chat_widget.set_collaboration_mask(mask);
             }
@@ -4297,6 +4488,9 @@ impl App {
                 if self.chat_widget.external_editor_state() == ExternalEditorState::Active {
                     self.launch_external_editor(tui).await;
                 }
+            }
+            AppEvent::ListCommandsLoaded(commands) => {
+                self.chat_widget.set_commands(commands);
             }
             AppEvent::OpenWindowsSandboxEnablePrompt { preset } => {
                 self.chat_widget.open_windows_sandbox_enable_prompt(preset);
@@ -5182,6 +5376,26 @@ impl App {
                     self.overlay = Some(Overlay::new_static_with_renderables(
                         vec![Box::new(Paragraph::new(lines).wrap(Wrap { trim: false }))],
                         "P E R M I S S I O N S".to_string(),
+                    ));
+                }
+                ApprovalRequest::AcpPermission { request, .. } => {
+                    let _ = tui.enter_alt_screen();
+                    let mut lines = Vec::new();
+                    lines.push(Line::from(vec![
+                        "Title: ".into(),
+                        request.title.clone().bold(),
+                    ]));
+                    lines.push(Line::from(""));
+                    if let Some(reason) = &request.reason {
+                        lines.push(Line::from(vec!["Reason: ".into(), reason.clone().italic()]));
+                        lines.push(Line::from(""));
+                    }
+                    for option in &request.options {
+                        lines.push(Line::from(vec!["- ".into(), option.label.clone().cyan()]));
+                    }
+                    self.overlay = Some(Overlay::new_static_with_renderables(
+                        vec![Box::new(Paragraph::new(lines).wrap(Wrap { trim: false }))],
+                        "A C P   P E R M I S S I O N".to_string(),
                     ));
                 }
                 ApprovalRequest::McpElicitation {
@@ -8023,6 +8237,9 @@ guardian_approval = true
     #[tokio::test]
     async fn inactive_thread_approval_bubbles_into_active_view() -> Result<()> {
         let mut app = make_test_app().await;
+        let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+            .await
+            .expect("embedded app server");
         let main_thread_id =
             ThreadId::from_string("00000000-0000-0000-0000-000000000011").expect("valid thread");
         let agent_thread_id =
@@ -8053,6 +8270,7 @@ guardian_approval = true
         );
 
         app.enqueue_thread_request(
+            &app_server,
             agent_thread_id,
             exec_approval_request(
                 agent_thread_id,
@@ -8075,6 +8293,9 @@ guardian_approval = true
     #[tokio::test]
     async fn inactive_thread_exec_approval_preserves_context() {
         let app = make_test_app().await;
+        let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+            .await
+            .expect("embedded app server");
         let thread_id = ThreadId::new();
         let mut request = exec_approval_request(
             thread_id,
@@ -8106,7 +8327,7 @@ guardian_approval = true
             additional_permissions,
             ..
         })) = app
-            .interactive_request_for_thread_request(thread_id, &request)
+            .interactive_request_for_thread_request(&app_server, thread_id, &request)
             .await
         else {
             panic!("expected exec approval request");
@@ -8147,6 +8368,9 @@ guardian_approval = true
     #[tokio::test]
     async fn inactive_thread_exec_approval_splits_shell_wrapped_command() {
         let app = make_test_app().await;
+        let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+            .await
+            .expect("embedded app server");
         let thread_id = ThreadId::new();
         let script = r#"python3 -c 'print("Hello, world!")'"#;
         let mut request = exec_approval_request(
@@ -8163,7 +8387,7 @@ guardian_approval = true
         );
 
         let Some(ThreadInteractiveRequest::Approval(ApprovalRequest::Exec { command, .. })) = app
-            .interactive_request_for_thread_request(thread_id, &request)
+            .interactive_request_for_thread_request(&app_server, thread_id, &request)
             .await
         else {
             panic!("expected exec approval request");
@@ -8183,6 +8407,9 @@ guardian_approval = true
     async fn inactive_thread_approval_badge_clears_after_turn_completion_notification() -> Result<()>
     {
         let mut app = make_test_app().await;
+        let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+            .await
+            .expect("embedded app server");
         let main_thread_id =
             ThreadId::from_string("00000000-0000-0000-0000-000000000101").expect("valid thread");
         let agent_thread_id =
@@ -8213,6 +8440,7 @@ guardian_approval = true
         );
 
         app.enqueue_thread_request(
+            &app_server,
             agent_thread_id,
             exec_approval_request(
                 agent_thread_id,

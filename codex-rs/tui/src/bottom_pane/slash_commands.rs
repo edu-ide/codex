@@ -6,9 +6,13 @@
 use std::str::FromStr;
 
 use codex_utils_fuzzy_match::fuzzy_match;
+use strum::IntoEnumIterator;
 
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
+
+/// Hide alias commands in popup/listing views so each unique action appears once.
+pub(crate) const ALIAS_COMMANDS: &[SlashCommand] = &[SlashCommand::Quit, SlashCommand::Approvals];
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct BuiltinCommandFlags {
@@ -20,6 +24,8 @@ pub(crate) struct BuiltinCommandFlags {
     pub(crate) realtime_conversation_enabled: bool,
     pub(crate) audio_device_selection_enabled: bool,
     pub(crate) allow_elevate_sandbox: bool,
+    pub(crate) fork_command_enabled: bool,
+    pub(crate) terminal_commands_enabled: bool,
 }
 
 /// Return the built-ins that should be visible/usable for the current input.
@@ -37,23 +43,74 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
         .filter(|(_, cmd)| flags.personality_command_enabled || *cmd != SlashCommand::Personality)
         .filter(|(_, cmd)| flags.realtime_conversation_enabled || *cmd != SlashCommand::Realtime)
         .filter(|(_, cmd)| flags.audio_device_selection_enabled || *cmd != SlashCommand::Settings)
+        .filter(|(_, cmd)| flags.fork_command_enabled || *cmd != SlashCommand::Fork)
+        .filter(|(_, cmd)| {
+            flags.terminal_commands_enabled
+                || !matches!(*cmd, SlashCommand::Ps | SlashCommand::Stop)
+        })
+        .collect()
+}
+
+/// Return the built-ins that should appear in slash-command listing UIs.
+pub(crate) fn builtins_for_popup(flags: BuiltinCommandFlags) -> Vec<(&'static str, SlashCommand)> {
+    builtins_for_input(flags)
+        .into_iter()
+        .filter(|(name, _)| !name.starts_with("debug"))
+        .filter(|(_, cmd)| *cmd != SlashCommand::Apps)
+        .filter(|(_, cmd)| !ALIAS_COMMANDS.contains(cmd))
         .collect()
 }
 
 /// Find a single built-in command by exact name, after applying the gating rules.
 pub(crate) fn find_builtin_command(name: &str, flags: BuiltinCommandFlags) -> Option<SlashCommand> {
     let cmd = SlashCommand::from_str(name).ok()?;
-    builtins_for_input(flags)
-        .into_iter()
-        .any(|(_, visible_cmd)| visible_cmd == cmd)
-        .then_some(cmd)
+    matches_builtin_visibility(cmd, flags).then_some(cmd)
+}
+
+/// Find the most likely built-in command for an unknown input.
+pub(crate) fn suggest_builtin_command(
+    name: &str,
+    flags: BuiltinCommandFlags,
+) -> Option<&'static str> {
+    const MAX_TYPOSCORE: i32 = 20;
+    SlashCommand::iter()
+        .map(|command| (command.command(), command))
+        .filter(|(_, command)| matches_builtin_visibility(*command, flags))
+        .filter_map(|(command_name, _)| {
+            fuzzy_match(command_name, name).map(|(_, score)| (score, command_name))
+        })
+        .filter(|(score, _)| *score <= MAX_TYPOSCORE)
+        .min_by_key(|(score, _)| *score)
+        .map(|(_, command_name)| command_name)
 }
 
 /// Whether any visible built-in fuzzily matches the provided prefix.
 pub(crate) fn has_builtin_prefix(name: &str, flags: BuiltinCommandFlags) -> bool {
-    builtins_for_input(flags)
-        .into_iter()
-        .any(|(command_name, _)| fuzzy_match(command_name, name).is_some())
+    SlashCommand::iter()
+        .filter(|command| matches_builtin_visibility(*command, flags))
+        .any(|command| fuzzy_match(command.command(), name).is_some())
+}
+
+fn matches_builtin_visibility(command: SlashCommand, flags: BuiltinCommandFlags) -> bool {
+    if !matches_builtin_flags(command, flags) {
+        return false;
+    }
+    command.is_visible()
+}
+
+fn matches_builtin_flags(command: SlashCommand, flags: BuiltinCommandFlags) -> bool {
+    (flags.allow_elevate_sandbox || command != SlashCommand::ElevateSandbox)
+        && (flags.collaboration_modes_enabled
+            || !matches!(command, SlashCommand::Collab | SlashCommand::Plan))
+        && (flags.connectors_enabled || command != SlashCommand::Apps)
+        && (flags.plugins_command_enabled || command != SlashCommand::Plugins)
+        && (flags.fast_command_enabled || command != SlashCommand::Fast)
+        && (flags.personality_command_enabled || command != SlashCommand::Personality)
+        && (flags.realtime_conversation_enabled || command != SlashCommand::Realtime)
+        && (flags.audio_device_selection_enabled || command != SlashCommand::Settings)
+        && (flags.fork_command_enabled || command != SlashCommand::Fork)
+        && (flags.terminal_commands_enabled
+            || !matches!(command, SlashCommand::Ps | SlashCommand::Stop))
 }
 
 #[cfg(test)]
@@ -71,6 +128,8 @@ mod tests {
             realtime_conversation_enabled: true,
             audio_device_selection_enabled: true,
             allow_elevate_sandbox: true,
+            fork_command_enabled: true,
+            terminal_commands_enabled: true,
         }
     }
 
@@ -132,16 +191,57 @@ mod tests {
         flags.audio_device_selection_enabled = false;
         assert_eq!(find_builtin_command("settings", flags), None);
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pretty_assertions::assert_eq;
 
     #[test]
-    fn debug_command_still_resolves_for_dispatch() {
-        let cmd = find_builtin_command("debug-config", true, true, true, false);
-        assert_eq!(cmd, Some(SlashCommand::DebugConfig));
+    fn help_command_is_available() {
+        let cmd = find_builtin_command("help", all_enabled_flags());
+        assert_eq!(cmd, Some(SlashCommand::Help));
+    }
+
+    #[test]
+    fn suggests_similar_command() {
+        let suggestion = suggest_builtin_command("stauts", all_enabled_flags());
+        assert_eq!(suggestion, Some("status"));
+    }
+
+    #[test]
+    fn has_builtin_prefix_respects_visibility_and_fuzzy_match() {
+        assert_eq!(has_builtin_prefix("st", all_enabled_flags()), true);
+        assert_eq!(has_builtin_prefix("stauts", all_enabled_flags()), true);
+        assert_eq!(has_builtin_prefix("unknown", all_enabled_flags()), false);
+        let mut flags = all_enabled_flags();
+        flags.fast_command_enabled = false;
+        assert_eq!(has_builtin_prefix("fast", flags), false);
+    }
+
+    #[test]
+    fn popup_commands_hide_aliases_and_debug_commands() {
+        let popup_commands = builtins_for_popup(all_enabled_flags());
+        let command_names: Vec<&str> = popup_commands.iter().map(|(name, _)| *name).collect();
+
+        assert!(
+            !command_names.iter().any(|name| name.starts_with("debug")),
+            "expected no /debug* command in popup list, got {command_names:?}"
+        );
+        assert!(
+            !command_names.contains(&"quit") && !command_names.contains(&"approvals"),
+            "expected popup list to hide alias commands, got {command_names:?}"
+        );
+        assert!(command_names.contains(&"help"));
+    }
+
+    #[test]
+    fn fork_command_is_hidden_when_disabled() {
+        let mut flags = all_enabled_flags();
+        flags.fork_command_enabled = false;
+        assert_eq!(find_builtin_command("fork", flags), None);
+    }
+
+    #[test]
+    fn terminal_commands_are_hidden_when_disabled() {
+        let mut flags = all_enabled_flags();
+        flags.terminal_commands_enabled = false;
+        assert_eq!(find_builtin_command("ps", flags), None);
+        assert_eq!(find_builtin_command("stop", flags), None);
     }
 }

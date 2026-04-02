@@ -56,7 +56,11 @@ fn map_extracted(
 ) -> StreamTextChunk<String> {
     StreamTextChunk {
         visible_text: chunk.visible_text,
-        extracted: chunk.extracted.into_iter().map(|entry| entry.content).collect(),
+        extracted: chunk
+            .extracted
+            .into_iter()
+            .map(|entry| entry.content)
+            .collect(),
     }
 }
 

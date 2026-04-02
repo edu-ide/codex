@@ -105,6 +105,7 @@ pub(crate) enum AppCommandView<'a> {
     Review {
         review_request: &'a ReviewRequest,
     },
+    ListCommands,
     Other(&'a Op),
 }
 
@@ -268,6 +269,10 @@ impl AppCommand {
         Self(Op::Review { review_request })
     }
 
+    pub(crate) fn list_commands() -> Self {
+        Self(Op::ListCommands)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn kind(&self) -> &'static str {
         self.0.kind()
@@ -394,6 +399,7 @@ impl AppCommand {
                 num_turns: *num_turns,
             },
             Op::Review { review_request } => AppCommandView::Review { review_request },
+            Op::ListCommands => AppCommandView::ListCommands,
             op => AppCommandView::Other(op),
         }
     }

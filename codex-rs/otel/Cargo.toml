@@ -1,8 +1,5 @@
 [package]
 name = "codex-otel"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 
 [lib]
 doctest = false
@@ -13,61 +10,100 @@ path = "src/lib.rs"
 workspace = true
 
 [features]
-## Disables the built-in default metrics exporter.
-##
-## Intended for use from `dev-dependencies` so unit/integration tests never
-## attempt to export metrics over the network.
 disable-default-metrics-exporter = []
 
-[dependencies]
-chrono = { workspace = true }
-codex-utils-absolute-path = { workspace = true }
-codex-utils-string = { workspace = true }
-codex-api = { workspace = true }
-codex-app-server-protocol = { workspace = true }
-codex-protocol = { workspace = true }
-eventsource-stream = { workspace = true }
-gethostname = { workspace = true }
-opentelemetry = { workspace = true, features = ["logs", "metrics", "trace"] }
-opentelemetry-appender-tracing = { workspace = true }
-opentelemetry-otlp = { workspace = true, features = [
-    "grpc-tonic",
-    "http-proto",
-    "http-json",
-    "logs",
-    "metrics",
-    "trace",
-    "reqwest-blocking-client",
-    "reqwest-rustls",
-    "tls",
-    "tls-roots",
-]}
-opentelemetry-semantic-conventions = { workspace = true }
-opentelemetry_sdk = { workspace = true, features = [
-    "experimental_trace_batch_span_processor_with_async_runtime",
-    "experimental_metrics_custom_reader",
-    "logs",
-    "metrics",
-    "rt-tokio",
-    "testing",
-    "trace",
-] }
-http = { workspace = true }
-os_info = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "rustls-tls"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-strum_macros = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true }
-tokio-tungstenite = { workspace = true }
-tracing = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-tracing-subscriber = { workspace = true }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-opentelemetry_sdk = { workspace = true, features = [
-    "experimental_metrics_custom_reader",
-    "testing",
-] }
-pretty_assertions = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.chrono]
+version = "0.4.43"
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.codex-utils-string]
+workspace = true
+
+[dependencies.codex-api]
+workspace = true
+
+[dependencies.codex-app-server-protocol]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.eventsource-stream]
+workspace = true
+
+[dependencies.gethostname]
+workspace = true
+
+[dependencies.opentelemetry]
+workspace = true
+features = [ "logs", "metrics", "trace",]
+
+[dependencies.opentelemetry-appender-tracing]
+workspace = true
+
+[dependencies.opentelemetry-otlp]
+workspace = true
+features = [ "grpc-tonic", "http-proto", "http-json", "logs", "metrics", "trace", "reqwest-blocking-client", "reqwest-rustls", "tls", "tls-roots",]
+
+[dependencies.opentelemetry-semantic-conventions]
+workspace = true
+
+[dependencies.opentelemetry_sdk]
+workspace = true
+features = [ "experimental_trace_batch_span_processor_with_async_runtime", "experimental_metrics_custom_reader", "logs", "metrics", "rt-tokio", "testing", "trace",]
+
+[dependencies.http]
+workspace = true
+
+[dependencies.os_info]
+workspace = true
+
+[dependencies.reqwest]
+workspace = true
+features = [ "blocking", "rustls-tls",]
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.strum_macros]
+workspace = true
+
+[dependencies.thiserror]
+version = "2.0.17"
+
+[dependencies.tokio]
+version = "1"
+
+[dependencies.tokio-tungstenite]
+workspace = true
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.tracing-opentelemetry]
+workspace = true
+
+[dependencies.tracing-subscriber]
+version = "0.3.22"
+
+[dev-dependencies.opentelemetry_sdk]
+workspace = true
+features = [ "experimental_metrics_custom_reader", "testing",]
+
+[dev-dependencies.pretty_assertions]
+workspace = true

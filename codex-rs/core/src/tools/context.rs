@@ -162,6 +162,7 @@ impl ToolOutput for ToolSearchOutput {
 pub struct FunctionToolOutput {
     pub body: Vec<FunctionCallOutputContentItem>,
     pub success: Option<bool>,
+    pub hint: Option<String>,
     pub post_tool_use_response: Option<JsonValue>,
 }
 
@@ -170,6 +171,7 @@ impl FunctionToolOutput {
         Self {
             body: vec![FunctionCallOutputContentItem::InputText { text }],
             success,
+            hint: None,
             post_tool_use_response: None,
         }
     }
@@ -181,6 +183,7 @@ impl FunctionToolOutput {
         Self {
             body: content,
             success,
+            hint: None,
             post_tool_use_response: None,
         }
     }
@@ -202,7 +205,13 @@ impl ToolOutput for FunctionToolOutput {
     }
 
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
-        function_tool_response(call_id, payload, self.body.clone(), self.success)
+        function_tool_response(
+            call_id,
+            payload,
+            self.body.clone(),
+            self.success,
+            self.hint.clone(),
+        )
     }
 
     fn post_tool_use_response(&self, _call_id: &str, _payload: &ToolPayload) -> Option<JsonValue> {
@@ -237,6 +246,7 @@ impl ToolOutput for ApplyPatchToolOutput {
                 text: self.text.clone(),
             }],
             Some(true),
+            None,
         )
     }
 
@@ -277,6 +287,7 @@ impl ToolOutput for AbortedToolOutput {
                     text: self.message.clone(),
                 }],
                 /*success*/ None,
+                /*hint*/ None,
             ),
         }
     }
@@ -313,6 +324,7 @@ impl ToolOutput for ExecCommandToolOutput {
                 text: self.response_text(),
             }],
             Some(true),
+            None,
         )
     }
 
@@ -460,6 +472,7 @@ fn function_tool_response(
     payload: &ToolPayload,
     body: Vec<FunctionCallOutputContentItem>,
     success: Option<bool>,
+    hint: Option<String>,
 ) -> ResponseInputItem {
     let body = match body.as_slice() {
         [FunctionCallOutputContentItem::InputText { text }] => {
@@ -472,13 +485,21 @@ fn function_tool_response(
         return ResponseInputItem::CustomToolCallOutput {
             call_id: call_id.to_string(),
             name: None,
-            output: FunctionCallOutputPayload { body, success },
+            output: FunctionCallOutputPayload {
+                body,
+                success,
+                hint,
+            },
         };
     }
 
     ResponseInputItem::FunctionCallOutput {
         call_id: call_id.to_string(),
-        output: FunctionCallOutputPayload { body, success },
+        output: FunctionCallOutputPayload {
+            body,
+            success,
+            hint,
+        },
     }
 }
 

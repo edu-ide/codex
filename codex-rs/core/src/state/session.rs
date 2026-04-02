@@ -33,6 +33,8 @@ pub(crate) struct SessionState {
     pub(crate) active_connector_selection: HashSet<String>,
     pub(crate) pending_session_start_source: Option<codex_hooks::SessionStartSource>,
     granted_permissions: Option<PermissionProfile>,
+    pub(crate) read_file_cache: HashMap<(String, usize, usize), (std::time::SystemTime, u64)>,
+    brain_tool_registry_synced: bool,
 }
 
 impl SessionState {
@@ -51,7 +53,17 @@ impl SessionState {
             active_connector_selection: HashSet::new(),
             pending_session_start_source: None,
             granted_permissions: None,
+            read_file_cache: HashMap::new(),
+            brain_tool_registry_synced: false,
         }
+    }
+
+    pub(crate) fn is_brain_sync_completed(&self) -> bool {
+        self.brain_tool_registry_synced
+    }
+
+    pub(crate) fn set_brain_sync_completed(&mut self, completed: bool) {
+        self.brain_tool_registry_synced = completed;
     }
 
     // History helpers
@@ -85,6 +97,7 @@ impl SessionState {
         self.history.replace(items);
         self.history
             .set_reference_context_item(reference_context_item);
+        self.read_file_cache.clear();
     }
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {

@@ -1,25 +1,63 @@
 [package]
 name = "codex-app-server-test-client"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 
 [lints]
 workspace = true
 
-[dependencies]
-anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive", "env"] }
-codex-app-server-protocol = { workspace = true }
-codex-core = { workspace = true }
-codex-otel = { workspace = true }
-codex-protocol = { workspace = true }
-codex-utils-cli = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt"] }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tungstenite = { workspace = true }
-url = { workspace = true }
-uuid = { workspace = true, features = ["v4"] }
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.clap]
+version = "4"
+features = [ "derive", "env",]
+
+[dependencies.codex-app-server-protocol]
+workspace = true
+
+[dependencies.codex-core]
+workspace = true
+
+[dependencies.codex-otel]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-utils-cli]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "rt",]
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.tracing-subscriber]
+version = "0.3.22"
+
+[dependencies.tungstenite]
+workspace = true
+
+[dependencies.url]
+version = "2"
+
+[dependencies.uuid]
+version = "1"
+features = [ "v4",]

@@ -401,6 +401,21 @@ fn compute_replacements(
                 line_index,
                 /*eof*/ false,
             ) {
+                // Ensure the context line is unique from this point forward.
+                if seek_sequence::seek_sequence(
+                    original_lines,
+                    std::slice::from_ref(ctx_line),
+                    idx + 1,
+                    /*eof*/ false,
+                )
+                .is_some()
+                {
+                    return Err(ApplyPatchError::ComputeReplacements(format!(
+                        "The context '{}' is not unique in {}. Please provide more context to uniquely identify the instance.",
+                        ctx_line,
+                        path.display()
+                    )));
+                }
                 line_index = idx + 1;
             } else {
                 return Err(ApplyPatchError::ComputeReplacements(format!(
@@ -457,6 +472,22 @@ fn compute_replacements(
         }
 
         if let Some(start_idx) = found {
+            // Check for strict uniqueness of the lines to be replaced.
+            if seek_sequence::seek_sequence(
+                original_lines,
+                pattern,
+                start_idx + 1,
+                chunk.is_end_of_file,
+            )
+            .is_some()
+            {
+                return Err(ApplyPatchError::ComputeReplacements(format!(
+                    "The lines to replace are not unique in {}. Found another occurrence. Please provide more context (e.g., @@ context lines) to uniquely identify the instance:\n{}",
+                    path.display(),
+                    chunk.old_lines.join("\n"),
+                )));
+            }
+
             replacements.push((start_idx, pattern.len(), new_slice.to_vec()));
             line_index = start_idx + pattern.len();
         } else {

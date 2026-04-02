@@ -1,8 +1,5 @@
 [package]
-edition.workspace = true
-license.workspace = true
 name = "codex-skills"
-version.workspace = true
 build = "build.rs"
 
 [lib]
@@ -13,7 +10,20 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-codex-utils-absolute-path = { workspace = true }
-include_dir = { workspace = true }
-thiserror = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[package.version]
+workspace = true
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.include_dir]
+workspace = true
+
+[dependencies.thiserror]
+version = "2.0.17"

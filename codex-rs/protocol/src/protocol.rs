@@ -365,6 +365,23 @@ pub enum Op {
         personality: Option<Personality>,
     },
 
+    /// Replace the current session dynamic tool specification list.
+    ///
+    /// This updates the persistent turn context used for subsequent turns. Use
+    /// `Some` to replace with a concrete set of tools or an empty list to
+    /// clear dynamic tools.
+    SetDynamicTools { dynamic_tools: Vec<DynamicToolSpec> },
+
+    /// Add or replace dynamic tools in the current session by tool name.
+    ///
+    /// If a tool with the same name already exists, it is replaced.
+    AddDynamicTools { dynamic_tools: Vec<DynamicToolSpec> },
+
+    /// Remove dynamic tools from the current session by tool name.
+    ///
+    /// Unknown names are ignored.
+    RemoveDynamicTools { names: Vec<String> },
+
     /// Approve a command execution
     ExecApproval {
         /// The id of the submission we are approving
@@ -440,6 +457,10 @@ pub enum Op {
     /// Request the list of MCP tools available across all configured servers.
     /// Reply is delivered via `EventMsg::McpListToolsResponse`.
     ListMcpTools,
+
+    /// Request the list of centralized command metadata.
+    /// Reply is delivered via `EventMsg::ListCommandsResponse`.
+    ListCommands,
 
     /// Request MCP servers to reinitialize and refresh cached tool lists.
     RefreshMcpServers { config: McpServerRefreshConfig },
@@ -580,6 +601,9 @@ impl Op {
             Self::UserTurn { .. } => "user_turn",
             Self::InterAgentCommunication { .. } => "inter_agent_communication",
             Self::OverrideTurnContext { .. } => "override_turn_context",
+            Self::SetDynamicTools { .. } => "set_dynamic_tools",
+            Self::AddDynamicTools { .. } => "add_dynamic_tools",
+            Self::RemoveDynamicTools { .. } => "remove_dynamic_tools",
             Self::ExecApproval { .. } => "exec_approval",
             Self::PatchApproval { .. } => "patch_approval",
             Self::ResolveElicitation { .. } => "resolve_elicitation",
@@ -602,6 +626,7 @@ impl Op {
             Self::Shutdown => "shutdown",
             Self::RunUserShellCommand { .. } => "run_user_shell_command",
             Self::ListModels => "list_models",
+            Self::ListCommands => "list_commands",
         }
     }
 }
@@ -1367,6 +1392,9 @@ pub enum EventMsg {
 
     /// List of skills available to the agent.
     ListSkillsResponse(ListSkillsResponseEvent),
+
+    /// List of centralized command metadata available to the agent.
+    ListCommandsResponse(ListCommandsResponseEvent),
 
     /// Notification that skill data may have been updated and clients may want to reload.
     SkillsUpdateAvailable,
@@ -3098,6 +3126,11 @@ impl fmt::Display for McpAuthStatus {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ListSkillsResponseEvent {
     pub skills: Vec<SkillsListEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ListCommandsResponseEvent {
+    pub commands: Vec<crate::commands::CommandMeta>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]

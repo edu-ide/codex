@@ -1,8 +1,5 @@
 [package]
-edition.workspace = true
-license.workspace = true
 name = "codex-features"
-version.workspace = true
 
 [lib]
 doctest = false
@@ -12,14 +9,37 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-codex-login = { workspace = true }
-codex-otel = { workspace = true }
-codex-protocol = { workspace = true }
-schemars = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-toml = { workspace = true }
-tracing = { workspace = true, features = ["log"] }
+[package.edition]
+workspace = true
 
-[dev-dependencies]
-pretty_assertions = { workspace = true }
+[package.license]
+workspace = true
+
+[package.version]
+workspace = true
+
+[dependencies.codex-login]
+workspace = true
+
+[dependencies.codex-otel]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.schemars]
+version = "0.8.22"
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.toml]
+workspace = true
+
+[dependencies.tracing]
+version = "0.1.44"
+features = [ "log",]
+
+[dev-dependencies.pretty_assertions]
+workspace = true

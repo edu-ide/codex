@@ -10,8 +10,11 @@ use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
 pub fn normalize_for_path_comparison(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
-    let canonical = path.as_ref().canonicalize()?;
-    Ok(normalize_for_wsl(canonical))
+    let absolute = normalize_for_wsl(AbsolutePathBuf::from_absolute_path(path)?.into_path_buf());
+    match absolute.canonicalize() {
+        Ok(canonicalized) => Ok(normalize_for_wsl(canonicalized)),
+        Err(_) => Ok(absolute),
+    }
 }
 
 pub fn normalize_for_native_workdir(path: impl AsRef<Path>) -> PathBuf {

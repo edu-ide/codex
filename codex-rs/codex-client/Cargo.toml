@@ -1,36 +1,90 @@
 [package]
-edition.workspace = true
-license.workspace = true
 name = "codex-client"
-version.workspace = true
-
-[dependencies]
-async-trait = { workspace = true }
-bytes = { workspace = true }
-eventsource-stream = { workspace = true }
-futures = { workspace = true }
-http = { workspace = true }
-opentelemetry = { workspace = true }
-rand = { workspace = true }
-reqwest = { workspace = true, features = ["json", "stream"] }
-rustls = { workspace = true }
-rustls-native-certs = { workspace = true }
-rustls-pki-types = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
-tracing = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-codex-utils-rustls-provider = { workspace = true }
-zstd = { workspace = true }
 
 [lints]
 workspace = true
 
-[dev-dependencies]
-codex-utils-cargo-bin = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
-tracing-subscriber = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[package.version]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.bytes]
+workspace = true
+
+[dependencies.eventsource-stream]
+workspace = true
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
+
+[dependencies.http]
+workspace = true
+
+[dependencies.opentelemetry]
+workspace = true
+
+[dependencies.rand]
+workspace = true
+
+[dependencies.reqwest]
+workspace = true
+features = [ "json", "stream",]
+
+[dependencies.rustls]
+workspace = true
+
+[dependencies.rustls-native-certs]
+workspace = true
+
+[dependencies.rustls-pki-types]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.thiserror]
+version = "2.0.17"
+
+[dependencies.tokio]
+version = "1"
+features = [ "macros", "rt", "time", "sync",]
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.tracing-opentelemetry]
+workspace = true
+
+[dependencies.codex-utils-rustls-provider]
+workspace = true
+
+[dependencies.zstd]
+workspace = true
+
+[dev-dependencies.codex-utils-cargo-bin]
+workspace = true
+
+[dev-dependencies.opentelemetry_sdk]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true
+
+[dev-dependencies.tracing-subscriber]
+version = "0.3.22"

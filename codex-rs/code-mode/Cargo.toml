@@ -1,8 +1,5 @@
 [package]
-edition.workspace = true
-license.workspace = true
 name = "codex-code-mode"
-version.workspace = true
 
 [lib]
 doctest = false
@@ -12,14 +9,38 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-async-trait = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
-tokio-util = { workspace = true, features = ["rt"] }
-tracing = { workspace = true }
-v8 = { workspace = true }
+[package.edition]
+workspace = true
 
-[dev-dependencies]
-pretty_assertions = { workspace = true }
+[package.license]
+workspace = true
+
+[package.version]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "macros", "rt", "sync", "time",]
+
+[dependencies.tokio-util]
+version = "0.7.18"
+features = [ "rt",]
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.v8]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true

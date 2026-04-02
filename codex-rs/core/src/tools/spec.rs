@@ -21,8 +21,7 @@ use crate::tools::handlers::multi_agents_common::MAX_WAIT_TIMEOUT_MS;
 use crate::tools::handlers::multi_agents_common::MIN_WAIT_TIMEOUT_MS;
 use crate::tools::handlers::request_permissions_tool_description;
 use crate::tools::handlers::request_user_input_tool_description;
-use crate::tools::registry::ToolRegistryBuilder;
-use crate::tools::registry::tool_handler_key;
+use crate::tools::registry::{ToolRegistryBuilder, tool_handler_key};
 use codex_features::Feature;
 use codex_features::Features;
 use codex_protocol::config_types::WebSearchConfig;
@@ -38,9 +37,11 @@ use codex_protocol::openai_models::WebSearchToolType;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::{CommandCategory, CommandMeta};
 use codex_tools::CommandToolOptions;
 use codex_tools::DiscoverableTool;
 use codex_tools::DiscoverableToolType;
+use codex_tools::ResponsesApiTool;
 use codex_tools::ShellToolOptions;
 use codex_tools::SpawnAgentToolOptions;
 use codex_tools::ToolSearchAppInfo;
@@ -364,6 +365,9 @@ fn supports_image_generation(model_info: &ModelInfo) -> bool {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ApplyPatchToolArgs {
     pub(crate) input: String,
+    /// The expected last modified time of the file being patched.
+    /// If provided, the tool will fail if the file has been modified since this time.
+    pub(crate) expected_mtime: Option<String>,
 }
 
 pub fn create_tools_json_for_responses_api_with_provider(
@@ -375,7 +379,7 @@ pub fn create_tools_json_for_responses_api_with_provider(
     }
 
     codex_tools::create_tools_json_for_responses_api(tools)
-        .map_err(|e| crate::error::Error::System(e.to_string()))
+        .map_err(|e| crate::error::CodexErr::Fatal(e.to_string()))
 }
 
 fn create_tools_json_for_llama_server(
@@ -431,9 +435,6 @@ fn create_local_shell_json_tool() -> ToolSpec {
             },
         ),
     ]);
-    properties.extend(create_approval_parameters(
-        /*exec_permission_approvals_enabled*/ false,
-    ));
 
     ToolSpec::Function(ResponsesApiTool {
         name: "local_shell".to_string(),
@@ -486,6 +487,46 @@ fn create_js_repl_json_tool() -> ToolSpec {
         output_schema: None,
     })
 }
+fn create_self_check_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "status".to_string(),
+        JsonSchema::String {
+            description: Some("The evaluation status ('passed', 'failed', 'blocked').".to_string()),
+        },
+    );
+    properties.insert(
+        "errors_encountered".to_string(),
+        JsonSchema::Array {
+            items: Box::new(JsonSchema::String { description: None }),
+            description: Some(
+                "Any errors or failures you encountered during this step.".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "mitigation_plan".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Proposed strategy to recover, retry, or ask for user help.".to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "self_check".to_string(),
+        description: "Run an autonomous self-check to evaluate success, mitigate errors, and trigger tool-call retries. This harness provides autonomous error recovery feedback.".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["status".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+        output_schema: None,
+    })
+}
+
 fn push_tool_spec(
     builder: &mut ToolRegistryBuilder,
     spec: ToolSpec,
@@ -535,11 +576,13 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::JsReplHandler;
     use crate::tools::handlers::JsReplResetHandler;
     use crate::tools::handlers::ListDirHandler;
+    use crate::tools::handlers::LspToolHandler;
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
     use crate::tools::handlers::PlanHandler;
     use crate::tools::handlers::RequestPermissionsHandler;
     use crate::tools::handlers::RequestUserInputHandler;
+    use crate::tools::handlers::SelfCheckHandler;
     use crate::tools::handlers::ShellCommandHandler;
     use crate::tools::handlers::ShellHandler;
     use crate::tools::handlers::TestSyncHandler;
@@ -562,10 +605,12 @@ pub(crate) fn build_specs_with_discoverable_tools(
 
     let mut builder = ToolRegistryBuilder::new();
 
+    let lsp_manager = crate::tools::handlers::lsp_manager::LspServerManager::new();
+
     let shell_handler = Arc::new(ShellHandler);
     let unified_exec_handler = Arc::new(UnifiedExecHandler);
     let plan_handler = Arc::new(PlanHandler);
-    let apply_patch_handler = Arc::new(ApplyPatchHandler);
+    let apply_patch_handler = Arc::new(ApplyPatchHandler::new(Arc::clone(&lsp_manager)));
     let dynamic_tool_handler = Arc::new(DynamicToolHandler);
     let view_image_handler = Arc::new(ViewImageHandler);
     let mcp_handler = Arc::new(McpHandler);
@@ -575,11 +620,13 @@ pub(crate) fn build_specs_with_discoverable_tools(
     let request_user_input_handler = Arc::new(RequestUserInputHandler {
         default_mode_request_user_input: config.default_mode_request_user_input,
     });
+    let self_check_handler = Arc::new(SelfCheckHandler);
     let tool_suggest_handler = Arc::new(ToolSuggestHandler);
     let code_mode_handler = Arc::new(CodeModeExecuteHandler);
     let code_mode_wait_handler = Arc::new(CodeModeWaitHandler);
     let js_repl_handler = Arc::new(JsReplHandler);
     let js_repl_reset_handler = Arc::new(JsReplResetHandler);
+    let lsp_handler = Arc::new(LspToolHandler::new(Arc::clone(&lsp_manager)));
     let exec_permission_approvals_enabled = config.exec_permission_approvals_enabled;
 
     if config.code_mode_enabled {
@@ -605,14 +652,46 @@ pub(crate) fn build_specs_with_discoverable_tools(
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
         );
-        builder.register_handler(PUBLIC_TOOL_NAME, code_mode_handler);
+        builder.register_handler(
+            PUBLIC_TOOL_NAME,
+            code_mode_handler,
+            CommandMeta {
+                name: PUBLIC_TOOL_NAME.to_string(),
+                help_text: "Enters Code Mode to execute a sequence of edits.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: false,
+                category: CommandCategory::FileOps,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
         push_tool_spec(
             &mut builder,
             create_wait_tool(),
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
         );
-        builder.register_handler(WAIT_TOOL_NAME, code_mode_wait_handler);
+        builder.register_handler(
+            WAIT_TOOL_NAME,
+            code_mode_wait_handler,
+            CommandMeta {
+                name: WAIT_TOOL_NAME.to_string(),
+                help_text: "Wait for a background task to complete.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: false,
+                category: CommandCategory::System,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
     }
 
     match &config.shell_type {
@@ -650,8 +729,40 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            builder.register_handler("exec_command", unified_exec_handler.clone());
-            builder.register_handler("write_stdin", unified_exec_handler);
+            builder.register_handler(
+                "exec_command",
+                unified_exec_handler.clone(),
+                CommandMeta {
+                    name: "exec_command".to_string(),
+                    help_text: "Execute a command in the unified shell.".to_string(),
+                    usage_example: Some("ls -la".to_string()),
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
+            builder.register_handler(
+                "write_stdin",
+                unified_exec_handler,
+                CommandMeta {
+                    name: "write_stdin".to_string(),
+                    help_text: "Write input to a running command's stdin.".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
         }
         ConfigShellToolType::Disabled => {
             // Do nothing.
@@ -670,11 +781,40 @@ pub(crate) fn build_specs_with_discoverable_tools(
     }
 
     if config.shell_type != ConfigShellToolType::Disabled {
+        let shell_meta = CommandMeta {
+            name: "shell".to_string(),
+            help_text: "Execute a command in the local shell.".to_string(),
+            usage_example: Some("ls".to_string()),
+            is_experimental: false,
+            is_visible: true,
+            available_during_task: true,
+            category: CommandCategory::System,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
+        };
         // Always register shell aliases so older prompts remain compatible.
-        builder.register_handler("shell", shell_handler.clone());
-        builder.register_handler("container.exec", shell_handler.clone());
-        builder.register_handler("local_shell", shell_handler);
-        builder.register_handler("shell_command", shell_command_handler);
+        builder.register_handler("shell", shell_handler.clone(), shell_meta.clone());
+        builder.register_handler("container.exec", shell_handler.clone(), shell_meta.clone());
+        builder.register_handler("local_shell", shell_handler, shell_meta);
+        builder.register_handler(
+            "shell_command",
+            shell_command_handler,
+            CommandMeta {
+                name: "shell_command".to_string(),
+                help_text: "Execute a shell command with specific options.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: true,
+                category: CommandCategory::System,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
     }
 
     if mcp_tools.is_some() {
@@ -696,9 +836,30 @@ pub(crate) fn build_specs_with_discoverable_tools(
             /*supports_parallel_tool_calls*/ true,
             config.code_mode_enabled,
         );
-        builder.register_handler("list_mcp_resources", mcp_resource_handler.clone());
-        builder.register_handler("list_mcp_resource_templates", mcp_resource_handler.clone());
-        builder.register_handler("read_mcp_resource", mcp_resource_handler);
+        let mcp_res_meta = CommandMeta {
+            name: "mcp_resource".to_string(),
+            help_text: "Interact with MCP resources.".to_string(),
+            usage_example: None,
+            is_experimental: false,
+            is_visible: true,
+            available_during_task: true,
+            category: CommandCategory::Mcp,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
+        };
+        builder.register_handler(
+            "list_mcp_resources",
+            mcp_resource_handler.clone(),
+            mcp_res_meta.clone(),
+        );
+        builder.register_handler(
+            "list_mcp_resource_templates",
+            mcp_resource_handler.clone(),
+            mcp_res_meta.clone(),
+        );
+        builder.register_handler("read_mcp_resource", mcp_resource_handler, mcp_res_meta);
     }
 
     push_tool_spec(
@@ -707,7 +868,23 @@ pub(crate) fn build_specs_with_discoverable_tools(
         /*supports_parallel_tool_calls*/ false,
         config.code_mode_enabled,
     );
-    builder.register_handler("update_plan", plan_handler);
+    builder.register_handler(
+        "update_plan",
+        plan_handler,
+        CommandMeta {
+            name: "update_plan".to_string(),
+            help_text: "Update the shared execution plan.".to_string(),
+            usage_example: None,
+            is_experimental: false,
+            is_visible: true,
+            available_during_task: false,
+            category: CommandCategory::System,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
+        },
+    );
 
     if config.js_repl_enabled {
         push_tool_spec(
@@ -722,8 +899,40 @@ pub(crate) fn build_specs_with_discoverable_tools(
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
         );
-        builder.register_handler("js_repl", js_repl_handler);
-        builder.register_handler("js_repl_reset", js_repl_reset_handler);
+        builder.register_handler(
+            "js_repl",
+            js_repl_handler,
+            CommandMeta {
+                name: "js_repl".to_string(),
+                help_text: "Execute JavaScript in a persistent Node.js REPL.".to_string(),
+                usage_example: Some("1 + 1".to_string()),
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: false,
+                category: CommandCategory::Experimental,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
+        builder.register_handler(
+            "js_repl_reset",
+            js_repl_reset_handler,
+            CommandMeta {
+                name: "js_repl_reset".to_string(),
+                help_text: "Reset the JavaScript REPL state.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: false,
+                category: CommandCategory::Experimental,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
     }
 
     if config.request_user_input {
@@ -735,7 +944,23 @@ pub(crate) fn build_specs_with_discoverable_tools(
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
         );
-        builder.register_handler("request_user_input", request_user_input_handler);
+        builder.register_handler(
+            "request_user_input",
+            request_user_input_handler,
+            CommandMeta {
+                name: "request_user_input".to_string(),
+                help_text: "Ask the user for clarification or input.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: true,
+                category: CommandCategory::System,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
     }
 
     if config.request_permissions_tool_enabled {
@@ -745,8 +970,49 @@ pub(crate) fn build_specs_with_discoverable_tools(
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
         );
-        builder.register_handler("request_permissions", request_permissions_handler);
+        builder.register_handler(
+            "request_permissions",
+            request_permissions_handler,
+            CommandMeta {
+                name: "request_permissions".to_string(),
+                help_text: "Request broad permissions for a series of actions.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: true,
+                category: CommandCategory::System,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
     }
+
+    push_tool_spec(
+        &mut builder,
+        create_self_check_tool(),
+        /*supports_parallel_tool_calls*/ false,
+        config.code_mode_enabled,
+    );
+    builder.register_handler(
+        "self_check",
+        self_check_handler,
+        CommandMeta {
+            name: "self_check".to_string(),
+            help_text: "Self-check execution state, allowing retries and autonomous recovery."
+                .to_string(),
+            usage_example: None,
+            is_experimental: false,
+            is_visible: true,
+            available_during_task: true,
+            category: CommandCategory::System,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
+        },
+    );
 
     if config.search_tool
         && let Some(app_tools) = app_tools
@@ -761,13 +1027,45 @@ pub(crate) fn build_specs_with_discoverable_tools(
             /*supports_parallel_tool_calls*/ true,
             config.code_mode_enabled,
         );
-        builder.register_handler(TOOL_SEARCH_TOOL_NAME, search_tool_handler);
+        builder.register_handler(
+            TOOL_SEARCH_TOOL_NAME,
+            search_tool_handler,
+            CommandMeta {
+                name: TOOL_SEARCH_TOOL_NAME.to_string(),
+                help_text: "Search for available tools and their capabilities.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: true,
+                category: CommandCategory::System,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
 
         for tool in app_tools.values() {
             let alias_name =
                 tool_handler_key(tool.tool_name.as_str(), Some(tool.tool_namespace.as_str()));
 
-            builder.register_handler(alias_name, mcp_handler.clone());
+            builder.register_handler(
+                alias_name.clone(),
+                mcp_handler.clone(),
+                CommandMeta {
+                    name: alias_name,
+                    help_text: "MCP tool alias.".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: false,
+                    available_during_task: true,
+                    category: CommandCategory::Mcp,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
         }
     }
 
@@ -780,7 +1078,23 @@ pub(crate) fn build_specs_with_discoverable_tools(
             create_tool_suggest_tool(&tool_suggest_entries(discoverable_tools)),
             /*supports_parallel_tool_calls*/ true,
         );
-        builder.register_handler(TOOL_SUGGEST_TOOL_NAME, tool_suggest_handler);
+        builder.register_handler(
+            TOOL_SUGGEST_TOOL_NAME,
+            tool_suggest_handler,
+            CommandMeta {
+                name: TOOL_SUGGEST_TOOL_NAME.to_string(),
+                help_text: "Suggest relevant tools based on user intent.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: true,
+                category: CommandCategory::System,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
     }
 
     if let Some(apply_patch_tool_type) = &config.apply_patch_tool_type {
@@ -802,7 +1116,23 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 );
             }
         }
-        builder.register_handler("apply_patch", apply_patch_handler);
+        builder.register_handler(
+            "apply_patch",
+            apply_patch_handler,
+            CommandMeta {
+                name: "apply_patch".to_string(),
+                help_text: "Apply a patch to a file.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: true,
+                category: CommandCategory::FileOps,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
     }
 
     if config
@@ -817,7 +1147,54 @@ pub(crate) fn build_specs_with_discoverable_tools(
             /*supports_parallel_tool_calls*/ true,
             config.code_mode_enabled,
         );
-        builder.register_handler("list_dir", list_dir_handler);
+        builder.register_handler(
+            "list_dir",
+            list_dir_handler,
+            CommandMeta {
+                name: "list_dir".to_string(),
+                help_text: "List contents of a directory.".to_string(),
+                usage_example: Some("src/".to_string()),
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: true,
+                category: CommandCategory::FileOps,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
+    }
+
+    if config
+        .experimental_supported_tools
+        .iter()
+        .any(|tool| tool == "lsp")
+    {
+        use codex_tools::create_lsp_tool;
+        push_tool_spec(
+            &mut builder,
+            create_lsp_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        builder.register_handler(
+            crate::tools::handlers::LSP_TOOL_NAME,
+            lsp_handler,
+            CommandMeta {
+                name: crate::tools::handlers::LSP_TOOL_NAME.to_string(),
+                help_text: "LSP language services.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: true,
+                category: CommandCategory::FileOps,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
     }
 
     if config
@@ -831,7 +1208,23 @@ pub(crate) fn build_specs_with_discoverable_tools(
             /*supports_parallel_tool_calls*/ true,
             config.code_mode_enabled,
         );
-        builder.register_handler("test_sync_tool", test_sync_handler);
+        builder.register_handler(
+            "test_sync_tool",
+            test_sync_handler,
+            CommandMeta {
+                name: "test_sync_tool".to_string(),
+                help_text: "Sync test tool.".to_string(),
+                usage_example: None,
+                is_experimental: true,
+                is_visible: false,
+                available_during_task: true,
+                category: CommandCategory::Experimental,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
     }
 
     let external_web_access = match config.web_search_mode {
@@ -893,7 +1286,23 @@ pub(crate) fn build_specs_with_discoverable_tools(
         /*supports_parallel_tool_calls*/ true,
         config.code_mode_enabled,
     );
-    builder.register_handler("view_image", view_image_handler);
+    builder.register_handler(
+        "view_image",
+        view_image_handler,
+        CommandMeta {
+            name: "view_image".to_string(),
+            help_text: "View visual content (images/videos).".to_string(),
+            usage_example: None,
+            is_experimental: false,
+            is_visible: true,
+            available_during_task: true,
+            category: CommandCategory::System,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
+        },
+    );
 
     if config.collab_tools {
         if config.multi_agent_v2 {
@@ -942,12 +1351,108 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            builder.register_handler("spawn_agent", Arc::new(SpawnAgentHandlerV2));
-            builder.register_handler("send_message", Arc::new(SendMessageHandlerV2));
-            builder.register_handler("assign_task", Arc::new(AssignTaskHandlerV2));
-            builder.register_handler("wait_agent", Arc::new(WaitAgentHandlerV2));
-            builder.register_handler("close_agent", Arc::new(CloseAgentHandlerV2));
-            builder.register_handler("list_agents", Arc::new(ListAgentsHandlerV2));
+            builder.register_handler(
+                "spawn_agent",
+                Arc::new(SpawnAgentHandlerV2),
+                CommandMeta {
+                    name: "spawn_agent".to_string(),
+                    help_text: "Spawn a new specialized agent.".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
+            builder.register_handler(
+                "send_message",
+                Arc::new(SendMessageHandlerV2),
+                CommandMeta {
+                    name: "send_message".to_string(),
+                    help_text: "Send a message to an agent.".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
+            builder.register_handler(
+                "assign_task",
+                Arc::new(AssignTaskHandlerV2),
+                CommandMeta {
+                    name: "assign_task".to_string(),
+                    help_text: "Assign a task to an agent.".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
+            builder.register_handler(
+                "wait_agent",
+                Arc::new(WaitAgentHandlerV2),
+                CommandMeta {
+                    name: "wait_agent".to_string(),
+                    help_text: "Wait for an agent to finish its task.".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
+            builder.register_handler(
+                "close_agent",
+                Arc::new(CloseAgentHandlerV2),
+                CommandMeta {
+                    name: "close_agent".to_string(),
+                    help_text: "Close an agent session.".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
+            builder.register_handler(
+                "list_agents",
+                Arc::new(ListAgentsHandlerV2),
+                CommandMeta {
+                    name: "list_agents".to_string(),
+                    help_text: "List all active agents.".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
         } else {
             push_tool_spec(
                 &mut builder,
@@ -972,7 +1477,23 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            builder.register_handler("resume_agent", Arc::new(ResumeAgentHandler));
+            builder.register_handler(
+                "resume_agent",
+                Arc::new(ResumeAgentHandler),
+                CommandMeta {
+                    name: "resume_agent".to_string(),
+                    help_text: "Resume a paused agent.".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
             push_tool_spec(
                 &mut builder,
                 create_wait_agent_tool_v1(WaitAgentTimeoutOptions {
@@ -989,10 +1510,74 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            builder.register_handler("spawn_agent", Arc::new(SpawnAgentHandler));
-            builder.register_handler("send_input", Arc::new(SendInputHandler));
-            builder.register_handler("wait_agent", Arc::new(WaitAgentHandler));
-            builder.register_handler("close_agent", Arc::new(CloseAgentHandler));
+            builder.register_handler(
+                "spawn_agent",
+                Arc::new(SpawnAgentHandler),
+                CommandMeta {
+                    name: "spawn_agent".to_string(),
+                    help_text: "Spawn a new agent (V1).".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
+            builder.register_handler(
+                "send_input",
+                Arc::new(SendInputHandler),
+                CommandMeta {
+                    name: "send_input".to_string(),
+                    help_text: "Send input to an agent (V1).".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
+            builder.register_handler(
+                "wait_agent",
+                Arc::new(WaitAgentHandler),
+                CommandMeta {
+                    name: "wait_agent".to_string(),
+                    help_text: "Wait for an agent (V1).".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
+            builder.register_handler(
+                "close_agent",
+                Arc::new(CloseAgentHandler),
+                CommandMeta {
+                    name: "close_agent".to_string(),
+                    help_text: "Close an agent (V1).".to_string(),
+                    usage_example: None,
+                    is_experimental: false,
+                    is_visible: true,
+                    available_during_task: true,
+                    category: CommandCategory::System,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
         }
     }
 
@@ -1004,7 +1589,23 @@ pub(crate) fn build_specs_with_discoverable_tools(
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
         );
-        builder.register_handler("spawn_agents_on_csv", agent_jobs_handler.clone());
+        builder.register_handler(
+            "spawn_agents_on_csv",
+            agent_jobs_handler.clone(),
+            CommandMeta {
+                name: "spawn_agents_on_csv".to_string(),
+                help_text: "Batch spawn agents from a CSV file.".to_string(),
+                usage_example: None,
+                is_experimental: true,
+                is_visible: true,
+                available_during_task: false,
+                category: CommandCategory::Experimental,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
         if config.agent_jobs_worker_tools {
             push_tool_spec(
                 &mut builder,
@@ -1012,7 +1613,23 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            builder.register_handler("report_agent_job_result", agent_jobs_handler);
+            builder.register_handler(
+                "report_agent_job_result",
+                agent_jobs_handler,
+                CommandMeta {
+                    name: "report_agent_job_result".to_string(),
+                    help_text: "Report the results of a batch job.".to_string(),
+                    usage_example: None,
+                    is_experimental: true,
+                    is_visible: true,
+                    available_during_task: false,
+                    category: CommandCategory::Experimental,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
+                },
+            );
         }
     }
 
@@ -1029,7 +1646,27 @@ pub(crate) fn build_specs_with_discoverable_tools(
                         /*supports_parallel_tool_calls*/ false,
                         config.code_mode_enabled,
                     );
-                    builder.register_handler(name, mcp_handler.clone());
+                    builder.register_handler(
+                        name.clone(),
+                        mcp_handler.clone(),
+                        CommandMeta {
+                            name,
+                            help_text: tool
+                                .description
+                                .as_ref()
+                                .map(|d| d.to_string())
+                                .unwrap_or_default(),
+                            usage_example: None,
+                            is_experimental: false,
+                            is_visible: true,
+                            available_during_task: true,
+                            category: CommandCategory::Mcp,
+                            tags: None,
+                            linked_files: None,
+                            version: None,
+                            compatibility: None,
+                        },
+                    );
                 }
                 Err(e) => {
                     tracing::error!("Failed to convert {name:?} MCP tool to OpenAI tool: {e:?}");
@@ -1048,7 +1685,23 @@ pub(crate) fn build_specs_with_discoverable_tools(
                         /*supports_parallel_tool_calls*/ false,
                         config.code_mode_enabled,
                     );
-                    builder.register_handler(tool.name.clone(), dynamic_tool_handler.clone());
+                    builder.register_handler(
+                        tool.name.clone(),
+                        dynamic_tool_handler.clone(),
+                        CommandMeta {
+                            name: tool.name.clone(),
+                            help_text: tool.description.clone(),
+                            usage_example: None,
+                            is_experimental: false,
+                            is_visible: true,
+                            available_during_task: true,
+                            category: CommandCategory::System,
+                            tags: tool.tags.clone(),
+                            linked_files: tool.linked_files.clone(),
+                            version: tool.version.clone(),
+                            compatibility: tool.compatibility.clone(),
+                        },
+                    );
                 }
                 Err(e) => {
                     tracing::error!(

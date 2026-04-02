@@ -61,8 +61,10 @@ fn last_assistant_message_from_item_strips_citations_and_plan_blocks() {
         "before<oai-mem-citation>doc1</oai-mem-citation>\n<proposed_plan>\n- x\n</proposed_plan>\nafter",
     );
 
-    let message = last_assistant_message_from_item(&item, /*plan_mode*/ true, /*hide_think_tags*/ false)
-        .expect("assistant text should remain after stripping");
+    let message = last_assistant_message_from_item(
+        &item, /*plan_mode*/ true, /*hide_think_tags*/ false,
+    )
+    .expect("assistant text should remain after stripping");
 
     assert_eq!(message, "before\nafter");
 }
@@ -72,7 +74,9 @@ fn last_assistant_message_from_item_returns_none_for_citation_only_message() {
     let item = assistant_output_text("<oai-mem-citation>doc1</oai-mem-citation>");
 
     assert_eq!(
-        last_assistant_message_from_item(&item, /*plan_mode*/ false, /*hide_think_tags*/ false),
+        last_assistant_message_from_item(
+            &item, /*plan_mode*/ false, /*hide_think_tags*/ false
+        ),
         None
     );
 }
@@ -82,7 +86,9 @@ fn last_assistant_message_from_item_returns_none_for_plan_only_hidden_message() 
     let item = assistant_output_text("<proposed_plan>\n- x\n</proposed_plan>");
 
     assert_eq!(
-        last_assistant_message_from_item(&item, /*plan_mode*/ true, /*hide_think_tags*/ false),
+        last_assistant_message_from_item(
+            &item, /*plan_mode*/ true, /*hide_think_tags*/ false
+        ),
         None
     );
 }
@@ -91,8 +97,10 @@ fn last_assistant_message_from_item_returns_none_for_plan_only_hidden_message() 
 fn last_assistant_message_from_item_can_hide_think_blocks() {
     let item = assistant_output_text("before<think>hidden</think>after");
 
-    let message = last_assistant_message_from_item(&item, /*plan_mode*/ false, /*hide_think_tags*/ true)
-        .expect("assistant text should remain after stripping");
+    let message = last_assistant_message_from_item(
+        &item, /*plan_mode*/ false, /*hide_think_tags*/ true,
+    )
+    .expect("assistant text should remain after stripping");
 
     assert_eq!(message, "beforeafter");
 }

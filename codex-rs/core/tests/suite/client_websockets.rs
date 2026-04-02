@@ -714,17 +714,24 @@ async fn responses_websocket_v2_prewarm_runs_when_only_v2_feature_enabled() {
     ]]])
     .await;
 
-    let harness = websocket_harness_with_options(&server, false, false, true, false).await;
+    let harness = websocket_harness_with_options(&server, false).await;
     let mut client_session = harness.client.new_session();
+    let prompt = prompt_with_input(vec![message_item("hello")]);
     client_session
-        .prewarm_websocket(&harness.otel_manager, &harness.model_info)
+        .prewarm_websocket(
+            &prompt,
+            &harness.model_info,
+            &harness.session_telemetry,
+            harness.effort.clone(),
+            harness.summary.clone(),
+            None,
+            None,
+        )
         .await
         .expect("websocket prewarm failed");
 
     assert_eq!(server.handshakes().len(), 1);
     assert_eq!(server.single_connection().len(), 0);
-
-    let prompt = prompt_with_input(vec![message_item("hello")]);
     stream_until_complete(&mut client_session, &harness, &prompt).await;
 
     assert_eq!(server.handshakes().len(), 1);
@@ -764,7 +771,7 @@ async fn responses_websocket_v2_requests_use_v2_when_model_prefers_websockets() 
     ]])
     .await;
 
-    let harness = websocket_harness_with_options(&server, false, false, true, true).await;
+    let harness = websocket_harness_with_options(&server, false).await;
     let mut client_session = harness.client.new_session();
     let prompt_one = prompt_with_input(vec![message_item("hello")]);
     let prompt_two = prompt_with_input(vec![

@@ -1,24 +1,30 @@
 {
+  "version": "0.0.0",
   "name": "codex-monorepo",
   "private": true,
   "description": "Tools for repo-wide maintenance.",
   "scripts": {
+  "version": "0.0.0",
     "format": "prettier --check *.json *.md docs/*.md .github/workflows/*.yml **/*.js",
     "format:fix": "prettier --write *.json *.md docs/*.md .github/workflows/*.yml **/*.js",
     "write-hooks-schema": "cargo run --manifest-path ./codex-rs/Cargo.toml -p codex-hooks --bin write_hooks_schema_fixtures"
   },
   "devDependencies": {
+  "version": "0.0.0",
     "prettier": "^3.5.3"
   },
   "resolutions": {
+  "version": "0.0.0",
     "braces": "^3.0.3",
     "micromatch": "^4.0.8",
     "semver": "^7.7.1"
   },
   "overrides": {
+  "version": "0.0.0",
     "punycode": "^2.3.1"
   },
   "engines": {
+  "version": "0.0.0",
     "node": ">=22",
     "pnpm": ">=10.29.3"
   },

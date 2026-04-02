@@ -100,7 +100,13 @@ pub fn format_exec_output_str(
     let content = build_content_with_timeout(exec_output);
 
     // Truncate for model consumption before serialization.
-    formatted_truncate_text(&content, truncation_policy)
+    let mut formatted = formatted_truncate_text(&content, truncation_policy);
+
+    if content.len() > truncation_policy.byte_budget() {
+        formatted.push_str("\n\n... (Command output was truncated. Use grep, less, or file reading tools to view more details)");
+    }
+
+    formatted
 }
 
 /// Extracts exec output content and prepends a timeout message if the command timed out.

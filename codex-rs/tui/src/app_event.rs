@@ -89,6 +89,13 @@ pub(crate) enum AppEvent {
         op: Op,
     },
 
+    /// Resolve a synthetic ACP permission prompt without going through app-server op encoding.
+    ResolveAcpPermission {
+        thread_id: ThreadId,
+        id: String,
+        option_id: Option<String>,
+    },
+
     /// Deliver a synthetic history lookup response to a specific thread channel.
     ThreadHistoryEntryResponse {
         thread_id: ThreadId,
@@ -277,6 +284,9 @@ pub(crate) enum AppEvent {
 
     /// Update the current model slug in the running app and widget.
     UpdateModel(String),
+
+    /// Recompute backend capabilities after a runtime settings change.
+    RefreshBackendCapabilities,
 
     /// Update the active collaboration mask in the running app and widget.
     UpdateCollaborationMode(CollaborationModeMask),
@@ -543,6 +553,9 @@ pub(crate) enum AppEvent {
     },
     /// Dismiss the terminal-title setup UI without changing config.
     TerminalTitleSetupCancelled,
+
+    /// Result of fetching the command registry.
+    ListCommandsLoaded(Vec<codex_protocol::commands::CommandMeta>),
 
     /// Apply a user-confirmed syntax theme selection.
     SyntaxThemeSelected {

@@ -1,8 +1,5 @@
 [package]
-edition.workspace = true
-license.workspace = true
 name = "codex-rollout"
-version.workspace = true
 
 [lib]
 doctest = false
@@ -12,38 +9,72 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
-codex-file-search = { workspace = true }
-codex-git-utils = { workspace = true }
-codex-login = { workspace = true }
-codex-otel = { workspace = true }
-codex-protocol = { workspace = true }
-codex-state = { workspace = true }
-codex-utils-path = { workspace = true }
-codex-utils-string = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-time = { workspace = true, features = [
-    "formatting",
-    "local-offset",
-    "macros",
-    "parsing",
-] }
-tokio = { workspace = true, features = [
-    "fs",
-    "io-util",
-    "macros",
-    "process",
-    "rt",
-    "sync",
-    "time",
-] }
-tracing = { workspace = true }
-uuid = { workspace = true }
+[package.edition]
+workspace = true
 
-[dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+[package.license]
+workspace = true
+
+[package.version]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.chrono]
+version = "0.4.43"
+features = [ "serde",]
+
+[dependencies.codex-file-search]
+workspace = true
+
+[dependencies.codex-git-utils]
+workspace = true
+
+[dependencies.codex-login]
+workspace = true
+
+[dependencies.codex-otel]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-state]
+workspace = true
+
+[dependencies.codex-utils-path]
+workspace = true
+
+[dependencies.codex-utils-string]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.time]
+workspace = true
+features = [ "formatting", "local-offset", "macros", "parsing",]
+
+[dependencies.tokio]
+version = "1"
+features = [ "fs", "io-util", "macros", "process", "rt", "sync", "time",]
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.uuid]
+version = "1"
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true

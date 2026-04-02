@@ -1,0 +1,1329 @@
+//! RPC type definitions for ilhae-proxy.
+//!
+//! All Request/Response structs, MCP tool input types, and DTO types
+//! used across the proxy modules.
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::notification_store;
+use brain_knowledge_rs::memory_store;
+use codex_protocol::request_permissions::RequestPermissionProfile;
+
+// ─── Method Name Constants ───────────────────────────────────────────────
+pub const NOTIF_ASSISTANT_TURN_PATCH: &str = "ilhae/assistant_turn_patch";
+pub const NOTIF_A2A_EVENT: &str = "ilhae/a2a_event";
+pub const NOTIF_BACKGROUND_TASK_COMPLETED: &str = "ilhae/background_task_completed";
+pub const NOTIF_TASK_UPDATED: &str = "ilhae/task_updated";
+pub const NOTIF_BROWSER_ACTIVITY: &str = "ilhae/browser_activity";
+pub const NOTIF_RELAY_USER_MESSAGE: &str = "ilhae/relay_user_message";
+pub const NOTIF_PROMPT_TRACE_START: &str = "ilhae/prompt_trace_start";
+pub const NOTIF_PROMPT_TRACE_FORWARDED: &str = "ilhae/prompt_trace_forwarded";
+pub const NOTIF_APPROVAL_TRACE_START: &str = "ilhae/approval_trace_start";
+pub const NOTIF_AUTONOMOUS_STATE: &str = "ilhae/autonomous_state";
+pub const NOTIF_COST_UPDATE: &str = "ilhae/cost_update";
+pub const NOTIF_ENGINE_STATE: &str = "ilhae/engine_state";
+pub const NOTIF_APP_SESSION_EVENT: &str = "ilhae/app_session_event";
+pub const NOTIF_SESSION_INFO_UPDATE: &str = "session/session_info_update";
+pub const NOTIF_HISTORY_SYNC: &str = "session/history_sync";
+pub const NOTIF_CRON_TRIGGERED: &str = "ilhae/cron_triggered";
+
+pub const REQ_SESSION_SET_MODEL: &str = "session/set_model";
+
+// ─── Canonical client-facing DTOs for ilhae app-server v1 ───────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IlhaeEngineStatePayload {
+    pub engine: String,
+    pub endpoint: String,
+    pub team_mode: bool,
+    pub command: String,
+    pub capabilities: serde_json::Value,
+    pub capability_matrix: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IlhaeEngineStateNotification {
+    pub engine: String,
+    pub endpoint: String,
+    pub team_mode: bool,
+    pub command: String,
+    pub capabilities: serde_json::Value,
+    pub capability_matrix: serde_json::Value,
+}
+
+impl sacp::JsonRpcMessage for IlhaeEngineStateNotification {
+    fn to_untyped_message(&self) -> Result<sacp::UntypedMessage, sacp::Error> {
+        sacp::UntypedMessage::new(NOTIF_ENGINE_STATE, self)
+    }
+    fn method(&self) -> &str {
+        NOTIF_ENGINE_STATE
+    }
+    fn parse_message(_method: &str, params: &impl Serialize) -> Result<Self, sacp::Error> {
+        let s = serde_json::to_string(params).map_err(sacp::Error::into_internal_error)?;
+        serde_json::from_str(&s).map_err(sacp::Error::into_internal_error)
+    }
+    fn matches_method(method: &str) -> bool {
+        method == NOTIF_ENGINE_STATE
+    }
+}
+impl sacp::JsonRpcNotification for IlhaeEngineStateNotification {}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IlhaeInteractiveOptionKind {
+    ApproveOnce,
+    ApproveSession,
+    RejectOnce,
+    RejectSession,
+    Cancel,
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IlhaeInteractiveOptionDto {
+    pub id: String,
+    pub label: String,
+    pub kind: IlhaeInteractiveOptionKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IlhaeInteractiveRequestDto {
+    pub source: String,
+    pub thread_id: String,
+    pub turn_id: String,
+    pub request_id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_permissions: Option<RequestPermissionProfile>,
+    pub options: Vec<IlhaeInteractiveOptionDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum IlhaeAppSessionEventDto {
+    InteractiveRequest {
+        request: IlhaeInteractiveRequestDto,
+    },
+    TurnStarted {
+        thread_id: String,
+        turn_id: String,
+    },
+    TurnCompleted {
+        thread_id: String,
+        turn_id: String,
+        status: String,
+    },
+    MessageDelta {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        channel: String,
+        delta: String,
+    },
+    ToolCallStarted {
+        thread_id: String,
+        turn_id: String,
+        call_id: String,
+        tool: String,
+        arguments: serde_json::Value,
+    },
+    ToolCallCompleted {
+        thread_id: String,
+        turn_id: String,
+        call_id: String,
+        tool: String,
+        success: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        output_text: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IlhaeAppSessionEventNotification {
+    pub engine: String,
+    pub event: IlhaeAppSessionEventDto,
+}
+
+impl sacp::JsonRpcMessage for IlhaeAppSessionEventNotification {
+    fn to_untyped_message(&self) -> Result<sacp::UntypedMessage, sacp::Error> {
+        sacp::UntypedMessage::new(NOTIF_APP_SESSION_EVENT, self)
+    }
+    fn method(&self) -> &str {
+        NOTIF_APP_SESSION_EVENT
+    }
+    fn parse_message(_method: &str, params: &impl Serialize) -> Result<Self, sacp::Error> {
+        let s = serde_json::to_string(params).map_err(sacp::Error::into_internal_error)?;
+        serde_json::from_str(&s).map_err(sacp::Error::into_internal_error)
+    }
+    fn matches_method(method: &str) -> bool {
+        method == NOTIF_APP_SESSION_EVENT
+    }
+}
+impl sacp::JsonRpcNotification for IlhaeAppSessionEventNotification {}
+
+// ─── Misc arg types ──────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct EmptyArgs {}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryWriteArgs {
+    pub content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CronAddArgs {
+    pub cron_expression: String,
+    pub prompt: String,
+}
+
+// ─── Cron notification ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronTriggeredNotification {
+    pub message: String,
+}
+
+impl sacp::JsonRpcMessage for CronTriggeredNotification {
+    fn to_untyped_message(&self) -> Result<sacp::UntypedMessage, sacp::Error> {
+        sacp::UntypedMessage::new(NOTIF_CRON_TRIGGERED, self)
+    }
+    fn method(&self) -> &str {
+        NOTIF_CRON_TRIGGERED
+    }
+    fn parse_message(_method: &str, params: &impl Serialize) -> Result<Self, sacp::Error> {
+        let s = serde_json::to_string(params).map_err(sacp::Error::into_internal_error)?;
+        serde_json::from_str(&s).map_err(sacp::Error::into_internal_error)
+    }
+    fn matches_method(method: &str) -> bool {
+        method == NOTIF_CRON_TRIGGERED
+    }
+}
+impl sacp::JsonRpcNotification for CronTriggeredNotification {}
+
+// ─── Session Read/Write RPC types ────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/list_sessions", response = ListSessionsResponse)]
+pub struct ListSessionsRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ListSessionsResponse {
+    pub sessions: Vec<SessionInfoDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/search_sessions", response = SearchSessionsResponse)]
+pub struct SearchSessionsRequest {
+    pub query: String,
+    #[serde(default = "default_search_sessions_limit")]
+    pub limit: i64,
+}
+
+fn default_search_sessions_limit() -> i64 {
+    50
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct SearchSessionsResponse {
+    pub sessions: Vec<SessionInfoDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfoDto {
+    pub id: String,
+    pub title: String,
+    pub agent_id: String,
+    pub cwd: String,
+    #[serde(default)]
+    pub channel_id: String,
+    #[serde(default)]
+    pub multi_agent: bool,
+    #[serde(default)]
+    pub parent_session_id: String,
+    #[serde(default)]
+    pub team_role: String,
+    #[serde(default)]
+    pub agent_status: String,
+    #[serde(default)]
+    pub team_agent_count: i64,
+    #[serde(default)]
+    pub team_active_count: i64,
+    #[serde(default)]
+    pub engine: String,
+    #[serde(default)]
+    pub capabilities_override: String,
+    #[serde(default)]
+    pub search_snippet: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub message_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/load_session_messages", response = LoadSessionMessagesResponse)]
+pub struct LoadSessionMessagesRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct LoadSessionMessagesResponse {
+    pub messages: Vec<SessionMessageDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/load_team_timeline", response = LoadTeamTimelineResponse)]
+pub struct LoadTeamTimelineRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct LoadTeamTimelineResponse {
+    pub events: Vec<TeamTimelineEventDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamTimelineEventDto {
+    pub message_id: i64,
+    pub session_id: String,
+    pub timestamp: String,
+    pub kind: String,
+    pub role: String,
+    pub agent_id: String,
+    pub content: String,
+    pub thinking: String,
+    pub tool_calls: String,
+    pub content_blocks: String,
+    pub channel_id: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub duration_ms: i64,
+    pub priority: i32,
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMessageDto {
+    pub id: i64,
+    pub session_id: String,
+    pub role: String,
+    pub content: String,
+    pub timestamp: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub agent_id: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub thinking: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub tool_calls: String,
+    #[serde(default)]
+    pub input_tokens: i64,
+    #[serde(default)]
+    pub output_tokens: i64,
+    #[serde(default)]
+    pub total_tokens: i64,
+    #[serde(default)]
+    pub duration_ms: i64,
+    /// JSON-serialized contentBlocks for interleaved order
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub content_blocks: String,
+    /// A2A delegation event channel (e.g. "a2a:delegation_start")
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub channel_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/delete_session", response = DeleteSessionResponse)]
+pub struct DeleteSessionRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct DeleteSessionResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/update_session_title", response = UpdateSessionTitleResponse)]
+pub struct UpdateSessionTitleRequest {
+    pub session_id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct UpdateSessionTitleResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistorySyncPayload {
+    pub session_id: String,
+    pub messages: Vec<SessionMessageDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistorySyncNotification {
+    pub session_id: String,
+    pub messages: Vec<SessionMessageDto>,
+}
+
+impl sacp::JsonRpcMessage for HistorySyncNotification {
+    fn to_untyped_message(&self) -> Result<sacp::UntypedMessage, sacp::Error> {
+        sacp::UntypedMessage::new(NOTIF_HISTORY_SYNC, self)
+    }
+    fn method(&self) -> &str {
+        NOTIF_HISTORY_SYNC
+    }
+    fn parse_message(_method: &str, params: &impl Serialize) -> Result<Self, sacp::Error> {
+        let s = serde_json::to_string(params).map_err(sacp::Error::into_internal_error)?;
+        serde_json::from_str(&s).map_err(sacp::Error::into_internal_error)
+    }
+    fn matches_method(method: &str) -> bool {
+        method == NOTIF_HISTORY_SYNC
+    }
+}
+impl sacp::JsonRpcNotification for HistorySyncNotification {}
+
+// ─── ACP SetSessionConfigOption RPC types ────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "session/set_config_option", response = SetSessionConfigOptionResponse)]
+pub struct SetSessionConfigOptionRequest {
+    #[serde(rename = "sessionId")]
+    pub session_id: serde_json::Value,
+    #[serde(rename = "configId")]
+    pub config_id: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct SetSessionConfigOptionResponse {
+    /// ACP SDK expects configOptions array; empty = no options to report back
+    #[serde(rename = "configOptions", default)]
+    pub config_options: Vec<serde_json::Value>,
+}
+
+// ─── Settings Read/Write RPC types ───────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/read_settings", response = ReadSettingsResponse)]
+pub struct ReadSettingsRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ReadSettingsResponse {
+    pub settings: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/write_setting", response = WriteSettingResponse)]
+pub struct WriteSettingRequest {
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct WriteSettingResponse {
+    pub settings: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/engine/get_capabilities", response = GetEngineCapabilitiesResponse)]
+pub struct GetEngineCapabilitiesRequest {
+    #[serde(rename = "engineId", default)]
+    pub engine_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct GetEngineCapabilitiesResponse {
+    #[serde(rename = "currentEngine")]
+    pub current_engine: String,
+    pub profile: serde_json::Value,
+    pub matrix: serde_json::Value,
+}
+
+// ─── Brain MCP JSON Read/Write RPC types ─────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/read_mcp_json", response = ReadMcpJsonResponse)]
+pub struct ReadMcpJsonRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ReadMcpJsonResponse {
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/write_mcp_json", response = WriteMcpJsonResponse)]
+pub struct WriteMcpJsonRequest {
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct WriteMcpJsonResponse {
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+// ─── Agent Context Read/Write RPC types ──────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/read_context", response = ReadContextResponse)]
+pub struct ReadContextRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ReadContextResponse {
+    #[serde(default)]
+    pub system: String,
+    pub identity: String,
+    pub soul: String,
+    pub user: String,
+    pub memory: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/write_context", response = WriteContextResponse)]
+pub struct WriteContextRequest {
+    pub file: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct WriteContextResponse {
+    pub ok: bool,
+}
+
+// ─── Memory Search/CRUD RPC types ────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/memory_search", response = MemorySearchResponse)]
+pub struct MemorySearchRequest {
+    pub query: String,
+    #[serde(default = "default_memory_limit")]
+    pub limit: usize,
+}
+
+// ─── Workflow Artifacts (DESIGN, PLAN, VERIFICATION) ─────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/list_workflow_artifacts", response = ListWorkflowArtifactsResponse)]
+pub struct ListWorkflowArtifactsRequest {
+    #[serde(default)]
+    pub project_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ListWorkflowArtifactsResponse {
+    pub artifacts: Vec<WorkflowArtifactDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowArtifactDto {
+    pub id: String,            // filename
+    pub artifact_type: String, // DESIGN, PLAN, VERIFICATION
+    pub project_path: Option<String>,
+    pub date: Option<String>,
+    pub timestamp: i64, // for sorting
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/read_workflow_artifact", response = ReadWorkflowArtifactResponse)]
+pub struct ReadWorkflowArtifactRequest {
+    pub id: String, // filename
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ReadWorkflowArtifactResponse {
+    pub content: String,
+}
+
+pub fn default_memory_limit() -> usize {
+    10
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct MemorySearchResponse {
+    pub chunks: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/memory_list", response = MemoryListResponse)]
+pub struct MemoryListRequest {
+    #[serde(default)]
+    pub offset: usize,
+    #[serde(default = "default_memory_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct MemoryListResponse {
+    pub chunks: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/memory_store", response = MemoryStoreResponse)]
+pub struct MemoryStoreRequest {
+    pub text: String,
+    #[serde(default = "default_manual_source")]
+    pub source: String,
+}
+pub fn default_manual_source() -> String {
+    "manual".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct MemoryStoreResponse {
+    pub id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/memory_forget", response = MemoryForgetResponse)]
+pub struct MemoryForgetRequest {
+    pub chunk_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct MemoryForgetResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/memory_stats", response = MemoryStatsResponse)]
+pub struct MemoryStatsRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct MemoryStatsResponse {
+    pub stats: memory_store::MemoryStats,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/memory_pin", response = MemoryPinResponse)]
+pub struct MemoryPinRequest {
+    pub chunk_id: i64,
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct MemoryPinResponse {
+    pub ok: bool,
+}
+
+// ─── Notification RPC types ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/notification_list", response = NotificationListResponse)]
+pub struct NotificationListRequest {
+    #[serde(default)]
+    pub offset: usize,
+    #[serde(default = "default_notif_limit")]
+    pub limit: usize,
+}
+pub fn default_notif_limit() -> usize {
+    50
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct NotificationListResponse {
+    pub notifications: Vec<notification_store::Notification>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/notification_stats", response = NotificationStatsResponse)]
+pub struct NotificationStatsRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct NotificationStatsResponse {
+    pub stats: notification_store::NotificationStats,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/notification_mark_read", response = NotificationMarkReadResponse)]
+pub struct NotificationMarkReadRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct NotificationMarkReadResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/notification_mark_all_read", response = NotificationMarkAllReadResponse)]
+pub struct NotificationMarkAllReadRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct NotificationMarkAllReadResponse {
+    pub count: usize,
+}
+
+// ─── Task List RPC types ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/list_schedules", response = ListTasksResponse)]
+pub struct ListTasksRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ListTasksResponse {
+    pub schedules: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/list_projects", response = ListProjectsResponse)]
+pub struct ListProjectsRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ListProjectsResponse {
+    pub projects: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/create_task", response = CreateTaskResponse)]
+pub struct CreateTaskRequest {
+    pub id: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct CreateTaskResponse {
+    pub task: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/update_task", response = UpdateTaskResponse)]
+pub struct UpdateTaskRequest {
+    pub id: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub done: Option<bool>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct UpdateTaskResponse {
+    pub task: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/delete_task", response = DeleteTaskResponse)]
+pub struct DeleteTaskRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct DeleteTaskResponse {
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+// ─── Swarm Task RPC types (Low-level A2A execution status) ───────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/list_swarm_schedules", response = ListSwarmTasksResponse)]
+pub struct ListSwarmTasksRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ListSwarmTasksResponse {
+    pub schedules: Vec<serde_json::Value>,
+}
+
+// ─── A2A Task Aggregation RPC types (fan-out across agents) ──────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/list_a2a_schedules", response = ListA2ATasksResponse)]
+pub struct ListA2ATasksRequest {
+    /// Optional filter by task status (e.g. "working", "completed")
+    #[serde(default)]
+    pub status_filter: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ListA2ATasksResponse {
+    pub agents: Vec<AgentTasksDto>,
+    pub total_schedules: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/get_a2a_timeline", response = GetA2ATimelineResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct GetA2ATimelineRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct GetA2ATimelineResponse {
+    pub session_id: String,
+    pub events: Vec<brain_session_rs::session_store::A2ATimelineEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTasksDto {
+    pub role: String,
+    pub endpoint: String,
+    pub schedules: Vec<serde_json::Value>,
+    pub task_count: usize,
+    pub error: Option<String>,
+}
+
+// ─── Shared Task Pool RPC types (unassigned → claim) ─────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedTaskDto {
+    pub id: String,
+    pub description: String,
+    pub created_at: String,
+    /// None = unassigned, Some(role) = claimed by agent
+    pub claimed_by: Option<String>,
+    /// A2A task state after claim
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/create_shared_task", response = CreateSharedTaskResponse)]
+pub struct CreateSharedTaskRequest {
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct CreateSharedTaskResponse {
+    pub task: SharedTaskDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/list_shared_schedules", response = ListSharedTasksResponse)]
+pub struct ListSharedTasksRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ListSharedTasksResponse {
+    pub schedules: Vec<SharedTaskDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/claim_shared_task", response = ClaimSharedTaskResponse)]
+pub struct ClaimSharedTaskRequest {
+    pub schedule_id: String,
+    pub agent_role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ClaimSharedTaskResponse {
+    pub success: bool,
+    pub task: Option<SharedTaskDto>,
+    pub error: Option<String>,
+}
+
+// ─── Team Agent RPC types ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/team_list", response = TeamListResponse)]
+pub struct TeamListRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct TeamListResponse {
+    pub config: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/team_save", response = TeamSaveResponse)]
+pub struct TeamSaveRequest {
+    pub config: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct TeamSaveResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/team_presets", response = TeamPresetsResponse)]
+pub struct TeamPresetsRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct TeamPresetsResponse {
+    pub presets: serde_json::Value,
+}
+
+// ─── A2A Card Fetch RPC types ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/a2a_card", response = A2ACardResponse)]
+pub struct A2ACardRequest {
+    /// The A2A server endpoint URL (e.g. "http://127.0.0.1:41242")
+    pub endpoint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct A2ACardResponse {
+    /// The parsed agent card JSON, or null if unreachable
+    pub card: Option<serde_json::Value>,
+}
+
+// ─── Cached ConfigOptions RPC types ──────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/get_config_options", response = GetConfigOptionsResponse)]
+pub struct GetConfigOptionsRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct GetConfigOptionsResponse {
+    /// Cached configOptions from the last session/new, or empty if not yet available
+    pub config_options: Vec<serde_json::Value>,
+}
+
+// ─── Artifact Versioning RPC types ───────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/list_session_artifacts", response = ListSessionArtifactsResponse)]
+pub struct ListSessionArtifactsRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ListSessionArtifactsResponse {
+    pub artifacts: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/list_artifact_versions", response = ListArtifactVersionsResponse)]
+pub struct ListArtifactVersionsRequest {
+    pub session_id: String,
+    pub filename: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ListArtifactVersionsResponse {
+    pub versions: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/get_artifact_version", response = GetArtifactVersionResponse)]
+pub struct GetArtifactVersionRequest {
+    pub session_id: String,
+    pub filename: String,
+    pub version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct GetArtifactVersionResponse {
+    pub artifact: Option<serde_json::Value>,
+}
+
+// ─── Built-in MCP Tool input/output types ────────────────────────────────
+
+// 🧠 Memory
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryReadInput {
+    /// Which context section to read: "identity", "soul", "user", "memory", or "all"
+    #[serde(default = "default_all")]
+    pub section: String,
+}
+pub fn default_all() -> String {
+    "all".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryWriteInput {
+    /// Which context section: "identity", "soul", "user", "memory"
+    pub section: String,
+    /// New content for the context file
+    pub content: String,
+}
+
+// 🧠 Memory search/store/forget MCP tool inputs
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolSearchInput {
+    /// Search query for BM25 full-text search over memory.
+    pub query: String,
+    /// Max results (default 5)
+    #[serde(default = "default_five")]
+    pub limit: usize,
+}
+pub fn default_five() -> usize {
+    5
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolStoreInput {
+    /// Text to store as a memory chunk.
+    pub text: String,
+    /// Source label: "manual", "auto-capture", etc.
+    #[serde(default = "default_manual")]
+    pub source: String,
+}
+pub fn default_manual() -> String {
+    "manual".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolForgetInput {
+    /// Chunk ID to delete.
+    pub chunk_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolListInput {
+    /// Pagination offset (default 0)
+    #[serde(default)]
+    pub offset: usize,
+    /// Max results (default 20)
+    #[serde(default = "default_twenty")]
+    pub limit: usize,
+}
+pub fn default_twenty() -> usize {
+    20
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolStatsInput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolPinInput {
+    /// Chunk ID to pin/unpin.
+    pub chunk_id: i64,
+    /// Whether to pin (true) or unpin (false).
+    pub pinned: bool,
+}
+
+// 💬 Session
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EmptyInput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SessionIdInput {
+    /// Session ID
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SessionRenameInput {
+    /// Session ID
+    pub session_id: String,
+    /// New title
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SessionSearchInput {
+    /// Full-text query for session title/message search.
+    pub query: String,
+    /// Maximum number of results to return.
+    #[serde(default = "default_session_search_limit")]
+    pub limit: i64,
+}
+
+fn default_session_search_limit() -> i64 {
+    10
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SkillViewInput {
+    /// Skill name or relative path under brain/skills.
+    pub name: String,
+    /// Optional supporting file path relative to the skill directory.
+    #[serde(default)]
+    pub file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IdInput {
+    /// Item ID
+    pub id: String,
+}
+
+// 📄 Artifact
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ArtifactSaveInput {
+    /// Artifact type: "task", "plan", "walkthrough", or "other"
+    pub artifact_type: String,
+    /// Full markdown content of the artifact
+    pub content: String,
+    /// Brief summary of this version (optional)
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ArtifactListInput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ArtifactGetInput {
+    /// Artifact type: "task", "plan", "walkthrough", or "other"
+    pub artifact_type: String,
+    /// Specific version number to retrieve (optional, defaults to latest)
+    #[serde(default)]
+    pub version: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ArtifactEditInput {
+    /// Artifact type: "task", "plan", "walkthrough", or "other"
+    pub artifact_type: String,
+    /// Full updated markdown content of the artifact
+    pub content: String,
+    /// Brief summary of what was changed in this edit (optional)
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+// NOTE: BrainstormInput, CreateExecutionPlanInput, VerifyExecutionInput removed.
+// Replaced by Superpowers skill files in ~/.agents/skills/ (prompt injection).
+
+// ✅ Task
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TaskCreateInput {
+    /// Task title
+    pub title: String,
+    /// Task description (optional)
+    pub description: Option<String>,
+    /// Schedule time in HH:MM format, e.g. "09:00" (optional)
+    pub schedule: Option<String>,
+    /// Category/tag ID (optional)
+    pub category: Option<String>,
+    /// Days of week: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat. Empty array = everyday. (optional)
+    pub days: Option<Vec<u8>>,
+    /// Agent prompt to execute when this task runs (optional)
+    pub prompt: Option<String>,
+    /// Cron-like interval expression: "30m", "1h", "24h" (optional, makes task recurring)
+    pub cron_expr: Option<String>,
+    /// Target URL for web automation schedules (optional)
+    pub target_url: Option<String>,
+    /// Detailed instructions for the agent (optional)
+    pub instructions: Option<String>,
+    /// Whether this recurring task is enabled (default: true)
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TaskUpdateInput {
+    /// Task ID
+    pub id: String,
+    /// New title (optional)
+    pub title: Option<String>,
+    /// New description (optional)
+    pub description: Option<String>,
+    /// Mark as done (optional)
+    pub done: Option<bool>,
+    /// Status text (optional)
+    pub status: Option<String>,
+    /// Schedule time in HH:MM format (optional)
+    pub schedule: Option<String>,
+    /// Category/tag ID (optional)
+    pub category: Option<String>,
+    /// Days of week: 0=Sun..6=Sat (optional)
+    pub days: Option<Vec<u8>>,
+    /// Agent prompt (optional)
+    pub prompt: Option<String>,
+    /// Cron-like interval (optional)
+    pub cron_expr: Option<String>,
+    /// Target URL (optional)
+    pub target_url: Option<String>,
+    /// Instructions (optional)
+    pub instructions: Option<String>,
+    /// Enable/disable (optional)
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TaskAddHistoryInput {
+    /// Task ID
+    pub id: String,
+    /// Action type (e.g. "agent_action", "cron_run", "result", "observation")
+    pub action: String,
+    /// Details about the action (optional)
+    pub detail: Option<String>,
+    /// Session ID related to this action (optional)
+    pub session_id: Option<String>,
+}
+
+// 🔔 UI
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UiNotifyInput {
+    /// Notification message
+    pub message: String,
+    /// Notification level: "info", "success", "warning", "error"
+    #[serde(default = "default_info")]
+    pub level: String,
+}
+pub fn default_info() -> String {
+    "info".to_string()
+}
+
+// 📤 Propose to Leader
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProposeToLeaderInput {
+    /// The message, question, or proposal intended for the leader.
+    pub message: String,
+    /// The level of the proposal: "info", "suggestion", "blocker", "review_request"
+    #[serde(default = "default_info")]
+    pub level: String,
+}
+
+// 🤝 Team Delegation (A2A)
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SpawnSubagentInput {
+    /// The role or name of the ephemeral worker (e.g. "Researcher", "Reviewer").
+    pub role: String,
+    /// The specific task or goal this subagent needs to accomplish.
+    pub goal: String,
+    /// Any necessary context, history, or partial results to pass to the subagent.
+    #[serde(default)]
+    pub context: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TeamDelegateInput {
+    /// Task description to delegate to the team agent.
+    pub query: String,
+    /// Delegation mode: "sync" (wait for result), "async" (fire-and-forget),
+    /// "subscribe" (fire + background subscription, wakes up with System Alert).
+    /// Default: "sync".
+    #[serde(default = "default_sync")]
+    pub mode: String,
+}
+pub fn default_sync() -> String {
+    "sync".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TeamProposeInput {
+    /// 대상 에이전트 이름 (예: "Leader", "Developer", "Planner")
+    pub agent: String,
+    /// 대상 에이전트에게 보낼 제안, 보고, 피드백 내용
+    pub message: String,
+}
+
+// 📦 Team State Channel
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TeamUpdateChannelInput {
+    /// The specific channel variable or state key you want to update
+    pub key: String,
+    /// The new JSON value string to store in the channel for this key
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TeamReadChannelInput {
+    /// The specific channel variable to read. Leave empty to read all.
+    #[serde(default)]
+    pub key: Option<String>,
+}
+
+// ⏱ Time-Travel Resume & Checkpoint
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TeamSaveCheckpointInput {
+    /// Target session ID
+    pub session_id: String,
+    /// Thread ID (default: "main")
+    pub thread_id: String,
+    /// Checkpoint version string (e.g., "v1.2", or UUID)
+    pub version: String,
+    /// Parent version, if any
+    #[serde(default)]
+    pub parent_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TeamResumeTaskInput {
+    /// Target session ID
+    pub session_id: String,
+    /// Thread ID
+    pub thread_id: String,
+    /// Target version to resume/rollback from
+    pub version: String,
+}
+
+// ─── AssistantBuffer ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AssistantContentBlock {
+    Thinking {
+        text: String,
+    },
+    Text {
+        text: String,
+    },
+    ToolCalls {
+        #[serde(rename = "toolCallIds")]
+        tool_call_ids: Vec<String>,
+    },
+}
+
+/// AssistantBuffer is now a type alias for TurnAccumulator.
+/// This unifies the Solo (RelayProxy) and Team (leader_loop)
+/// response processing paths into a single buffer type.
+pub type AssistantBuffer = crate::turn_accumulator::TurnAccumulator;
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "_agent/capabilities", response = CapabilitiesResponse)]
+pub struct CapabilitiesRequest {
+    #[serde(rename = "agentId", default)]
+    pub agent_id: Option<String>,
+    #[serde(rename = "sessionId", default)]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct CapabilitiesResponse {
+    pub skills: Vec<serde_json::Value>,
+    pub mcps: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub engines: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "_agent/skill/toggle", response = ToggleSkillResponse)]
+pub struct ToggleSkillRequest {
+    #[serde(rename = "agentId", default)]
+    pub agent_id: Option<String>,
+    #[serde(rename = "sessionId", default)]
+    pub session_id: Option<String>,
+    pub name: String,
+    pub enable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ToggleSkillResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "_agent/mcp/toggle", response = ToggleMcpResponse)]
+pub struct ToggleMcpRequest {
+    #[serde(rename = "agentId", default)]
+    pub agent_id: Option<String>,
+    #[serde(rename = "sessionId", default)]
+    pub session_id: Option<String>,
+    pub name: String,
+    pub enable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct ToggleMcpResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/set_team_agent_engine", response = SetTeamAgentEngineResponse)]
+pub struct SetTeamAgentEngineRequest {
+    pub session_id: String,
+    pub role: String,
+    pub engine: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct SetTeamAgentEngineResponse {
+    pub success: bool,
+}

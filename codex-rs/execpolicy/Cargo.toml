@@ -1,32 +1,58 @@
+[[bin]]
+name = "codex-execpolicy"
+path = "src/main.rs"
+
 [package]
 name = "codex-execpolicy"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 description = "Codex exec policy: prefix-based Starlark rules for command decisions."
 
 [lib]
 name = "codex_execpolicy"
 path = "src/lib.rs"
 
-[[bin]]
-name = "codex-execpolicy"
-path = "src/main.rs"
-
 [lints]
 workspace = true
 
-[dependencies]
-anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-codex-utils-absolute-path = { workspace = true }
-multimap = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-shlex = { workspace = true }
-starlark = { workspace = true }
-thiserror = { workspace = true }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.multimap]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.shlex]
+workspace = true
+
+[dependencies.starlark]
+workspace = true
+
+[dependencies.thiserror]
+version = "2.0.17"
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true

@@ -109,6 +109,11 @@ enum Subcommand {
     /// [experimental] Run the app server or related tooling.
     AppServer(AppServerCommand),
 
+    /// Launch the Ilhae proxy server (Telegram, Discord, UI daemon) natively.
+    #[cfg(feature = "ilhae")]
+    #[clap(name = "proxy", visible_aliases = ["desktop", "ilhae-proxy"])]
+    Proxy,
+
     /// Launch the Codex desktop app (downloads the macOS installer if missing).
     #[cfg(target_os = "macos")]
     App(app_cmd::AppCommand),
@@ -628,6 +633,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             )
             .await?;
             handle_app_exit(exit_info)?;
+        }
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Proxy) => {
+            codex_ilhae::run_ilhae_proxy().await?;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -1203,6 +1212,13 @@ async fn run_interactive_tui(
     remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
 ) -> std::io::Result<AppExitInfo> {
+    #[cfg(feature = "ilhae")]
+    if remote.is_none() {
+        let _ = codex_ilhae::bootstrap_ilhae_runtime()
+            .await
+            .map_err(std::io::Error::other)?;
+    }
+
     if let Some(prompt) = interactive.prompt.take() {
         // Normalize CRLF/CR to LF so CLI-provided text can't leak `\r` into TUI state.
         interactive.prompt = Some(prompt.replace("\r\n", "\n").replace('\r', "\n"));

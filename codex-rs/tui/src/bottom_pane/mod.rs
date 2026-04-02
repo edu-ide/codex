@@ -25,6 +25,7 @@ use crate::key_hint::KeyBinding;
 use crate::render::renderable::FlexRenderable;
 use crate::render::renderable::Renderable;
 use crate::render::renderable::RenderableItem;
+use crate::slash_command::SlashCommand;
 use crate::tui::FrameRequester;
 use bottom_pane_view::BottomPaneView;
 use codex_core::plugins::PluginCapabilitySummary;
@@ -319,6 +320,11 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    pub fn set_commands(&mut self, commands: Vec<codex_protocol::CommandMeta>) {
+        self.composer.set_commands(commands);
+        self.request_redraw();
+    }
+
     pub fn set_realtime_conversation_enabled(&mut self, enabled: bool) {
         self.composer.set_realtime_conversation_enabled(enabled);
         self.request_redraw();
@@ -326,6 +332,16 @@ impl BottomPane {
 
     pub fn set_audio_device_selection_enabled(&mut self, enabled: bool) {
         self.composer.set_audio_device_selection_enabled(enabled);
+        self.request_redraw();
+    }
+
+    pub fn set_fork_command_enabled(&mut self, enabled: bool) {
+        self.composer.set_fork_command_enabled(enabled);
+        self.request_redraw();
+    }
+
+    pub fn set_terminal_commands_enabled(&mut self, enabled: bool) {
+        self.composer.set_terminal_commands_enabled(enabled);
         self.request_redraw();
     }
 
@@ -585,6 +601,10 @@ impl BottomPane {
 
     pub(crate) fn composer_pending_pastes(&self) -> Vec<(String, String)> {
         self.composer.pending_pastes()
+    }
+
+    pub(crate) fn builtins_for_popup(&self) -> Vec<(&'static str, SlashCommand)> {
+        self.composer.builtins_for_popup()
     }
 
     pub(crate) fn apply_external_edit(&mut self, text: String) {

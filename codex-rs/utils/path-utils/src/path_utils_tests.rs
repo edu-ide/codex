@@ -78,3 +78,24 @@ mod native_workdir {
         assert_eq!(normalized, path);
     }
 }
+
+mod missing_path_comparison {
+    use super::super::normalize_for_path_comparison;
+    use codex_utils_absolute_path::AbsolutePathBuf;
+    use pretty_assertions::assert_eq;
+    use tempfile::tempdir;
+
+    #[test]
+    fn missing_path_falls_back_to_normalized_absolute() -> std::io::Result<()> {
+        let dir = tempdir()?;
+        let missing = dir.path().join("does-not-exist-for-comparison");
+        let normalized = normalize_for_path_comparison(&missing)?;
+        let expected = {
+            let absolute = AbsolutePathBuf::from_absolute_path(&missing)?.into_path_buf();
+            super::super::normalize_for_wsl_with_flag(absolute, super::super::env::is_wsl())
+        };
+
+        assert_eq!(normalized, expected);
+        Ok(())
+    }
+}

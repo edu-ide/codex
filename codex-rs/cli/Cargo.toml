@@ -1,12 +1,9 @@
-[package]
-name = "codex-cli"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
 [[bin]]
 name = "codex"
 path = "src/main.rs"
+
+[package]
+name = "codex-cli"
 
 [lib]
 name = "codex_cli"
@@ -15,57 +12,151 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-clap_complete = { workspace = true }
-codex-app-server = { workspace = true }
-codex-app-server-protocol = { workspace = true }
-codex-app-server-test-client = { workspace = true }
-codex-arg0 = { workspace = true }
-codex-chatgpt = { workspace = true }
-codex-cloud-tasks = { path = "../cloud-tasks" }
-codex-utils-cli = { workspace = true }
-codex-config = { workspace = true }
-codex-core = { workspace = true }
-codex-exec = { workspace = true }
-codex-execpolicy = { workspace = true }
-codex-features = { workspace = true }
-codex-login = { workspace = true }
-codex-mcp-server = { workspace = true }
-codex-protocol = { workspace = true }
-codex-responses-api-proxy = { workspace = true }
-codex-rmcp-client = { workspace = true }
-codex-sandboxing = { workspace = true }
-codex-state = { workspace = true }
-codex-stdio-to-uds = { workspace = true }
-codex-terminal-detection = { workspace = true }
-codex-tui = { workspace = true }
-libc = { workspace = true }
-owo-colors = { workspace = true }
-regex-lite = { workspace = true }
-serde_json = { workspace = true }
-supports-color = { workspace = true }
-tempfile = { workspace = true }
-tokio = { workspace = true, features = [
-    "io-std",
-    "macros",
-    "process",
-    "rt-multi-thread",
-    "signal",
-] }
-toml = { workspace = true }
-tracing = { workspace = true }
-tracing-appender = { workspace = true }
-tracing-subscriber = { workspace = true }
+[features]
+default = ["ilhae"]
+ilhae = ["dep:codex-ilhae"]
 
-[target.'cfg(target_os = "windows")'.dependencies]
-codex_windows_sandbox = { package = "codex-windows-sandbox", path = "../windows-sandbox-rs" }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-assert_cmd = { workspace = true }
-assert_matches = { workspace = true }
-codex-utils-cargo-bin = { workspace = true }
-predicates = { workspace = true }
-pretty_assertions = { workspace = true }
-sqlx = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.clap_complete]
+workspace = true
+
+[dependencies.codex-app-server]
+workspace = true
+
+[dependencies.codex-app-server-protocol]
+workspace = true
+
+[dependencies.codex-app-server-test-client]
+workspace = true
+
+[dependencies.codex-arg0]
+workspace = true
+
+[dependencies.codex-chatgpt]
+workspace = true
+
+[dependencies.codex-ilhae]
+path = "../ilhae"
+optional = true
+
+[dependencies.codex-cloud-tasks]
+path = "../cloud-tasks"
+
+[dependencies.codex-utils-cli]
+workspace = true
+
+[dependencies.codex-config]
+workspace = true
+
+[dependencies.codex-core]
+workspace = true
+
+[dependencies.codex-exec]
+workspace = true
+
+[dependencies.codex-execpolicy]
+workspace = true
+
+[dependencies.codex-features]
+workspace = true
+
+[dependencies.codex-login]
+workspace = true
+
+[dependencies.codex-mcp-server]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-responses-api-proxy]
+workspace = true
+
+[dependencies.codex-rmcp-client]
+workspace = true
+
+[dependencies.codex-sandboxing]
+workspace = true
+
+[dependencies.codex-state]
+workspace = true
+
+[dependencies.codex-stdio-to-uds]
+workspace = true
+
+[dependencies.codex-terminal-detection]
+workspace = true
+
+[dependencies.codex-tui]
+workspace = true
+
+[dependencies.libc]
+workspace = true
+
+[dependencies.owo-colors]
+workspace = true
+
+[dependencies.regex-lite]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.supports-color]
+workspace = true
+
+[dependencies.tempfile]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "io-std", "macros", "process", "rt-multi-thread", "signal",]
+
+[dependencies.toml]
+workspace = true
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.tracing-appender]
+version = "0.2.3"
+
+[dependencies.tracing-subscriber]
+version = "0.3.22"
+
+[dev-dependencies.assert_cmd]
+workspace = true
+
+[dev-dependencies.assert_matches]
+workspace = true
+
+[dev-dependencies.codex-utils-cargo-bin]
+workspace = true
+
+[dev-dependencies.predicates]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.sqlx]
+workspace = true
+
+[target."cfg(target_os = \"windows\")".dependencies.codex_windows_sandbox]
+package = "codex-windows-sandbox"
+path = "../windows-sandbox-rs"

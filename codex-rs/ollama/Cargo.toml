@@ -1,8 +1,5 @@
 [package]
 name = "codex-ollama"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 
 [lib]
 name = "codex_ollama"
@@ -11,24 +8,51 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-async-stream = { workspace = true }
-bytes = { workspace = true }
-codex-core = { workspace = true }
-futures = { workspace = true }
-reqwest = { workspace = true, features = ["json", "stream"] }
-semver = { workspace = true }
-serde_json = { workspace = true }
-tokio = { workspace = true, features = [
-    "io-std",
-    "macros",
-    "process",
-    "rt-multi-thread",
-    "signal",
-] }
-tracing = { workspace = true, features = ["log"] }
-wiremock = { workspace = true }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-assert_matches = { workspace = true }
-pretty_assertions = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.async-stream]
+workspace = true
+
+[dependencies.bytes]
+workspace = true
+
+[dependencies.codex-core]
+workspace = true
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
+
+[dependencies.reqwest]
+workspace = true
+features = [ "json", "stream",]
+
+[dependencies.semver]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "io-std", "macros", "process", "rt-multi-thread", "signal",]
+
+[dependencies.tracing]
+version = "0.1.44"
+features = [ "log",]
+
+[dependencies.wiremock]
+workspace = true
+
+[dev-dependencies.assert_matches]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true

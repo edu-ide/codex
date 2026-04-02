@@ -1821,6 +1821,11 @@ impl ChatWidget {
         self.bottom_pane.set_active_agent_label(active_agent_label);
     }
 
+    /// Update the dynamic command registry in the bottom pane.
+    pub(crate) fn set_commands(&mut self, commands: Vec<codex_protocol::CommandMeta>) {
+        self.bottom_pane.set_commands(commands);
+    }
+
     /// Recomputes footer status-line content from config and current runtime state.
     ///
     /// This method is the status-line orchestrator: it parses configured item identifiers,
@@ -2022,6 +2027,7 @@ impl ChatWidget {
             Vec::new(),
             /*force_reload*/ true,
         ));
+        self.submit_op(AppCommand::list_commands());
         if self.connectors_enabled() {
             self.prefetch_connectors();
         }
@@ -5335,6 +5341,21 @@ impl ChatWidget {
                         self.add_error_message(format!("Failed to copy to clipboard: {err}"))
                     }
                 }
+            }
+            SlashCommand::Help => {
+                let commands = self
+                    .bottom_pane
+                    .builtins_for_popup()
+                    .into_iter()
+                    .map(|(name, command)| format!("/{name} — {}", command.description()))
+                    .collect::<Vec<_>>();
+
+                let mut lines: Vec<Line<'static>> = Vec::with_capacity(commands.len() + 1);
+                lines.push("Available slash commands:".into());
+                for command in commands {
+                    lines.push(Line::from(format!("• {command}")));
+                }
+                self.add_plain_history_lines(lines);
             }
             SlashCommand::Mention => {
                 self.insert_str("@");
@@ -9620,6 +9641,16 @@ impl ChatWidget {
     fn sync_plugins_command_enabled(&mut self) {
         self.bottom_pane
             .set_plugins_command_enabled(self.config.features.enabled(Feature::Plugins));
+    }
+
+    pub(crate) fn set_backend_command_capabilities(
+        &mut self,
+        supports_fork: bool,
+        supports_terminal_streaming: bool,
+    ) {
+        self.bottom_pane.set_fork_command_enabled(supports_fork);
+        self.bottom_pane
+            .set_terminal_commands_enabled(supports_terminal_streaming);
     }
 
     fn current_model_supports_personality(&self) -> bool {

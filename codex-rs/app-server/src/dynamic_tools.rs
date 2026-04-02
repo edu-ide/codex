@@ -40,6 +40,7 @@ pub(crate) async fn on_call_response(
             .map(CoreDynamicToolCallOutputContentItem::from)
             .collect(),
         success,
+        hint: None,
     };
     if let Err(err) = conversation
         .submit(Op::DynamicToolResponse {

@@ -4,6 +4,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::app_server_session::ConversationRuntime;
 use crate::app_server_session::AppServerSession;
 use crate::diff_render::display_path_for;
 use crate::key_hint;
@@ -163,6 +164,7 @@ pub async fn run_resume_picker(
     run_session_picker(tui, config, show_all, SessionPickerAction::Resume).await
 }
 
+#[allow(dead_code)]
 pub async fn run_resume_picker_with_app_server(
     tui: &mut Tui,
     config: &Config,
@@ -170,35 +172,68 @@ pub async fn run_resume_picker_with_app_server(
     include_non_interactive: bool,
     app_server: AppServerSession,
 ) -> Result<SessionSelection> {
+    run_resume_picker_with_runtime(
+        tui,
+        config,
+        show_all,
+        include_non_interactive,
+        app_server,
+    )
+    .await
+}
+
+pub async fn run_resume_picker_with_runtime<R>(
+    tui: &mut Tui,
+    config: &Config,
+    show_all: bool,
+    include_non_interactive: bool,
+    runtime: R,
+) -> Result<SessionSelection>
+where
+    R: ConversationRuntime + Send + 'static,
+{
     let (bg_tx, bg_rx) = mpsc::unbounded_channel();
-    let is_remote = app_server.is_remote();
+    let is_remote = runtime.is_remote();
     run_session_picker_with_loader(
         tui,
         config,
         show_all,
         SessionPickerAction::Resume,
         is_remote,
-        spawn_app_server_page_loader(app_server, include_non_interactive, bg_tx),
+        spawn_runtime_page_loader(runtime, include_non_interactive, bg_tx),
         bg_rx,
     )
     .await
 }
 
+#[allow(dead_code)]
 pub async fn run_fork_picker_with_app_server(
     tui: &mut Tui,
     config: &Config,
     show_all: bool,
     app_server: AppServerSession,
 ) -> Result<SessionSelection> {
+    run_fork_picker_with_runtime(tui, config, show_all, app_server).await
+}
+
+pub async fn run_fork_picker_with_runtime<R>(
+    tui: &mut Tui,
+    config: &Config,
+    show_all: bool,
+    runtime: R,
+) -> Result<SessionSelection>
+where
+    R: ConversationRuntime + Send + 'static,
+{
     let (bg_tx, bg_rx) = mpsc::unbounded_channel();
-    let is_remote = app_server.is_remote();
+    let is_remote = runtime.is_remote();
     run_session_picker_with_loader(
         tui,
         config,
         show_all,
         SessionPickerAction::Fork,
         is_remote,
-        spawn_app_server_page_loader(app_server, /*include_non_interactive*/ false, bg_tx),
+        spawn_runtime_page_loader(runtime, /*include_non_interactive*/ false, bg_tx),
         bg_rx,
     )
     .await
@@ -339,23 +374,26 @@ fn spawn_rollout_page_loader(
     })
 }
 
-fn spawn_app_server_page_loader(
-    app_server: AppServerSession,
+fn spawn_runtime_page_loader<R>(
+    runtime: R,
     include_non_interactive: bool,
     bg_tx: mpsc::UnboundedSender<BackgroundEvent>,
-) -> PageLoader {
+) -> PageLoader
+where
+    R: ConversationRuntime + Send + 'static,
+{
     let (request_tx, mut request_rx) = mpsc::unbounded_channel::<PageLoadRequest>();
 
     tokio::spawn(async move {
-        let mut app_server = app_server;
+        let mut runtime = runtime;
         while let Some(request) = request_rx.recv().await {
             let cursor = match request.cursor {
                 Some(PageCursor::AppServer(cursor)) => Some(cursor),
                 Some(PageCursor::Rollout(_)) => None,
                 None => None,
             };
-            let page = load_app_server_page(
-                &mut app_server,
+            let page = load_runtime_page(
+                &mut runtime,
                 cursor,
                 request.provider_filter,
                 request.sort_key,
@@ -368,8 +406,8 @@ fn spawn_app_server_page_loader(
                 page,
             });
         }
-        if let Err(err) = app_server.shutdown().await {
-            warn!(%err, "Failed to shut down app-server picker session");
+        if let Err(err) = runtime.close().await {
+            warn!(%err, "Failed to shut down picker runtime");
         }
     });
 
@@ -464,15 +502,18 @@ impl LoadingState {
     }
 }
 
-async fn load_app_server_page(
-    app_server: &mut AppServerSession,
+async fn load_runtime_page<R>(
+    runtime: &mut R,
     cursor: Option<String>,
     provider_filter: ProviderFilter,
     sort_key: ThreadSortKey,
     include_non_interactive: bool,
-) -> std::io::Result<PickerPage> {
-    let response = app_server
-        .thread_list(thread_list_params(
+) -> std::io::Result<PickerPage>
+where
+    R: ConversationRuntime + ?Sized,
+{
+    let response = runtime
+        .list_threads(thread_list_params(
             cursor,
             provider_filter,
             sort_key,

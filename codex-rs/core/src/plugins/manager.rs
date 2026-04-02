@@ -70,6 +70,7 @@ use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
+use std::time::SystemTime;
 use tokio::sync::Mutex;
 use toml_edit::value;
 use tracing::info;
@@ -313,6 +314,7 @@ pub struct PluginsManager {
     store: PluginStore,
     featured_plugin_ids_cache: RwLock<Option<CachedFeaturedPluginIds>>,
     cached_enabled_outcome: RwLock<Option<PluginLoadOutcome>>,
+    cached_user_config_mtime: RwLock<Option<SystemTime>>,
     remote_sync_lock: Mutex<()>,
     restriction_product: Option<Product>,
     analytics_events_client: RwLock<Option<AnalyticsEventsClient>>,
@@ -339,6 +341,7 @@ impl PluginsManager {
             store: PluginStore::new(codex_home),
             featured_plugin_ids_cache: RwLock::new(None),
             cached_enabled_outcome: RwLock::new(None),
+            cached_user_config_mtime: RwLock::new(None),
             remote_sync_lock: Mutex::new(()),
             restriction_product,
             analytics_events_client: RwLock::new(None),
@@ -376,10 +379,21 @@ impl PluginsManager {
             return PluginLoadOutcome::default();
         }
 
-        if !force_reload && let Some(outcome) = self.cached_enabled_outcome() {
-            return outcome;
-        }
+        if !force_reload {
+            if self.user_config_changed_since_last_check() {
+                tracing::debug!("plugin config changed; invalidating plugins cache");
+                self.clear_cache();
+            }
 
+            if let Some(outcome) = self.cached_enabled_outcome() {
+                tracing::debug!("plugin cache hit; using cached plugin outcome");
+                return outcome;
+            }
+        }
+        tracing::debug!(
+            force_reload,
+            "plugin cache miss; rebuilding plugin outcome for current config"
+        );
         let outcome = load_plugins_from_layer_stack(
             &config.config_layer_stack,
             &self.store,
@@ -395,6 +409,7 @@ impl PluginsManager {
     }
 
     pub fn clear_cache(&self) {
+        tracing::trace!("clearing plugin caches (enabled-outcome/featured-ids/config-mtime)");
         let mut cached_enabled_outcome = match self.cached_enabled_outcome.write() {
             Ok(cache) => cache,
             Err(err) => err.into_inner(),
@@ -403,8 +418,13 @@ impl PluginsManager {
             Ok(cache) => cache,
             Err(err) => err.into_inner(),
         };
+        let mut cached_user_config_mtime = match self.cached_user_config_mtime.write() {
+            Ok(cache) => cache,
+            Err(err) => err.into_inner(),
+        };
         *featured_plugin_ids_cache = None;
         *cached_enabled_outcome = None;
+        *cached_user_config_mtime = None;
     }
 
     /// Resolve plugin skill roots for a config layer stack without touching the plugins cache.
@@ -425,6 +445,27 @@ impl PluginsManager {
             Ok(cache) => cache.clone(),
             Err(err) => err.into_inner().clone(),
         }
+    }
+
+    fn user_config_changed_since_last_check(&self) -> bool {
+        let current = self.user_config_mtime();
+        let mut cached = match self.cached_user_config_mtime.write() {
+            Ok(cache) => cache,
+            Err(err) => err.into_inner(),
+        };
+        let changed = match (*cached, current) {
+            (Some(previous), Some(current)) => previous != current,
+            (Some(_), None) => true,
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        *cached = current;
+        changed
+    }
+
+    fn user_config_mtime(&self) -> Option<SystemTime> {
+        let config_path = self.codex_home.join(CONFIG_TOML_FILE);
+        fs::metadata(config_path).ok()?.modified().ok()
     }
 
     fn cached_featured_plugin_ids(
@@ -579,6 +620,7 @@ impl PluginsManager {
                 result.installed_path.as_path(),
             ));
         }
+        self.clear_cache();
 
         Ok(PluginInstallOutcome {
             plugin_id: result.plugin_id,
@@ -637,6 +679,7 @@ impl PluginsManager {
         {
             analytics_events_client.track_plugin_uninstalled(plugin_telemetry);
         }
+        self.clear_cache();
 
         Ok(())
     }

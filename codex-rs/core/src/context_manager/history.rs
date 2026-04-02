@@ -460,6 +460,7 @@ fn truncate_function_output_payload(
     FunctionCallOutputPayload {
         body,
         success: output.success,
+        hint: output.hint.clone(),
     }
 }
 

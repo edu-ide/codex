@@ -567,6 +567,7 @@ impl ShellHandler {
             ],
             success: Some(true),
             post_tool_use_response,
+            hint: None,
         })
     }
 }

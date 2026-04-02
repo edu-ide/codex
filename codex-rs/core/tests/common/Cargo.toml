@@ -1,41 +1,103 @@
 [package]
 name = "core_test_support"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 
 [lib]
 path = "lib.rs"
 
-[dependencies]
-anyhow = { workspace = true }
-assert_cmd = { workspace = true }
-base64 = { workspace = true }
-codex-arg0 = { workspace = true }
-codex-core = { workspace = true }
-codex-exec-server = { workspace = true }
-codex-features = { workspace = true }
-codex-protocol = { workspace = true }
-codex-utils-absolute-path = { workspace = true }
-codex-utils-cargo-bin = { workspace = true }
-ctor = { workspace = true }
-futures = { workspace = true }
-notify = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-regex-lite = { workspace = true }
-serde_json = { workspace = true }
-tempfile = { workspace = true }
-tokio = { workspace = true, features = ["net", "time"] }
-tokio-tungstenite = { workspace = true }
-tracing = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-tracing-subscriber = { workspace = true }
-walkdir = { workspace = true }
-wiremock = { workspace = true }
-shlex = { workspace = true }
-zstd = { workspace = true }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-pretty_assertions = { workspace = true }
-reqwest = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.assert_cmd]
+workspace = true
+
+[dependencies.base64]
+version = "0.22.1"
+
+[dependencies.codex-arg0]
+workspace = true
+
+[dependencies.codex-core]
+workspace = true
+
+[dependencies.codex-exec-server]
+workspace = true
+
+[dependencies.codex-features]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.codex-utils-cargo-bin]
+workspace = true
+
+[dependencies.ctor]
+workspace = true
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
+
+[dependencies.notify]
+workspace = true
+
+[dependencies.opentelemetry]
+workspace = true
+
+[dependencies.opentelemetry_sdk]
+workspace = true
+
+[dependencies.regex-lite]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.tempfile]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "net", "time",]
+
+[dependencies.tokio-tungstenite]
+workspace = true
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.tracing-opentelemetry]
+workspace = true
+
+[dependencies.tracing-subscriber]
+version = "0.3.22"
+
+[dependencies.walkdir]
+workspace = true
+
+[dependencies.wiremock]
+workspace = true
+
+[dependencies.shlex]
+workspace = true
+
+[dependencies.zstd]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.reqwest]
+workspace = true

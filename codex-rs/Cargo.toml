@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "a2a",
     "analytics",
     "backend-client",
     "ansi-escape",
@@ -82,6 +81,8 @@ members = [
     "terminal-detection",
     "codex-experimental-api-macros",
     "plugin",
+    "ilhae",
+    "channels",
 ]
 resolver = "2"
 
@@ -126,6 +127,7 @@ codex-feedback = { path = "feedback" }
 codex-features = { path = "features" }
 codex-file-search = { path = "file-search" }
 codex-git-utils = { path = "git-utils" }
+codex-ilhae = { path = "ilhae" }
 codex-hooks = { path = "hooks" }
 codex-instructions = { path = "instructions" }
 codex-keyring-store = { path = "keyring-store" }

@@ -1,9 +1,3 @@
-[package]
-name = "codex-app-server"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
 [[bin]]
 name = "codex-app-server"
 path = "src/main.rs"
@@ -12,6 +6,9 @@ path = "src/main.rs"
 name = "codex-app-server-test-notify-capture"
 path = "src/bin/notify_capture.rs"
 
+[package]
+name = "codex-app-server"
+
 [lib]
 name = "codex_app_server"
 path = "src/lib.rs"
@@ -19,86 +16,209 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-base64 = { workspace = true }
-axum = { workspace = true, default-features = false, features = [
-    "http1",
-    "json",
-    "tokio",
-    "ws",
-] }
-codex-arg0 = { workspace = true }
-codex-cloud-requirements = { workspace = true }
-codex-core = { workspace = true }
-codex-exec-server = { workspace = true }
-codex-features = { workspace = true }
-codex-git-utils = { workspace = true }
-codex-otel = { workspace = true }
-codex-shell-command = { workspace = true }
-codex-utils-cli = { workspace = true }
-codex-utils-pty = { workspace = true }
-codex-backend-client = { workspace = true }
-codex-file-search = { workspace = true }
-codex-chatgpt = { workspace = true }
-codex-login = { workspace = true }
-codex-protocol = { workspace = true }
-codex-app-server-protocol = { workspace = true }
-codex-feedback = { workspace = true }
-codex-rmcp-client = { workspace = true }
-codex-sandboxing = { workspace = true }
-codex-state = { workspace = true }
-codex-tools = { workspace = true }
-codex-utils-absolute-path = { workspace = true }
-codex-utils-json-to-toml = { workspace = true }
-chrono = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-constant_time_eq = { workspace = true }
-futures = { workspace = true }
-hmac = { workspace = true }
-jsonwebtoken = { workspace = true }
-owo-colors = { workspace = true, features = ["supports-colors"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-sha2 = { workspace = true }
-tempfile = { workspace = true }
-time = { workspace = true }
-toml = { workspace = true }
-tokio = { workspace = true, features = [
-    "io-std",
-    "macros",
-    "process",
-    "rt-multi-thread",
-    "signal",
-] }
-tokio-util = { workspace = true }
-tokio-tungstenite = { workspace = true }
-tracing = { workspace = true, features = ["log"] }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
-uuid = { workspace = true, features = ["serde", "v7"] }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-app_test_support = { workspace = true }
-base64 = { workspace = true }
-axum = { workspace = true, default-features = false, features = [
-    "http1",
-    "json",
-    "tokio",
-] }
-core_test_support = { workspace = true }
-codex-utils-cargo-bin = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-pretty_assertions = { workspace = true }
-reqwest = { workspace = true, features = ["rustls-tls"] }
-rmcp = { workspace = true, default-features = false, features = [
-    "elicitation",
-    "server",
-    "transport-streamable-http-server",
-] }
-serial_test = { workspace = true }
-tokio-tungstenite = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-wiremock = { workspace = true }
-shlex = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.base64]
+version = "0.22.1"
+
+[dependencies.axum]
+version = "0.8"
+default-features = false
+features = [ "http1", "json", "tokio", "ws",]
+
+[dependencies.codex-arg0]
+workspace = true
+
+[dependencies.codex-cloud-requirements]
+workspace = true
+
+[dependencies.codex-core]
+workspace = true
+
+[dependencies.codex-exec-server]
+workspace = true
+
+[dependencies.codex-features]
+workspace = true
+
+[dependencies.codex-git-utils]
+workspace = true
+
+[dependencies.codex-otel]
+workspace = true
+
+[dependencies.codex-shell-command]
+workspace = true
+
+[dependencies.codex-utils-cli]
+workspace = true
+
+[dependencies.codex-utils-pty]
+workspace = true
+
+[dependencies.codex-backend-client]
+workspace = true
+
+[dependencies.codex-file-search]
+workspace = true
+
+[dependencies.codex-chatgpt]
+workspace = true
+
+[dependencies.codex-login]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-app-server-protocol]
+workspace = true
+
+[dependencies.codex-feedback]
+workspace = true
+
+[dependencies.codex-rmcp-client]
+workspace = true
+
+[dependencies.codex-sandboxing]
+workspace = true
+
+[dependencies.codex-state]
+workspace = true
+
+[dependencies.codex-tools]
+workspace = true
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.codex-utils-json-to-toml]
+workspace = true
+
+[dependencies.chrono]
+version = "0.4.43"
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.constant_time_eq]
+workspace = true
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
+
+[dependencies.hmac]
+workspace = true
+
+[dependencies.jsonwebtoken]
+workspace = true
+
+[dependencies.owo-colors]
+workspace = true
+features = [ "supports-colors",]
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.sha2]
+workspace = true
+
+[dependencies.tempfile]
+workspace = true
+
+[dependencies.time]
+workspace = true
+
+[dependencies.toml]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "io-std", "macros", "process", "rt-multi-thread", "signal",]
+
+[dependencies.tokio-util]
+version = "0.7.18"
+
+[dependencies.tokio-tungstenite]
+workspace = true
+
+[dependencies.tracing]
+version = "0.1.44"
+features = [ "log",]
+
+[dependencies.tracing-subscriber]
+version = "0.3.22"
+features = [ "env-filter", "fmt", "json",]
+
+[dependencies.uuid]
+version = "1"
+features = [ "serde", "v7",]
+
+[dev-dependencies.app_test_support]
+workspace = true
+
+[dev-dependencies.base64]
+version = "0.22.1"
+
+[dev-dependencies.axum]
+version = "0.8"
+default-features = false
+features = [ "http1", "json", "tokio",]
+
+[dev-dependencies.core_test_support]
+workspace = true
+
+[dev-dependencies.codex-utils-cargo-bin]
+workspace = true
+
+[dev-dependencies.opentelemetry]
+workspace = true
+
+[dev-dependencies.opentelemetry_sdk]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.reqwest]
+workspace = true
+features = [ "rustls-tls",]
+
+[dev-dependencies.rmcp]
+version = "0.15.0"
+default-features = false
+features = [ "elicitation", "server", "transport-streamable-http-server",]
+
+[dev-dependencies.serial_test]
+workspace = true
+
+[dev-dependencies.tokio-tungstenite]
+workspace = true
+
+[dev-dependencies.tracing-opentelemetry]
+workspace = true
+
+[dev-dependencies.wiremock]
+workspace = true
+
+[dev-dependencies.shlex]
+workspace = true

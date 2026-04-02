@@ -7,7 +7,12 @@ use additional_dirs::add_dir_warning_message;
 use app::App;
 pub use app::AppExitInfo;
 pub use app::ExitReason;
-use app_server_session::AppServerSession;
+use app_server_session::AcpConversationRuntime;
+use app_server_session::AppServerSession as NativeAppServerSession;
+use app_server_session::ConversationTurnRequest;
+use app_server_session::ConversationRuntime;
+use app_server_session::AppServerStartedThread;
+use app_server_session::SelectedConversationRuntime;
 use codex_app_server_client::AppServerClient;
 use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 use codex_app_server_client::InProcessAppServerClient;
@@ -56,6 +61,7 @@ use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
 use codex_utils_oss::hydrate_oss_model_name;
 use color_eyre::eyre::WrapErr;
+use codex_ilhae::current_native_backend_capability_profile;
 use cwd_prompt::CwdPromptAction;
 use cwd_prompt::CwdPromptOutcome;
 use cwd_prompt::CwdSelection;
@@ -373,10 +379,11 @@ async fn start_app_server(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) async fn start_app_server_for_picker(
     config: &Config,
     target: &AppServerTarget,
-) -> color_eyre::Result<AppServerSession> {
+) -> color_eyre::Result<NativeAppServerSession> {
     let app_server = start_app_server(
         target,
         Arg0DispatchPaths::default(),
@@ -387,13 +394,13 @@ pub(crate) async fn start_app_server_for_picker(
         codex_feedback::CodexFeedback::new(),
     )
     .await?;
-    Ok(AppServerSession::new(app_server))
+    Ok(NativeAppServerSession::new(app_server))
 }
 
 #[cfg(test)]
 pub(crate) async fn start_embedded_app_server_for_picker(
     config: &Config,
-) -> color_eyre::Result<AppServerSession> {
+) -> color_eyre::Result<NativeAppServerSession> {
     start_app_server_for_picker(config, &AppServerTarget::Embedded).await
 }
 
@@ -441,12 +448,196 @@ where
     Ok(client)
 }
 
-async fn shutdown_app_server_if_present(app_server: Option<AppServerSession>) {
+async fn shutdown_app_server_if_present(app_server: Option<NativeAppServerSession>) {
     if let Some(app_server) = app_server
         && let Err(err) = app_server.shutdown().await
     {
         warn!(%err, "Failed to shut down temporary embedded app server");
     }
+}
+
+pub(crate) enum SessionLookupRuntime {
+    AppServer(NativeAppServerSession),
+    Acp(AcpConversationRuntime),
+}
+
+#[async_trait::async_trait]
+impl ConversationRuntime for SessionLookupRuntime {
+    fn is_remote(&self) -> bool {
+        match self {
+            Self::AppServer(runtime) => runtime.is_remote(),
+            Self::Acp(runtime) => runtime.is_remote(),
+        }
+    }
+
+    async fn list_threads(
+        &mut self,
+        params: ThreadListParams,
+    ) -> color_eyre::Result<codex_app_server_protocol::ThreadListResponse> {
+        match self {
+            Self::AppServer(runtime) => runtime.list_threads(params).await,
+            Self::Acp(runtime) => runtime.list_threads(params).await,
+        }
+    }
+
+    async fn read_thread(
+        &mut self,
+        thread_id: ThreadId,
+        include_turns: bool,
+    ) -> color_eyre::Result<AppServerThread> {
+        match self {
+            Self::AppServer(runtime) => runtime.read_thread(thread_id, include_turns).await,
+            Self::Acp(runtime) => runtime.read_thread(thread_id, include_turns).await,
+        }
+    }
+
+    async fn start_thread(&mut self, config: &Config) -> color_eyre::Result<AppServerStartedThread> {
+        match self {
+            Self::AppServer(runtime) => runtime.start_thread(config).await,
+            Self::Acp(runtime) => runtime.start_thread(config).await,
+        }
+    }
+
+    async fn resume_thread(
+        &mut self,
+        config: Config,
+        thread_id: ThreadId,
+    ) -> color_eyre::Result<AppServerStartedThread> {
+        match self {
+            Self::AppServer(runtime) => runtime.resume_thread(config, thread_id).await,
+            Self::Acp(runtime) => runtime.resume_thread(config, thread_id).await,
+        }
+    }
+
+    async fn send_turn(
+        &mut self,
+        request: ConversationTurnRequest,
+    ) -> color_eyre::Result<codex_app_server_protocol::TurnStartResponse> {
+        match self {
+            Self::AppServer(runtime) => runtime.send_turn(request).await,
+            Self::Acp(runtime) => runtime.send_turn(request).await,
+        }
+    }
+
+    async fn interrupt_turn(
+        &mut self,
+        thread_id: ThreadId,
+        turn_id: String,
+    ) -> color_eyre::Result<()> {
+        match self {
+            Self::AppServer(runtime) => runtime.interrupt_turn(thread_id, turn_id).await,
+            Self::Acp(runtime) => runtime.interrupt_turn(thread_id, turn_id).await,
+        }
+    }
+
+    async fn close(self) -> std::io::Result<()> {
+        match self {
+            Self::AppServer(runtime) => runtime.close().await,
+            Self::Acp(runtime) => runtime.close().await,
+        }
+    }
+}
+
+async fn shutdown_session_lookup_runtime_if_present(runtime: Option<SessionLookupRuntime>) {
+    if let Some(runtime) = runtime
+        && let Err(err) = runtime.close().await
+    {
+        warn!(%err, "Failed to shut down temporary session lookup runtime");
+    }
+}
+
+async fn start_session_lookup_runtime(
+    app_server_target: &AppServerTarget,
+    arg0_paths: Arg0DispatchPaths,
+    config: Config,
+    cli_kv_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
+    cloud_requirements: CloudRequirementsLoader,
+    feedback: codex_feedback::CodexFeedback,
+) -> color_eyre::Result<SessionLookupRuntime> {
+    let capability_profile = current_native_backend_capability_profile();
+    let use_acp_runtime = matches!(app_server_target, AppServerTarget::Embedded)
+        && capability_profile
+            .as_ref()
+            .map(|profile| !profile.supports_native_app_server)
+            .unwrap_or(false);
+
+    if use_acp_runtime {
+        let engine_id = capability_profile
+            .map(|profile| profile.engine)
+            .unwrap_or_else(|| "gemini".to_string());
+        return Ok(SessionLookupRuntime::Acp(AcpConversationRuntime::new(
+            engine_id,
+        )));
+    }
+
+    let app_server = start_app_server(
+        app_server_target,
+        arg0_paths,
+        config,
+        cli_kv_overrides,
+        loader_overrides,
+        cloud_requirements,
+        feedback,
+    )
+    .await?;
+    Ok(SessionLookupRuntime::AppServer(NativeAppServerSession::new(
+        app_server,
+    )))
+}
+
+pub(crate) async fn start_session_lookup_runtime_for_picker(
+    config: &Config,
+    target: &AppServerTarget,
+) -> color_eyre::Result<SessionLookupRuntime> {
+    start_session_lookup_runtime(
+        target,
+        Arg0DispatchPaths::default(),
+        config.clone(),
+        Vec::new(),
+        LoaderOverrides::default(),
+        CloudRequirementsLoader::default(),
+        codex_feedback::CodexFeedback::new(),
+    )
+    .await
+}
+
+async fn start_active_conversation_runtime(
+    app_server_target: &AppServerTarget,
+    arg0_paths: Arg0DispatchPaths,
+    config: Config,
+    cli_kv_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
+    cloud_requirements: CloudRequirementsLoader,
+    feedback: codex_feedback::CodexFeedback,
+) -> color_eyre::Result<SelectedConversationRuntime> {
+    let capability_profile = current_native_backend_capability_profile();
+    let use_acp_runtime = matches!(app_server_target, AppServerTarget::Embedded)
+        && capability_profile
+            .as_ref()
+            .map(|profile| !profile.supports_native_app_server)
+            .unwrap_or(false);
+
+    if use_acp_runtime {
+        let engine_id = capability_profile
+            .map(|profile| profile.engine)
+            .unwrap_or_else(|| "gemini".to_string());
+        return Ok(SelectedConversationRuntime::from_acp(engine_id));
+    }
+
+    let app_server = start_app_server(
+        app_server_target,
+        arg0_paths,
+        config,
+        cli_kv_overrides,
+        loader_overrides,
+        cloud_requirements,
+        feedback,
+    )
+    .await?;
+    Ok(SelectedConversationRuntime::from_native(
+        NativeAppServerSession::new(app_server),
+    ))
 }
 
 fn session_target_from_app_server_thread(
@@ -469,13 +660,13 @@ fn session_target_from_app_server_thread(
 }
 
 async fn lookup_session_target_by_name_with_app_server(
-    app_server: &mut AppServerSession,
+    app_server: &mut impl ConversationRuntime,
     name: &str,
 ) -> color_eyre::Result<Option<resume_picker::SessionTarget>> {
     let mut cursor = None;
     loop {
         let response = app_server
-            .thread_list(ThreadListParams {
+            .list_threads(ThreadListParams {
                 cursor: cursor.clone(),
                 limit: Some(100),
                 sort_key: Some(AppServerThreadSortKey::UpdatedAt),
@@ -504,7 +695,7 @@ async fn lookup_session_target_by_name_with_app_server(
 }
 
 async fn lookup_session_target_with_app_server(
-    app_server: &mut AppServerSession,
+    app_server: &mut impl ConversationRuntime,
     id_or_name: &str,
 ) -> color_eyre::Result<Option<resume_picker::SessionTarget>> {
     if Uuid::parse_str(id_or_name).is_ok() {
@@ -520,7 +711,7 @@ async fn lookup_session_target_with_app_server(
             }
         };
         return match app_server
-            .thread_read(thread_id, /*include_turns*/ false)
+            .read_thread(thread_id, /*include_turns*/ false)
             .await
         {
             Ok(thread) => Ok(session_target_from_app_server_thread(thread)),
@@ -539,13 +730,13 @@ async fn lookup_session_target_with_app_server(
 }
 
 async fn lookup_latest_session_target_with_app_server(
-    app_server: &mut AppServerSession,
+    app_server: &mut impl ConversationRuntime,
     config: &Config,
     cwd_filter: Option<&Path>,
     include_non_interactive: bool,
 ) -> color_eyre::Result<Option<resume_picker::SessionTarget>> {
     let response = app_server
-        .thread_list(latest_session_lookup_params(
+        .list_threads(latest_session_lookup_params(
             app_server.is_remote(),
             config,
             cwd_filter,
@@ -762,7 +953,9 @@ pub async fn run_main(
     )
     .await;
 
-    if cli.oss && let Err(err) = hydrate_oss_model_name(&mut config).await {
+    if cli.oss
+        && let Err(err) = hydrate_oss_model_name(&mut config).await
+    {
         warn!(error = %err, "failed to resolve OSS model name");
     }
 
@@ -986,7 +1179,7 @@ async fn run_ratatui_app(
     let needs_onboarding_app_server =
         should_show_trust_screen_flag || initial_config.model_provider.requires_openai_auth;
     let mut onboarding_app_server = if needs_onboarding_app_server {
-        Some(AppServerSession::new(
+        Some(NativeAppServerSession::new(
             start_app_server(
                 &app_server_target,
                 arg0_paths.clone(),
@@ -1021,7 +1214,7 @@ async fn run_ratatui_app(
                 login_status,
                 app_server_request_handle: onboarding_app_server
                     .as_ref()
-                    .map(AppServerSession::request_handle),
+                    .map(NativeAppServerSession::request_handle),
                 config: initial_config.clone(),
             },
             if show_login_screen {
@@ -1100,8 +1293,8 @@ async fn run_ratatui_app(
         || cli.resume_picker
         || cli.fork_picker;
     let mut session_lookup_app_server = if needs_app_server_session_lookup {
-        Some(AppServerSession::new(
-            start_app_server(
+        Some(
+            start_session_lookup_runtime(
                 &app_server_target,
                 arg0_paths.clone(),
                 config.clone(),
@@ -1111,7 +1304,7 @@ async fn run_ratatui_app(
                 feedback.clone(),
             )
             .await?,
-        ))
+        )
     } else {
         None
     };
@@ -1125,7 +1318,8 @@ async fn run_ratatui_app(
             match lookup_session_target_with_app_server(app_server, id_str).await? {
                 Some(target_session) => resume_picker::SessionSelection::Fork(target_session),
                 None => {
-                    shutdown_app_server_if_present(session_lookup_app_server.take()).await;
+                    shutdown_session_lookup_runtime_if_present(session_lookup_app_server.take())
+                        .await;
                     return missing_session_exit(id_str, "fork");
                 }
             }
@@ -1146,7 +1340,7 @@ async fn run_ratatui_app(
             let Some(app_server) = session_lookup_app_server.take() else {
                 unreachable!("session lookup app server should be initialized for --fork picker");
             };
-            match resume_picker::run_fork_picker_with_app_server(
+            match resume_picker::run_fork_picker_with_runtime(
                 &mut tui,
                 &config,
                 cli.fork_show_all,
@@ -1177,7 +1371,7 @@ async fn run_ratatui_app(
         match lookup_session_target_with_app_server(app_server, id_str).await? {
             Some(target_session) => resume_picker::SessionSelection::Resume(target_session),
             None => {
-                shutdown_app_server_if_present(session_lookup_app_server.take()).await;
+                shutdown_session_lookup_runtime_if_present(session_lookup_app_server.take()).await;
                 return missing_session_exit(id_str, "resume");
             }
         }
@@ -1205,7 +1399,7 @@ async fn run_ratatui_app(
         let Some(app_server) = session_lookup_app_server.take() else {
             unreachable!("session lookup app server should be initialized for --resume picker");
         };
-        match resume_picker::run_resume_picker_with_app_server(
+        match resume_picker::run_resume_picker_with_runtime(
             &mut tui,
             &config,
             cli.resume_show_all,
@@ -1230,7 +1424,7 @@ async fn run_ratatui_app(
     } else {
         resume_picker::SessionSelection::StartFresh
     };
-    shutdown_app_server_if_present(session_lookup_app_server.take()).await;
+    shutdown_session_lookup_runtime_if_present(session_lookup_app_server.take()).await;
 
     let current_cwd = config.cwd.clone();
     let allow_prompt = !remote_mode && cli.cwd.is_none();
@@ -1316,7 +1510,7 @@ async fn run_ratatui_app(
 
     let use_alt_screen = determine_alt_screen_mode(no_alt_screen, config.tui_alternate_screen);
     tui.set_alt_screen_enabled(use_alt_screen);
-    let app_server = match start_app_server(
+    let conversation_runtime = match start_active_conversation_runtime(
         &app_server_target,
         arg0_paths,
         config.clone(),
@@ -1337,7 +1531,7 @@ async fn run_ratatui_app(
 
     let app_result = App::run(
         &mut tui,
-        AppServerSession::new(app_server),
+        conversation_runtime,
         config,
         cli_kv_overrides.clone(),
         overrides.clone(),
@@ -1565,7 +1759,7 @@ pub enum LoginStatus {
 }
 
 async fn get_login_status(
-    app_server: &mut AppServerSession,
+    app_server: &mut NativeAppServerSession,
     config: &Config,
 ) -> color_eyre::Result<LoginStatus> {
     if !config.model_provider.requires_openai_auth {
@@ -1908,7 +2102,7 @@ mod tests {
         codex_core::append_thread_name(&config.codex_home, thread_id, "saved-session").await?;
 
         let mut app_server =
-            AppServerSession::new(codex_app_server_client::AppServerClient::InProcess(
+            NativeAppServerSession::new(codex_app_server_client::AppServerClient::InProcess(
                 start_test_embedded_app_server(config).await?,
             ));
         let target =

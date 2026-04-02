@@ -152,12 +152,16 @@ fn extract_first_llama_server_model(models: &LlamaServerModelsResponse) -> Optio
         .iter()
         .chain(models.models.iter())
         .find_map(|entry| {
-            [entry.id.as_deref(), entry.model.as_deref(), entry.name.as_deref()]
-                .into_iter()
-                .flatten()
-                .map(str::trim)
-                .find(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
+            [
+                entry.id.as_deref(),
+                entry.model.as_deref(),
+                entry.name.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
         })
 }
 

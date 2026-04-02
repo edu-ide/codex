@@ -100,10 +100,16 @@ impl ToolHandler for ListDirHandler {
         }
 
         let entries = list_dir_slice(&path, offset, limit, depth).await?;
+        let is_empty = entries.is_empty();
         let mut output = Vec::with_capacity(entries.len() + 1);
         output.push(format!("Absolute path: {}", path.display()));
         output.extend(entries);
-        Ok(FunctionToolOutput::from_text(output.join("\n"), Some(true)))
+
+        let mut tool_output = FunctionToolOutput::from_text(output.join("\n"), Some(true));
+        if is_empty {
+            tool_output.hint = Some("The directory is empty or the offset is out of bounds. You might want to check the parent directory or use `grep_files` if you are looking for specific content.".to_string());
+        }
+        Ok(tool_output)
     }
 }
 
@@ -190,13 +196,14 @@ async fn collect_entries(
                     depth: display_depth,
                     kind,
                 },
+                is_ignored_directory(&file_name),
             ));
         }
 
         dir_entries.sort_unstable_by(|a, b| a.3.name.cmp(&b.3.name));
 
-        for (entry_path, relative_path, kind, dir_entry) in dir_entries {
-            if kind == DirEntryKind::Directory && remaining_depth > 1 {
+        for (entry_path, relative_path, kind, dir_entry, is_ignored) in dir_entries {
+            if kind == DirEntryKind::Directory && remaining_depth > 1 && !is_ignored {
                 queue.push_back((entry_path, relative_path, remaining_depth - 1));
             }
             entries.push(dir_entry);
@@ -204,6 +211,24 @@ async fn collect_entries(
     }
 
     Ok(())
+}
+
+fn is_ignored_directory(name: &OsStr) -> bool {
+    matches!(
+        name.to_string_lossy().as_ref(),
+        ".git"
+            | ".svn"
+            | ".hg"
+            | ".bzr"
+            | "node_modules"
+            | "target"
+            | ".venv"
+            | "__pycache__"
+            | "dist"
+            | "build"
+            | ".next"
+            | ".bazel-cache"
+    )
 }
 
 fn format_entry_name(path: &Path) -> String {

@@ -4,6 +4,9 @@ use codex_api::common::TextControls;
 use codex_api::create_text_param_for_request;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::FunctionCallOutputPayload;
+use codex_tools::ResponsesApiNamespace;
+use codex_tools::ResponsesApiNamespaceTool;
+use codex_tools::ResponsesApiTool;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -238,23 +241,21 @@ fn llama_server_keeps_function_style_apply_patch_outputs_unmodified() {
 
 #[test]
 fn tool_search_output_namespace_serializes_with_deferred_child_tools() {
-    let namespace = tools::ToolSearchOutputTool::Namespace(tools::ResponsesApiNamespace {
+    let namespace = tools::ToolSearchOutputTool::Namespace(ResponsesApiNamespace {
         name: "mcp__codex_apps__calendar".to_string(),
         description: "Plan events".to_string(),
-        tools: vec![tools::ResponsesApiNamespaceTool::Function(
-            tools::ResponsesApiTool {
-                name: "create_event".to_string(),
-                description: "Create a calendar event.".to_string(),
-                strict: false,
-                defer_loading: Some(true),
-                parameters: crate::tools::spec::JsonSchema::Object {
-                    properties: Default::default(),
-                    required: None,
-                    additional_properties: None,
-                },
-                output_schema: None,
+        tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+            name: "create_event".to_string(),
+            description: "Create a calendar event.".to_string(),
+            strict: false,
+            defer_loading: Some(true),
+            parameters: crate::tools::spec::JsonSchema::Object {
+                properties: Default::default(),
+                required: None,
+                additional_properties: None,
             },
-        )],
+            output_schema: None,
+        })],
     });
 
     let value = serde_json::to_value(namespace).expect("serialize namespace");
@@ -281,4 +282,3 @@ fn tool_search_output_namespace_serializes_with_deferred_child_tools() {
         })
     );
 }
-

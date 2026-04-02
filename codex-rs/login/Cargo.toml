@@ -1,51 +1,117 @@
 [package]
 name = "codex-login"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 
 [lints]
 workspace = true
 
-[dependencies]
-async-trait = { workspace = true }
-base64 = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
-codex-app-server-protocol = { workspace = true }
-codex-client = { workspace = true }
-codex-config = { workspace = true }
-codex-keyring-store = { workspace = true }
-codex-protocol = { workspace = true }
-codex-terminal-detection = { workspace = true }
-codex-utils-template = { workspace = true }
-once_cell = { workspace = true }
-os_info = { workspace = true }
-rand = { workspace = true }
-reqwest = { workspace = true, features = ["json", "blocking"] }
-schemars = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-sha2 = { workspace = true }
-thiserror = { workspace = true }
-tiny_http = { workspace = true }
-tokio = { workspace = true, features = [
-    "io-std",
-    "macros",
-    "process",
-    "rt-multi-thread",
-    "signal",
-] }
-tracing = { workspace = true }
-url = { workspace = true }
-urlencoding = { workspace = true }
-webbrowser = { workspace = true }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-anyhow = { workspace = true }
-core_test_support = { workspace = true }
-keyring = { workspace = true }
-pretty_assertions = { workspace = true }
-regex-lite = { workspace = true }
-serial_test = { workspace = true }
-tempfile = { workspace = true }
-wiremock = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.base64]
+version = "0.22.1"
+
+[dependencies.chrono]
+version = "0.4.43"
+features = [ "serde",]
+
+[dependencies.codex-app-server-protocol]
+workspace = true
+
+[dependencies.codex-client]
+workspace = true
+
+[dependencies.codex-config]
+workspace = true
+
+[dependencies.codex-keyring-store]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-terminal-detection]
+workspace = true
+
+[dependencies.codex-utils-template]
+workspace = true
+
+[dependencies.once_cell]
+workspace = true
+
+[dependencies.os_info]
+workspace = true
+
+[dependencies.rand]
+workspace = true
+
+[dependencies.reqwest]
+workspace = true
+features = [ "json", "blocking",]
+
+[dependencies.schemars]
+version = "0.8.22"
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.sha2]
+workspace = true
+
+[dependencies.thiserror]
+version = "2.0.17"
+
+[dependencies.tiny_http]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "io-std", "macros", "process", "rt-multi-thread", "signal",]
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.url]
+version = "2"
+
+[dependencies.urlencoding]
+workspace = true
+
+[dependencies.webbrowser]
+workspace = true
+
+[dev-dependencies.anyhow]
+workspace = true
+
+[dev-dependencies.core_test_support]
+workspace = true
+
+[dev-dependencies.keyring]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.regex-lite]
+workspace = true
+
+[dev-dependencies.serial_test]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true
+
+[dev-dependencies.wiremock]
+workspace = true

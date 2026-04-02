@@ -1,9 +1,5 @@
-
 [package]
-edition.workspace = true
-license.workspace = true
 name = "codex-utils-plugins"
-version.workspace = true
 
 [lib]
 doctest = false
@@ -13,9 +9,21 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+[package.edition]
+workspace = true
 
-[dev-dependencies]
-tempfile = { workspace = true }
+[package.license]
+workspace = true
+
+[package.version]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true

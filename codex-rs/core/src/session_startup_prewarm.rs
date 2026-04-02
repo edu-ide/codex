@@ -208,6 +208,7 @@ async fn schedule_startup_prewarm_inner(
         session.as_ref(),
         startup_turn_context.as_ref(),
         &[],
+        &[],
         &HashSet::new(),
         /*skills_outcome*/ None,
         &startup_cancellation_token,
@@ -216,6 +217,7 @@ async fn schedule_startup_prewarm_inner(
     let startup_prompt = build_prompt(
         Vec::new(),
         startup_router.as_ref(),
+        &[],
         startup_turn_context.as_ref(),
         BaseInstructions {
             text: base_instructions,

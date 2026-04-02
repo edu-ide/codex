@@ -13,7 +13,7 @@ should shrink and eventually disappear.
 
 use super::App;
 use crate::app_event::AppEvent;
-use crate::app_server_session::AppServerSession;
+use crate::app_server_session::SelectedConversationRuntime as AppServerSession;
 use crate::app_server_session::app_server_rate_limit_snapshot_to_core;
 use crate::app_server_session::status_account_display_from_auth_mode;
 #[cfg(test)]
@@ -255,7 +255,8 @@ impl App {
             if self.primary_thread_id == Some(thread_id) || self.primary_thread_id.is_none() {
                 self.enqueue_primary_thread_request(request).await
             } else {
-                self.enqueue_thread_request(thread_id, request).await
+                self.enqueue_thread_request(app_server_client, thread_id, request)
+                    .await
             };
         if let Err(err) = result {
             tracing::warn!("failed to enqueue app-server request: {err}");

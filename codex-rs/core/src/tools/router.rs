@@ -8,9 +8,11 @@ use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::AnyToolResult;
+use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::ToolsConfig;
 use crate::tools::spec::build_specs_with_discoverable_tools;
+use codex_protocol::CommandMeta;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseItem;
@@ -62,6 +64,14 @@ impl ToolRouter {
             dynamic_tools,
         );
         let (specs, registry) = builder.build();
+        Self::from_config_with_specs(config, specs, registry)
+    }
+
+    pub(crate) fn from_config_with_specs(
+        config: &ToolsConfig,
+        specs: Vec<ConfiguredToolSpec>,
+        registry: ToolRegistry,
+    ) -> Self {
         let model_visible_specs = if config.code_mode_only_enabled {
             specs
                 .iter()
@@ -85,6 +95,46 @@ impl ToolRouter {
             specs,
             model_visible_specs,
         }
+    }
+
+    pub fn register_tool<H>(&mut self, name: impl Into<String>, handler: Arc<H>, meta: CommandMeta)
+    where
+        H: ToolHandler + 'static,
+    {
+        self.register_tool_with_namespace(name, handler, meta, None);
+    }
+
+    pub fn register_tool_with_namespace<H>(
+        &mut self,
+        name: impl Into<String>,
+        handler: Arc<H>,
+        meta: CommandMeta,
+        namespace: Option<&str>,
+    ) where
+        H: ToolHandler + 'static,
+    {
+        self.registry
+            .register_with_namespace(name, handler, meta, namespace);
+    }
+
+    pub fn deregister_tool(&mut self, name: impl Into<String>, namespace: Option<&str>) -> bool {
+        self.registry.deregister(name, namespace)
+    }
+
+    pub fn tool_metadata(&self, name: &str) -> Option<&CommandMeta> {
+        self.registry.get_metadata_with_namespace(name, None)
+    }
+
+    pub fn tool_metadata_with_namespace(
+        &self,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Option<&CommandMeta> {
+        self.registry.get_metadata_with_namespace(name, namespace)
+    }
+
+    pub fn list_tool_metadata(&self) -> Vec<CommandMeta> {
+        self.registry.list_metadata()
     }
 
     pub fn specs(&self) -> Vec<ToolSpec> {

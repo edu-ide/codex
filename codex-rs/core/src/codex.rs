@@ -762,6 +762,39 @@ impl Codex {
             .await
     }
 
+    pub(crate) async fn set_dynamic_tools(
+        &self,
+        dynamic_tools: Vec<DynamicToolSpec>,
+    ) -> ConstraintResult<()> {
+        self.session
+            .update_settings(SessionSettingsUpdate {
+                dynamic_tools: Some(dynamic_tools),
+                ..Default::default()
+            })
+            .await
+    }
+
+    pub(crate) async fn add_dynamic_tools(
+        &self,
+        dynamic_tools: Vec<DynamicToolSpec>,
+    ) -> ConstraintResult<()> {
+        self.session
+            .update_settings(SessionSettingsUpdate {
+                add_dynamic_tools: Some(dynamic_tools),
+                ..Default::default()
+            })
+            .await
+    }
+
+    pub(crate) async fn remove_dynamic_tools(&self, names: Vec<String>) -> ConstraintResult<()> {
+        self.session
+            .update_settings(SessionSettingsUpdate {
+                remove_dynamic_tools: Some(names),
+                ..Default::default()
+            })
+            .await
+    }
+
     pub(crate) async fn agent_status(&self) -> AgentStatus {
         self.agent_status.borrow().clone()
     }
@@ -803,7 +836,7 @@ pub(crate) struct Session {
     tx_event: Sender<Event>,
     agent_status: watch::Sender<AgentStatus>,
     out_of_band_elicitation_paused: watch::Sender<bool>,
-    state: Mutex<SessionState>,
+    pub(crate) state: Mutex<SessionState>,
     /// The set of enabled features should be invariant for the lifetime of the
     /// session.
     features: ManagedFeatures,
@@ -1200,6 +1233,32 @@ impl SessionConfiguration {
         if let Some(app_server_client_name) = updates.app_server_client_name.clone() {
             next_configuration.app_server_client_name = Some(app_server_client_name);
         }
+        if let Some(dynamic_tools) = updates.dynamic_tools.clone() {
+            next_configuration.dynamic_tools = dynamic_tools;
+        }
+        if let Some(remove_names) = updates.remove_dynamic_tools.clone() {
+            if !remove_names.is_empty() {
+                let remove_names_set = remove_names.into_iter().collect::<HashSet<_>>();
+                next_configuration.dynamic_tools = next_configuration
+                    .dynamic_tools
+                    .into_iter()
+                    .filter(|tool| !remove_names_set.contains(&tool.name))
+                    .collect();
+            }
+        }
+        if let Some(add_dynamic_tools) = updates.add_dynamic_tools.clone() {
+            for tool in add_dynamic_tools {
+                if let Some(index) = next_configuration
+                    .dynamic_tools
+                    .iter()
+                    .position(|existing| existing.name == tool.name)
+                {
+                    next_configuration.dynamic_tools[index] = tool;
+                    continue;
+                }
+                next_configuration.dynamic_tools.push(tool);
+            }
+        }
         Ok(next_configuration)
     }
 }
@@ -1217,6 +1276,9 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) final_output_json_schema: Option<Option<Value>>,
     pub(crate) personality: Option<Personality>,
     pub(crate) app_server_client_name: Option<String>,
+    pub(crate) dynamic_tools: Option<Vec<DynamicToolSpec>>,
+    pub(crate) add_dynamic_tools: Option<Vec<DynamicToolSpec>>,
+    pub(crate) remove_dynamic_tools: Option<Vec<String>>,
 }
 
 impl Session {
@@ -4371,6 +4433,18 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                     .await;
                     false
                 }
+                Op::SetDynamicTools { dynamic_tools } => {
+                    handlers::set_dynamic_tools(&sess, sub.id.clone(), dynamic_tools).await;
+                    false
+                }
+                Op::AddDynamicTools { dynamic_tools } => {
+                    handlers::add_dynamic_tools(&sess, sub.id.clone(), dynamic_tools).await;
+                    false
+                }
+                Op::RemoveDynamicTools { names } => {
+                    handlers::remove_dynamic_tools(&sess, sub.id.clone(), names).await;
+                    false
+                }
                 Op::UserInput { .. } | Op::UserTurn { .. } => {
                     handlers::user_input_or_turn(&sess, sub.id.clone(), sub.op).await;
                     false
@@ -4420,6 +4494,10 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                 }
                 Op::ListMcpTools => {
                     handlers::list_mcp_tools(&sess, &config, sub.id.clone()).await;
+                    false
+                }
+                Op::ListCommands => {
+                    handlers::list_commands(&sess, &config, sub.id.clone()).await;
                     false
                 }
                 Op::RefreshMcpServers { config } => {
@@ -4579,6 +4657,7 @@ mod handlers {
     use codex_protocol::config_types::ModeKind;
     use codex_protocol::config_types::Settings;
     use codex_protocol::dynamic_tools::DynamicToolResponse;
+    use codex_protocol::dynamic_tools::DynamicToolSpec;
     use codex_protocol::mcp::RequestId as ProtocolRequestId;
     use codex_protocol::user_input::UserInput;
     use codex_rmcp_client::ElicitationAction;
@@ -4603,6 +4682,71 @@ mod handlers {
         updates: SessionSettingsUpdate,
     ) {
         if let Err(err) = sess.update_settings(updates).await {
+            sess.send_event_raw(Event {
+                id: sub_id,
+                msg: EventMsg::Error(ErrorEvent {
+                    message: err.to_string(),
+                    codex_error_info: Some(CodexErrorInfo::BadRequest),
+                }),
+            })
+            .await;
+        }
+    }
+
+    pub async fn set_dynamic_tools(
+        sess: &Arc<Session>,
+        sub_id: String,
+        dynamic_tools: Vec<DynamicToolSpec>,
+    ) {
+        if let Err(err) = sess
+            .update_settings(SessionSettingsUpdate {
+                dynamic_tools: Some(dynamic_tools),
+                ..Default::default()
+            })
+            .await
+        {
+            sess.send_event_raw(Event {
+                id: sub_id,
+                msg: EventMsg::Error(ErrorEvent {
+                    message: err.to_string(),
+                    codex_error_info: Some(CodexErrorInfo::BadRequest),
+                }),
+            })
+            .await;
+        }
+    }
+
+    pub async fn add_dynamic_tools(
+        sess: &Arc<Session>,
+        sub_id: String,
+        dynamic_tools: Vec<DynamicToolSpec>,
+    ) {
+        if let Err(err) = sess
+            .update_settings(SessionSettingsUpdate {
+                add_dynamic_tools: Some(dynamic_tools),
+                ..Default::default()
+            })
+            .await
+        {
+            sess.send_event_raw(Event {
+                id: sub_id,
+                msg: EventMsg::Error(ErrorEvent {
+                    message: err.to_string(),
+                    codex_error_info: Some(CodexErrorInfo::BadRequest),
+                }),
+            })
+            .await;
+        }
+    }
+
+    pub async fn remove_dynamic_tools(sess: &Arc<Session>, sub_id: String, names: Vec<String>) {
+        if let Err(err) = sess
+            .update_settings(SessionSettingsUpdate {
+                remove_dynamic_tools: Some(names),
+                ..Default::default()
+            })
+            .await
+        {
             sess.send_event_raw(Event {
                 id: sub_id,
                 msg: EventMsg::Error(ErrorEvent {
@@ -4654,6 +4798,7 @@ mod handlers {
                         final_output_json_schema: Some(final_output_json_schema),
                         personality,
                         app_server_client_name: None,
+                        ..Default::default()
                     },
                 )
             }
@@ -4934,6 +5079,58 @@ mod handlers {
         let event = Event {
             id: sub_id,
             msg: EventMsg::McpListToolsResponse(snapshot),
+        };
+        sess.send_event_raw(event).await;
+    }
+
+    pub async fn list_commands(sess: &Session, config: &Arc<Config>, sub_id: String) {
+        let state = sess.state.lock().await;
+        let dynamic_tools = state.session_configuration.dynamic_tools.clone();
+        let model_info = sess
+            .services
+            .models_manager
+            .get_model_info(
+                &state
+                    .session_configuration
+                    .collaboration_mode
+                    .settings
+                    .model,
+                config,
+            )
+            .await;
+        let available_models = sess
+            .services
+            .models_manager
+            .list_models(crate::models_manager::manager::RefreshStrategy::OnlineIfUncached)
+            .await;
+
+        let params = crate::tools::spec::ToolsConfigParams {
+            model_info: &model_info,
+            available_models: &available_models,
+            features: &config.features,
+            web_search_mode: Some(config.web_search_mode.value()),
+            session_source: state.session_configuration.session_source.clone(),
+            sandbox_policy: &state.session_configuration.sandbox_policy,
+            windows_sandbox_level: state.session_configuration.windows_sandbox_level,
+        };
+        let tools_config = crate::tools::spec::ToolsConfig::new(&params);
+
+        let builder = crate::tools::spec::build_specs_with_discoverable_tools(
+            &tools_config,
+            None, // mcp_tools
+            None, // app_tools
+            None, // discoverable_tools
+            dynamic_tools.as_slice(),
+        );
+        let (_, registry) = builder.build();
+
+        let commands = registry.list_metadata();
+
+        let event = Event {
+            id: sub_id,
+            msg: EventMsg::ListCommandsResponse(crate::protocol::ListCommandsResponseEvent {
+                commands,
+            }),
         };
         sess.send_event_raw(event).await;
     }
@@ -6324,11 +6521,11 @@ fn codex_apps_connector_id(tool: &crate::mcp_connection_manager::ToolInfo) -> Op
 pub(crate) fn build_prompt(
     input: Vec<ResponseItem>,
     router: &ToolRouter,
+    dynamic_tools: &[DynamicToolSpec],
     turn_context: &TurnContext,
     base_instructions: BaseInstructions,
 ) -> Prompt {
-    let deferred_dynamic_tools = turn_context
-        .dynamic_tools
+    let deferred_dynamic_tools = dynamic_tools
         .iter()
         .filter(|tool| tool.defer_loading)
         .map(|tool| tool.name.as_str())
@@ -6373,42 +6570,49 @@ async fn run_sampling_request(
     server_model_warning_emitted_for_turn: &mut bool,
     cancellation_token: CancellationToken,
 ) -> CodexResult<SamplingRequestResult> {
-    let router = built_tools(
-        sess.as_ref(),
-        turn_context.as_ref(),
-        &input,
-        explicitly_enabled_connectors,
-        skills_outcome,
-        &cancellation_token,
-    )
-    .await?;
-
-    let base_instructions = sess.get_base_instructions().await;
-
-    let prompt = build_prompt(
-        input,
-        router.as_ref(),
-        turn_context.as_ref(),
-        base_instructions,
-    );
-    let tool_runtime = ToolCallRuntime::new(
-        Arc::clone(&router),
-        Arc::clone(&sess),
-        Arc::clone(&turn_context),
-        Arc::clone(&turn_diff_tracker),
-    );
-    let _code_mode_worker = sess
-        .services
-        .code_mode_service
-        .start_turn_worker(
-            &sess,
-            &turn_context,
-            Arc::clone(&router),
-            Arc::clone(&turn_diff_tracker),
-        )
-        .await;
+    let mut code_mode_worker = None;
     let mut retries = 0;
     loop {
+        let base_instructions = sess.get_base_instructions().await;
+        let dynamic_tools = {
+            let state = sess.state.lock().await;
+            state.session_configuration.dynamic_tools.clone()
+        };
+        let router = built_tools(
+            sess.as_ref(),
+            turn_context.as_ref(),
+            dynamic_tools.as_slice(),
+            &input,
+            explicitly_enabled_connectors,
+            skills_outcome,
+            &cancellation_token,
+        )
+        .await?;
+        let prompt = build_prompt(
+            input.clone(),
+            router.as_ref(),
+            dynamic_tools.as_slice(),
+            turn_context.as_ref(),
+            base_instructions.clone(),
+        );
+        let tool_runtime = ToolCallRuntime::new(
+            Arc::clone(&router),
+            Arc::clone(&sess),
+            Arc::clone(&turn_context),
+            Arc::clone(&turn_diff_tracker),
+        );
+        if code_mode_worker.is_none() {
+            code_mode_worker = sess
+                .services
+                .code_mode_service
+                .start_turn_worker(
+                    &sess,
+                    &turn_context,
+                    Arc::clone(&router),
+                    Arc::clone(&turn_diff_tracker),
+                )
+                .await;
+        }
         let err = match try_run_sampling_request(
             tool_runtime.clone(),
             Arc::clone(&sess),
@@ -6499,6 +6703,7 @@ async fn run_sampling_request(
 pub(crate) async fn built_tools(
     sess: &Session,
     turn_context: &TurnContext,
+    dynamic_tools: &[DynamicToolSpec],
     input: &[ResponseItem],
     explicitly_enabled_connectors: &HashSet<String>,
     skills_outcome: Option<&SkillLoadOutcome>,
@@ -6515,6 +6720,12 @@ pub(crate) async fn built_tools(
         .services
         .plugins_manager
         .plugins_for_config(&turn_context.config);
+    let plugin_effective_apps = loaded_plugins.effective_apps().len();
+    let plugin_effective_mcp_servers = loaded_plugins.effective_mcp_servers().len();
+    debug!(
+        plugin_effective_apps,
+        plugin_effective_mcp_servers, "loaded plugin tool surfaces for turn"
+    );
 
     let mut effective_explicitly_enabled_connectors = explicitly_enabled_connectors.clone();
     effective_explicitly_enabled_connectors.extend(sess.get_connector_selection().await);
@@ -6607,20 +6818,45 @@ pub(crate) async fn built_tools(
     } else {
         app_tools
     };
-
-    Ok(Arc::new(ToolRouter::from_config(
+    let builder = crate::tools::spec::build_specs_with_discoverable_tools(
         &turn_context.tools_config,
-        ToolRouterParams {
-            mcp_tools: has_mcp_servers.then(|| {
-                mcp_tools
-                    .into_iter()
-                    .map(|(name, tool)| (name, tool.tool))
-                    .collect()
-            }),
-            app_tools,
-            discoverable_tools,
-            dynamic_tools: turn_context.dynamic_tools.as_slice(),
-        },
+        has_mcp_servers.then(|| {
+            mcp_tools
+                .into_iter()
+                .map(|(name, tool)| (name, tool.tool))
+                .collect()
+        }),
+        app_tools,
+        discoverable_tools,
+        dynamic_tools,
+    );
+    let (specs, registry) = builder.build();
+
+    let should_sync = {
+        let state = sess.state.lock().await;
+        !state.is_brain_sync_completed()
+    };
+    debug!(
+        should_sync,
+        "evaluating plugin registry brain sync during turn build"
+    );
+    if should_sync {
+        debug!("plugin registry brain sync start");
+        if let Err(err) = registry.sync_with_brain().await {
+            warn!("failed to synchronize tool registry with brain: {err}");
+            let mut state = sess.state.lock().await;
+            state.set_brain_sync_completed(false);
+        } else {
+            let mut state = sess.state.lock().await;
+            state.set_brain_sync_completed(true);
+            debug!("plugin registry brain sync completed");
+        }
+    }
+
+    Ok(Arc::new(ToolRouter::from_config_with_specs(
+        &turn_context.tools_config,
+        specs,
+        registry,
     )))
 }
 
@@ -6886,7 +7122,8 @@ fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::CollabCloseBegin(_)
         | EventMsg::CollabCloseEnd(_)
         | EventMsg::CollabResumeBegin(_)
-        | EventMsg::CollabResumeEnd(_) => None,
+        | EventMsg::CollabResumeEnd(_)
+        | EventMsg::ListCommandsResponse(_) => None,
     }
 }
 
@@ -7220,7 +7457,8 @@ async fn try_run_sampling_request(
     let mut active_item: Option<TurnItem> = None;
     let mut should_emit_turn_diff = false;
     let plan_mode = turn_context.collaboration_mode.mode == ModeKind::Plan;
-    let hide_think_tags = turn_context.config.model_provider_id == crate::LLAMA_SERVER_OSS_PROVIDER_ID;
+    let hide_think_tags =
+        turn_context.config.model_provider_id == crate::LLAMA_SERVER_OSS_PROVIDER_ID;
     let mut assistant_message_stream_parsers =
         AssistantMessageStreamParsers::new(plan_mode, hide_think_tags);
     let mut plan_mode_state = plan_mode.then(|| PlanModeStreamState::new(&turn_context.sub_id));
@@ -7519,11 +7757,9 @@ async fn try_run_sampling_request(
 
 pub(super) fn get_last_assistant_message_from_turn(responses: &[ResponseItem]) -> Option<String> {
     for item in responses.iter().rev() {
-        if let Some(message) = last_assistant_message_from_item(
-            item,
-            /*plan_mode*/ false,
-            false,
-        ) {
+        if let Some(message) =
+            last_assistant_message_from_item(item, /*plan_mode*/ false, false)
+        {
             return Some(message);
         }
     }

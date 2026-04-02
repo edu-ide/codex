@@ -1,12 +1,9 @@
-[package]
-name = "codex-mcp-server"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
 [[bin]]
 name = "codex-mcp-server"
 path = "src/main.rs"
+
+[package]
+name = "codex-mcp-server"
 
 [lib]
 name = "codex_mcp_server"
@@ -15,45 +12,110 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-anyhow = { workspace = true }
-codex-arg0 = { workspace = true }
-codex-core = { workspace = true }
-codex-exec-server = { workspace = true }
-codex-features = { workspace = true }
-codex-protocol = { workspace = true }
-codex-shell-command = { workspace = true }
-codex-utils-cli = { workspace = true }
-codex-utils-json-to-toml = { workspace = true }
-axum = { workspace = true, features = ["json", "tokio"] }
-bytes = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-http = { workspace = true }
-rmcp = { workspace = true }
-schemars = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-shlex = { workspace = true }
-tokio = { workspace = true, features = [
-    "io-std",
-    "macros",
-    "net",
-    "process",
-    "rt-multi-thread",
-    "signal",
-    "sync",
-] }
-tokio-stream = { workspace = true }
-tokio-util = { workspace = true }
-tracing = { workspace = true, features = ["log"] }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
-uuid = { workspace = true, features = ["v4"] }
+[package.version]
+workspace = true
 
+[package.edition]
+workspace = true
 
-[dev-dependencies]
-core_test_support = { workspace = true }
-mcp_test_support = { workspace = true }
-os_info = { workspace = true }
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
-wiremock = { workspace = true }
+[package.license]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.codex-arg0]
+workspace = true
+
+[dependencies.codex-core]
+workspace = true
+
+[dependencies.codex-exec-server]
+workspace = true
+
+[dependencies.codex-features]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-shell-command]
+workspace = true
+
+[dependencies.codex-utils-cli]
+workspace = true
+
+[dependencies.codex-utils-json-to-toml]
+workspace = true
+
+[dependencies.axum]
+version = "0.8"
+default-features = false
+features = [ "json", "tokio",]
+
+[dependencies.bytes]
+workspace = true
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.http]
+workspace = true
+
+[dependencies.rmcp]
+version = "0.15.0"
+default-features = false
+
+[dependencies.schemars]
+version = "0.8.22"
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.shlex]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "io-std", "macros", "net", "process", "rt-multi-thread", "signal", "sync",]
+
+[dependencies.tokio-stream]
+workspace = true
+
+[dependencies.tokio-util]
+version = "0.7.18"
+
+[dependencies.tracing]
+version = "0.1.44"
+features = [ "log",]
+
+[dependencies.tracing-subscriber]
+version = "0.3.22"
+features = [ "env-filter", "fmt",]
+
+[dependencies.uuid]
+version = "1"
+features = [ "v4",]
+
+[dev-dependencies.core_test_support]
+workspace = true
+
+[dev-dependencies.mcp_test_support]
+workspace = true
+
+[dev-dependencies.os_info]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true
+
+[dev-dependencies.wiremock]
+workspace = true

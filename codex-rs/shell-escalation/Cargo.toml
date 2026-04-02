@@ -1,36 +1,65 @@
-[package]
-edition.workspace = true
-license.workspace = true
-name = "codex-shell-escalation"
-version.workspace = true
-
 [[bin]]
 name = "codex-execve-wrapper"
 path = "src/bin/main_execve_wrapper.rs"
 
-[dependencies]
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-codex-protocol = { workspace = true }
-codex-utils-absolute-path = { workspace = true }
-libc = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-socket2 = { workspace = true, features = ["all"] }
-tokio = { workspace = true, features = [
-    "io-std",
-    "net",
-    "macros",
-    "process",
-    "rt-multi-thread",
-    "signal",
-    "time",
-] }
-tokio-util = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+[package]
+name = "codex-shell-escalation"
 
-[dev-dependencies]
-pretty_assertions = { workspace = true }
-tempfile = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[package.version]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.libc]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.socket2]
+workspace = true
+features = [ "all",]
+
+[dependencies.tokio]
+version = "1"
+features = [ "io-std", "net", "macros", "process", "rt-multi-thread", "signal", "time",]
+
+[dependencies.tokio-util]
+version = "0.7.18"
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.tracing-subscriber]
+version = "0.3.22"
+features = [ "env-filter", "fmt",]
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true

@@ -1,26 +1,57 @@
 [package]
 name = "codex-shell-command"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 
 [lints]
 workspace = true
 
-[dependencies]
-base64 = { workspace = true }
-codex-protocol = { workspace = true }
-codex-utils-absolute-path = { workspace = true }
-once_cell = { workspace = true }
-regex = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-shlex = { workspace = true }
-tree-sitter = { workspace = true }
-tree-sitter-bash = { workspace = true }
-url = { workspace = true }
-which = { workspace = true }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-anyhow = { workspace = true }
-pretty_assertions = { workspace = true }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.base64]
+version = "0.22.1"
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.once_cell]
+workspace = true
+
+[dependencies.regex]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.shlex]
+workspace = true
+
+[dependencies.tree-sitter]
+workspace = true
+
+[dependencies.tree-sitter-bash]
+workspace = true
+
+[dependencies.url]
+version = "2"
+
+[dependencies.which]
+workspace = true
+
+[dev-dependencies.anyhow]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true

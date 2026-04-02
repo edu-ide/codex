@@ -3,8 +3,8 @@ mod citation;
 mod inline_hidden_tag;
 mod proposed_plan;
 mod stream_text;
-mod thinking;
 mod tagged_line_parser;
+mod thinking;
 mod utf8_stream;
 
 pub use assistant_text::AssistantTextChunk;

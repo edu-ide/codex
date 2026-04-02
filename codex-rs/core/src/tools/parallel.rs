@@ -143,11 +143,12 @@ impl ToolCallRuntime {
                 tools: Vec::new(),
             },
             ToolPayload::Custom { .. } => ResponseInputItem::CustomToolCallOutput {
-                call_id: call.call_id,
+                call_id: call.call_id.clone(),
                 name: None,
                 output: codex_protocol::models::FunctionCallOutputPayload {
-                    body: codex_protocol::models::FunctionCallOutputBody::Text(message),
+                    body: codex_protocol::models::FunctionCallOutputBody::Text(message.clone()),
                     success: Some(false),
+                    hint: None,
                 },
             },
             _ => ResponseInputItem::FunctionCallOutput {
@@ -155,6 +156,7 @@ impl ToolCallRuntime {
                 output: codex_protocol::models::FunctionCallOutputPayload {
                     body: codex_protocol::models::FunctionCallOutputBody::Text(message),
                     success: Some(false),
+                    hint: None,
                 },
             },
         }

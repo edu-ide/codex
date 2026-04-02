@@ -185,6 +185,7 @@ impl ToolOutput for ViewImageOutput {
         let output = FunctionCallOutputPayload {
             body,
             success: Some(true),
+            hint: None,
         };
 
         ResponseInputItem::FunctionCallOutput {

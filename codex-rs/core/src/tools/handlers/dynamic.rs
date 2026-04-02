@@ -63,12 +63,18 @@ impl ToolHandler for DynamicToolHandler {
         let DynamicToolResponse {
             content_items,
             success,
+            hint,
         } = response;
         let body = content_items
             .into_iter()
             .map(FunctionCallOutputContentItem::from)
             .collect::<Vec<_>>();
-        Ok(FunctionToolOutput::from_content(body, Some(success)))
+        Ok(FunctionToolOutput {
+            body,
+            success: Some(success),
+            post_tool_use_response: None,
+            hint,
+        })
     }
 }
 

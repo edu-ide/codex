@@ -28,6 +28,27 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+/// Strips the line number prefix commonly output by `read_file` (e.g., "L24: ") from the patch lines
+/// to ensure that string matching doesn't fail due to the AI hallucinating these prefixes into the code.
+fn strip_line_prefix(s: &str) -> String {
+    let trimmed = s.trim_start();
+    if let Some(rest) = trimmed.strip_prefix('L') {
+        if let Some(colon_idx) = rest.find(':') {
+            let digits = &rest[..colon_idx];
+            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                let remainder = &rest[colon_idx + 1..];
+                // strip at most one leading space after the colon
+                if let Some(without_space) = remainder.strip_prefix(' ') {
+                    return without_space.to_string();
+                } else {
+                    return remainder.to_string();
+                }
+            }
+        }
+    }
+    s.to_string()
+}
+
 const BEGIN_PATCH_MARKER: &str = "*** Begin Patch";
 const END_PATCH_MARKER: &str = "*** End Patch";
 const ADD_FILE_MARKER: &str = "*** Add File: ";
@@ -356,7 +377,7 @@ fn parse_update_file_chunk(
     let (change_context, start_index) = if lines[0] == EMPTY_CHANGE_CONTEXT_MARKER {
         (None, 1)
     } else if let Some(context) = lines[0].strip_prefix(CHANGE_CONTEXT_MARKER) {
-        (Some(context.to_string()), 1)
+        (Some(strip_line_prefix(context)), 1)
     } else {
         if !allow_missing_context {
             return Err(InvalidHunkError {
@@ -403,14 +424,15 @@ fn parse_update_file_chunk(
                         chunk.new_lines.push(String::new());
                     }
                     Some(' ') => {
-                        chunk.old_lines.push(line_contents[1..].to_string());
-                        chunk.new_lines.push(line_contents[1..].to_string());
+                        let content = strip_line_prefix(&line_contents[1..]);
+                        chunk.old_lines.push(content.clone());
+                        chunk.new_lines.push(content);
                     }
                     Some('+') => {
-                        chunk.new_lines.push(line_contents[1..].to_string());
+                        chunk.new_lines.push(strip_line_prefix(&line_contents[1..]));
                     }
                     Some('-') => {
-                        chunk.old_lines.push(line_contents[1..].to_string());
+                        chunk.old_lines.push(strip_line_prefix(&line_contents[1..]));
                     }
                     _ => {
                         if parsed_lines == 0 {
@@ -776,4 +798,19 @@ fn test_update_file_chunk() {
             3
         ))
     );
+}
+
+#[test]
+fn test_strip_line_prefix_behavior() {
+    assert_eq!(strip_line_prefix("L100: def foo():"), "def foo():");
+    assert_eq!(strip_line_prefix("L9:   indented()"), "  indented()");
+    assert_eq!(strip_line_prefix(" L24: space"), "space");
+    assert_eq!(strip_line_prefix("L2:"), "");
+    assert_eq!(strip_line_prefix("L2: "), "");
+
+    // Should NOT strip if it doesn't match L\d+:
+    assert_eq!(strip_line_prefix("L: bad"), "L: bad");
+    assert_eq!(strip_line_prefix("L2A: bad"), "L2A: bad");
+    assert_eq!(strip_line_prefix("some text L2: no"), "some text L2: no");
+    assert_eq!(strip_line_prefix("let L2 = 5;"), "let L2 = 5;");
 }

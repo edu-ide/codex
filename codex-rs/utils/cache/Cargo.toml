@@ -1,16 +1,28 @@
 [package]
 name = "codex-utils-cache"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 
 [lints]
 workspace = true
 
-[dependencies]
-lru = { workspace = true }
-sha1 = { workspace = true }
-tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread"] }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.lru]
+workspace = true
+
+[dependencies.sha1]
+workspace = true
+
+[dependencies.tokio]
+version = "1"
+features = [ "sync", "rt", "rt-multi-thread",]
+
+[dev-dependencies.tokio]
+version = "1"
+features = [ "macros", "rt", "rt-multi-thread",]

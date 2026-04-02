@@ -1,29 +1,69 @@
 [package]
 name = "codex-state"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-anyhow = { workspace = true }
-chrono = { workspace = true }
-clap = { workspace = true, features = ["derive", "env"] }
-codex-protocol = { workspace = true }
-dirs = { workspace = true }
-log = { workspace = true }
-owo-colors = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-sqlx = { workspace = true }
-strum = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-uuid = { workspace = true }
-
-[dev-dependencies]
-codex-git-utils = { workspace = true }
-pretty_assertions = { workspace = true }
 
 [lints]
+workspace = true
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.chrono]
+version = "0.4.43"
+
+[dependencies.clap]
+version = "4"
+features = [ "derive", "env",]
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.dirs]
+workspace = true
+
+[dependencies.log]
+workspace = true
+
+[dependencies.owo-colors]
+workspace = true
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.sqlx]
+workspace = true
+
+[dependencies.strum]
+workspace = true
+features = [ "derive",]
+
+[dependencies.tokio]
+version = "1"
+features = [ "fs", "io-util", "macros", "rt-multi-thread", "sync", "time",]
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dependencies.tracing-subscriber]
+version = "0.3.22"
+
+[dependencies.uuid]
+version = "1"
+
+[dev-dependencies.codex-git-utils]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
 workspace = true

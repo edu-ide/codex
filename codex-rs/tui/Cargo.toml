@@ -1,10 +1,3 @@
-[package]
-name = "codex-tui"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-autobins = false
-
 [[bin]]
 name = "codex-tui"
 path = "src/main.rs"
@@ -13,138 +6,333 @@ path = "src/main.rs"
 name = "md-events"
 path = "src/bin/md-events.rs"
 
+[package]
+name = "codex-tui"
+autobins = false
+
 [lib]
 name = "codex_tui"
 path = "src/lib.rs"
 
 [features]
-default = ["voice-input"]
-# Enable vt100-based tests (emulator) when running with `--features vt100-tests`.
+default = [ "voice-input",]
 vt100-tests = []
-# Gate verbose debug logging inside the TUI implementation.
 debug-logs = []
-voice-input = ["dep:cpal"]
+voice-input = [ "dep:cpal",]
 
 [lints]
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-base64 = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
-clap = { workspace = true, features = ["derive"] }
-codex-ansi-escape = { workspace = true }
-codex-app-server-client = { workspace = true }
-codex-app-server-protocol = { workspace = true }
-codex-arg0 = { workspace = true }
-codex-chatgpt = { workspace = true }
-codex-cloud-requirements = { workspace = true }
-codex-core = { workspace = true }
-codex-features = { workspace = true }
-codex-feedback = { workspace = true }
-codex-file-search = { workspace = true }
-codex-git-utils = { workspace = true }
-codex-login = { workspace = true }
-codex-otel = { workspace = true }
-codex-protocol = { workspace = true }
-codex-shell-command = { workspace = true }
-codex-state = { workspace = true }
-codex-terminal-detection = { workspace = true }
-codex-utils-approval-presets = { workspace = true }
-codex-utils-absolute-path = { workspace = true }
-codex-utils-cli = { workspace = true }
-codex-utils-elapsed = { workspace = true }
-codex-utils-fuzzy-match = { workspace = true }
-codex-utils-oss = { workspace = true }
-codex-utils-sandbox-summary = { workspace = true }
-codex-utils-sleep-inhibitor = { workspace = true }
-codex-utils-string = { workspace = true }
-color-eyre = { workspace = true }
-crossterm = { workspace = true, features = ["bracketed-paste", "event-stream"] }
-derive_more = { workspace = true, features = ["is_variant"] }
-diffy = { workspace = true }
-dirs = { workspace = true }
-dunce = { workspace = true }
-image = { workspace = true, features = ["jpeg", "png", "gif", "webp"] }
-itertools = { workspace = true }
-lazy_static = { workspace = true }
-pathdiff = { workspace = true }
-pulldown-cmark = { workspace = true }
-rand = { workspace = true }
-ratatui = { workspace = true, features = [
-    "scrolling-regions",
-    "unstable-backend-writer",
-    "unstable-rendered-line-info",
-    "unstable-widget-ref",
-] }
-ratatui-macros = { workspace = true }
-regex-lite = { workspace = true }
-reqwest = { workspace = true, features = ["json"] }
-rmcp = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true, features = ["preserve_order"] }
-shlex = { workspace = true }
-strum = { workspace = true }
-strum_macros = { workspace = true }
-supports-color = { workspace = true }
-tempfile = { workspace = true }
-textwrap = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = [
-    "io-std",
-    "macros",
-    "process",
-    "rt-multi-thread",
-    "signal",
-    "test-util",
-    "time",
-] }
-tokio-stream = { workspace = true, features = ["sync"] }
-toml = { workspace = true }
-tracing = { workspace = true, features = ["log"] }
-tracing-appender = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 syntect = "5"
-two-face = { version = "0.5", default-features = false, features = ["syntect-default-onig"] }
-unicode-segmentation = { workspace = true }
-unicode-width = { workspace = true }
-url = { workspace = true }
-webbrowser = { workspace = true }
-uuid = { workspace = true }
 
-codex-windows-sandbox = { workspace = true }
-tokio-util = { workspace = true, features = ["time"] }
+[package.version]
+workspace = true
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-cpal = { version = "0.15", optional = true }
+[package.edition]
+workspace = true
 
-[target.'cfg(unix)'.dependencies]
-libc = { workspace = true }
+[package.license]
+workspace = true
 
-[target.'cfg(windows)'.dependencies]
-which = { workspace = true }
-windows-sys = { version = "0.52", features = [
-    "Win32_Foundation",
-    "Win32_System_Console",
-] }
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.base64]
+version = "0.22.1"
+
+[dependencies.chrono]
+version = "0.4.43"
+features = [ "serde",]
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.codex-ansi-escape]
+workspace = true
+
+[dependencies.codex-app-server-client]
+workspace = true
+
+[dependencies.codex-app-server-protocol]
+workspace = true
+
+[dependencies.codex-arg0]
+workspace = true
+
+[dependencies.codex-chatgpt]
+workspace = true
+
+[dependencies.codex-cloud-requirements]
+workspace = true
+
+[dependencies.codex-core]
+workspace = true
+
+[dependencies.codex-features]
+workspace = true
+
+[dependencies.codex-feedback]
+workspace = true
+
+[dependencies.codex-file-search]
+workspace = true
+
+[dependencies.codex-git-utils]
+workspace = true
+
+[dependencies.codex-ilhae]
+workspace = true
+
+[dependencies.brain-session-rs]
+path = "../../../brain-session-rs"
+
+[dependencies.codex-login]
+workspace = true
+
+[dependencies.codex-otel]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-shell-command]
+workspace = true
+
+[dependencies.codex-state]
+workspace = true
+
+[dependencies.codex-terminal-detection]
+workspace = true
+
+[dependencies.codex-utils-approval-presets]
+workspace = true
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.codex-utils-cli]
+workspace = true
+
+[dependencies.codex-utils-elapsed]
+workspace = true
+
+[dependencies.codex-utils-fuzzy-match]
+workspace = true
+
+[dependencies.codex-utils-oss]
+workspace = true
+
+[dependencies.codex-utils-sandbox-summary]
+workspace = true
+
+[dependencies.codex-utils-sleep-inhibitor]
+workspace = true
+
+[dependencies.codex-utils-string]
+workspace = true
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.crossterm]
+workspace = true
+features = [ "bracketed-paste", "event-stream",]
+
+[dependencies.derive_more]
+workspace = true
+features = [ "is_variant",]
+
+[dependencies.diffy]
+workspace = true
+
+[dependencies.dirs]
+workspace = true
+
+[dependencies.dunce]
+workspace = true
+
+[dependencies.image]
+workspace = true
+features = [ "jpeg", "png", "gif", "webp",]
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.lazy_static]
+workspace = true
+
+[dependencies.pathdiff]
+workspace = true
+
+[dependencies.pulldown-cmark]
+workspace = true
+
+[dependencies.rand]
+workspace = true
+
+[dependencies.ratatui]
+workspace = true
+features = [ "scrolling-regions", "unstable-backend-writer", "unstable-rendered-line-info", "unstable-widget-ref",]
+
+[dependencies.ratatui-macros]
+workspace = true
+
+[dependencies.regex-lite]
+workspace = true
+
+[dependencies.reqwest]
+workspace = true
+features = [ "json",]
+
+[dependencies.rmcp]
+version = "0.15.0"
+default-features = false
+
+[dependencies.sacp]
+path = "../../../symposium-acp/src/sacp"
+
+[dependencies.sacp-tokio]
+path = "../../../symposium-acp/src/sacp-tokio"
+
+[dependencies.agent-client-protocol-schema]
+path = "../../../acp-schema"
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+features = [ "preserve_order",]
+
+[dependencies.shlex]
+workspace = true
+
+[dependencies.strum]
+workspace = true
+
+[dependencies.strum_macros]
+workspace = true
+
+[dependencies.supports-color]
+workspace = true
+
+[dependencies.tempfile]
+workspace = true
+
+[dependencies.textwrap]
+workspace = true
+
+[dependencies.thiserror]
+version = "2.0.17"
+
+[dependencies.tokio]
+version = "1"
+features = [ "io-std", "macros", "process", "rt-multi-thread", "signal", "test-util", "time",]
+
+[dependencies.tokio-stream]
+workspace = true
+features = [ "sync",]
+
+[dependencies.toml]
+workspace = true
+
+[dependencies.tracing]
+version = "0.1.44"
+features = [ "log",]
+
+[dependencies.tracing-appender]
+version = "0.2.3"
+
+[dependencies.tracing-subscriber]
+version = "0.3.22"
+features = [ "env-filter",]
+
+[dependencies.two-face]
+version = "0.5"
+default-features = false
+features = [ "syntect-default-onig",]
+
+[dependencies.unicode-segmentation]
+workspace = true
+
+[dependencies.unicode-width]
+workspace = true
+
+[dependencies.url]
+version = "2"
+
+[dependencies.webbrowser]
+workspace = true
+
+[dependencies.uuid]
+version = "1"
+
+[dependencies.codex-windows-sandbox]
+workspace = true
+
+[dependencies.tokio-util]
+version = "0.7.18"
+features = [ "time",]
+
+[dev-dependencies.codex-cli]
+workspace = true
+
+[dev-dependencies.codex-core]
+workspace = true
+
+[dev-dependencies.codex-utils-cargo-bin]
+workspace = true
+
+[dev-dependencies.codex-utils-pty]
+workspace = true
+
+[dev-dependencies.assert_matches]
+workspace = true
+
+[dev-dependencies.chrono]
+version = "0.4.43"
+features = [ "serde",]
+
+[dev-dependencies.insta]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.rand]
+workspace = true
+
+[dev-dependencies.serial_test]
+workspace = true
+
+[dev-dependencies.vt100]
+workspace = true
+
+[dev-dependencies.uuid]
+version = "1"
+
+[target."cfg(windows)".dependencies]
 winsplit = "0.1"
 
-# Clipboard support via `arboard` is not available on Android/Termux.
-# Only include it for non-Android targets so the crate builds on Android.
-[target.'cfg(not(target_os = "android"))'.dependencies]
-arboard = { workspace = true }
+[target."cfg(not(target_os = \"linux\"))".dependencies.cpal]
+version = "0.15"
+optional = true
 
+[target."cfg(unix)".dependencies.libc]
+workspace = true
 
-[dev-dependencies]
-codex-cli = { workspace = true }
-codex-core = { workspace = true }
-codex-utils-cargo-bin = { workspace = true }
-codex-utils-pty = { workspace = true }
-assert_matches = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
-insta = { workspace = true }
-pretty_assertions = { workspace = true }
-rand = { workspace = true }
-serial_test = { workspace = true }
-vt100 = { workspace = true }
-uuid = { workspace = true }
+[target."cfg(windows)".dependencies.which]
+workspace = true
+
+[target."cfg(windows)".dependencies.windows-sys]
+version = "0.52"
+features = [ "Win32_Foundation", "Win32_System_Console",]
+
+[target."cfg(not(target_os = \"android\"))".dependencies.arboard]
+workspace = true

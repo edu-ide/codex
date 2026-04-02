@@ -1,31 +1,76 @@
 [package]
 name = "codex-config"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 
 [lints]
 workspace = true
 
-[dependencies]
-codex-app-server-protocol = { workspace = true }
-codex-execpolicy = { workspace = true }
-codex-protocol = { workspace = true }
-codex-utils-absolute-path = { workspace = true }
-futures = { workspace = true, features = ["alloc", "std"] }
-multimap = { workspace = true }
-schemars = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-serde_path_to_error = { workspace = true }
-sha2 = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs"] }
-toml = { workspace = true }
-toml_edit = { workspace = true }
-tracing = { workspace = true }
+[package.version]
+workspace = true
 
-[dev-dependencies]
-anyhow = { workspace = true }
-pretty_assertions = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.codex-app-server-protocol]
+workspace = true
+
+[dependencies.codex-execpolicy]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
+[dependencies.codex-utils-absolute-path]
+workspace = true
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
+features = [ "alloc", "std",]
+
+[dependencies.multimap]
+workspace = true
+
+[dependencies.schemars]
+version = "0.8.22"
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.serde_path_to_error]
+workspace = true
+
+[dependencies.sha2]
+workspace = true
+
+[dependencies.thiserror]
+version = "2.0.17"
+
+[dependencies.tokio]
+version = "1"
+features = [ "fs",]
+
+[dependencies.toml]
+workspace = true
+
+[dependencies.toml_edit]
+workspace = true
+
+[dependencies.tracing]
+version = "0.1.44"
+
+[dev-dependencies.anyhow]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+workspace = true
+
+[dev-dependencies.tokio]
+version = "1"
+features = [ "full",]

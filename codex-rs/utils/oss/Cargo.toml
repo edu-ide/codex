@@ -1,15 +1,31 @@
 [package]
 name = "codex-utils-oss"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 
 [lints]
 workspace = true
 
-[dependencies]
-codex-core = { workspace = true }
-codex-lmstudio = { workspace = true }
-codex-ollama = { workspace = true }
-reqwest = { workspace = true, features = ["json"] }
-serde = { workspace = true, features = ["derive"] }
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.codex-core]
+workspace = true
+
+[dependencies.codex-lmstudio]
+workspace = true
+
+[dependencies.codex-ollama]
+workspace = true
+
+[dependencies.reqwest]
+workspace = true
+features = [ "json",]
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]

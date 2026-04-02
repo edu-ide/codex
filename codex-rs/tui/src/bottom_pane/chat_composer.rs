@@ -333,10 +333,13 @@ pub(crate) struct ChatComposer {
     realtime_conversation_enabled: bool,
     audio_device_selection_enabled: bool,
     windows_degraded_sandbox_active: bool,
+    fork_command_enabled: bool,
+    terminal_commands_enabled: bool,
     status_line_value: Option<Line<'static>>,
     status_line_enabled: bool,
     // Agent label injected into the footer's contextual row when multi-agent mode is active.
     active_agent_label: Option<String>,
+    commands: Vec<codex_protocol::commands::CommandMeta>,
 }
 
 #[derive(Clone, Debug)]
@@ -372,7 +375,13 @@ impl ChatComposer {
             realtime_conversation_enabled: self.realtime_conversation_enabled,
             audio_device_selection_enabled: self.audio_device_selection_enabled,
             allow_elevate_sandbox: self.windows_degraded_sandbox_active,
+            fork_command_enabled: self.fork_command_enabled,
+            terminal_commands_enabled: self.terminal_commands_enabled,
         }
+    }
+
+    pub(crate) fn builtins_for_popup(&self) -> Vec<(&'static str, SlashCommand)> {
+        slash_commands::builtins_for_popup(self.builtin_command_flags())
     }
 
     pub fn new(
@@ -454,9 +463,12 @@ impl ChatComposer {
             realtime_conversation_enabled: false,
             audio_device_selection_enabled: false,
             windows_degraded_sandbox_active: false,
+            fork_command_enabled: true,
+            terminal_commands_enabled: true,
             status_line_value: None,
             status_line_enabled: false,
             active_agent_label: None,
+            commands: Vec::new(),
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
@@ -521,6 +533,13 @@ impl ChatComposer {
         self.collaboration_modes_enabled = enabled;
     }
 
+    pub fn set_commands(&mut self, commands: Vec<codex_protocol::commands::CommandMeta>) {
+        self.commands = commands;
+        if let ActivePopup::Command(popup) = &mut self.active_popup {
+            popup.set_commands(self.commands.clone());
+        }
+    }
+
     pub fn set_connectors_enabled(&mut self, enabled: bool) {
         self.connectors_enabled = enabled;
     }
@@ -546,6 +565,14 @@ impl ChatComposer {
 
     pub fn set_audio_device_selection_enabled(&mut self, enabled: bool) {
         self.audio_device_selection_enabled = enabled;
+    }
+
+    pub fn set_fork_command_enabled(&mut self, enabled: bool) {
+        self.fork_command_enabled = enabled;
+    }
+
+    pub fn set_terminal_commands_enabled(&mut self, enabled: bool) {
+        self.terminal_commands_enabled = enabled;
     }
 
     /// Compatibility shim for tests that still toggle the removed steer mode flag.
@@ -1274,7 +1301,9 @@ impl ChatComposer {
                 let first_line = self.textarea.text().lines().next().unwrap_or("");
                 popup.on_composer_text_change(first_line.to_string());
                 if let Some(sel) = popup.selected_item() {
-                    let CommandItem::Builtin(cmd) = sel;
+                    let CommandItem::Builtin(cmd) = sel else {
+                        return (InputResult::None, true);
+                    };
                     if cmd == SlashCommand::Skills {
                         self.textarea.set_text_clearing_elements("");
                         return (InputResult::Command(cmd), true);
@@ -1299,7 +1328,9 @@ impl ChatComposer {
                 ..
             } => {
                 if let Some(sel) = popup.selected_item() {
-                    let CommandItem::Builtin(cmd) = sel;
+                    let CommandItem::Builtin(cmd) = sel else {
+                        return self.handle_key_event_without_popup(key_event);
+                    };
                     self.textarea.set_text_clearing_elements("");
                     return (InputResult::Command(cmd), true);
                 }
@@ -2090,9 +2121,18 @@ impl ChatComposer {
                     slash_commands::find_builtin_command(name, self.builtin_command_flags())
                         .is_some();
                 if !is_builtin {
-                    let message = format!(
-                        r#"Unrecognized command '/{name}'. Type "/" for a list of supported commands."#
-                    );
+                    let suggestion =
+                        slash_commands::suggest_builtin_command(name, self.builtin_command_flags());
+                    let message = match suggestion {
+                        Some(suggested) => {
+                            format!("Unrecognized command '/{name}'. Did you mean '/{suggested}'?")
+                        }
+                        None => {
+                            format!(
+                                "Unrecognized command '/{name}'. Type \"/\" for a list of supported commands."
+                            )
+                        }
+                    };
                     self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                         history_cell::new_info_event(message, /*hint*/ None),
                     )));
@@ -2263,17 +2303,25 @@ impl ChatComposer {
         let first_line = self.textarea.text().lines().next().unwrap_or("");
         if let Some((name, rest, _rest_offset)) = parse_slash_name(first_line)
             && rest.is_empty()
-            && let Some(cmd) =
-                slash_commands::find_builtin_command(name, self.builtin_command_flags())
         {
+            let (maybe_cmd, suggestion) = self.resolve_built_in_or_suggested(name);
+            let Some(cmd) = maybe_cmd else {
+                return None;
+            };
+            if let Some(suggestion_name) = suggestion {
+                let message =
+                    format!("Did you mean '/{suggestion_name}'? Running corrected command.");
+                self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                    history_cell::new_info_event(message, /*hint*/ None),
+                )));
+            }
             if self.reject_slash_command_if_unavailable(cmd) {
                 return Some(InputResult::None);
             }
             self.textarea.set_text_clearing_elements("");
-            Some(InputResult::Command(cmd))
-        } else {
-            None
+            return Some(InputResult::Command(cmd));
         }
+        None
     }
 
     /// Check if the input is a slash command with args (e.g., /review args) and dispatch it.
@@ -2292,10 +2340,18 @@ impl ChatComposer {
             return None;
         }
 
-        let cmd = slash_commands::find_builtin_command(name, self.builtin_command_flags())?;
+        let (cmd, suggestion) = self.resolve_built_in_or_suggested(name);
+        let cmd = cmd?;
 
         if !cmd.supports_inline_args() {
             return None;
+        }
+
+        if let Some(suggestion_name) = suggestion {
+            let message = format!("Did you mean '/{suggestion_name}'? Running corrected command.");
+            self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                history_cell::new_info_event(message, /*hint*/ None),
+            )));
         }
         if self.reject_slash_command_if_unavailable(cmd) {
             return Some(InputResult::None);
@@ -2310,6 +2366,28 @@ impl ChatComposer {
             trimmed_rest.to_string(),
             args_elements,
         ))
+    }
+
+    fn resolve_built_in_or_suggested(
+        &self,
+        name: &str,
+    ) -> (Option<SlashCommand>, Option<&'static str>) {
+        if let Some(cmd) = slash_commands::find_builtin_command(name, self.builtin_command_flags())
+        {
+            return (Some(cmd), None);
+        }
+
+        let Some(suggestion) =
+            slash_commands::suggest_builtin_command(name, self.builtin_command_flags())
+        else {
+            return (None, None);
+        };
+        let Some(suggested_cmd) =
+            slash_commands::find_builtin_command(suggestion, self.builtin_command_flags())
+        else {
+            return (None, None);
+        };
+        (Some(suggested_cmd), Some(suggestion))
     }
 
     /// Expand pending placeholders and extract normalized inline-command args.
@@ -3067,6 +3145,8 @@ impl ChatComposer {
                     let personality_command_enabled = self.personality_command_enabled;
                     let realtime_conversation_enabled = self.realtime_conversation_enabled;
                     let audio_device_selection_enabled = self.audio_device_selection_enabled;
+                    let fork_command_enabled = self.fork_command_enabled;
+                    let terminal_commands_enabled = self.terminal_commands_enabled;
                     let mut command_popup = CommandPopup::new(CommandPopupFlags {
                         collaboration_modes_enabled,
                         connectors_enabled,
@@ -3076,7 +3156,12 @@ impl ChatComposer {
                         realtime_conversation_enabled,
                         audio_device_selection_enabled,
                         windows_degraded_sandbox_active: self.windows_degraded_sandbox_active,
+                        fork_command_enabled,
+                        terminal_commands_enabled,
                     });
+                    if !self.commands.is_empty() {
+                        command_popup.set_commands(self.commands.clone());
+                    }
                     command_popup.on_composer_text_change(first_line.to_string());
                     self.active_popup = ActivePopup::Command(command_popup);
                 }
@@ -3736,6 +3821,67 @@ mod tests {
     use crate::bottom_pane::chat_composer::LARGE_PASTE_CHAR_THRESHOLD;
     use crate::bottom_pane::textarea::TextArea;
     use tokio::sync::mpsc::unbounded_channel;
+
+    struct SlashDispatchHarness {
+        composer: ChatComposer,
+        events: tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+    }
+
+    impl SlashDispatchHarness {
+        fn new() -> Self {
+            let (tx, rx) = unbounded_channel::<AppEvent>();
+            let sender = AppEventSender::new(tx);
+            Self {
+                composer: ChatComposer::new(
+                    /*has_input_focus*/ true,
+                    sender,
+                    /*enhanced_keys_supported*/ false,
+                    "Ask Codex to do anything".to_string(),
+                    /*disable_paste_burst*/ false,
+                ),
+                events: rx,
+            }
+        }
+
+        fn set_input(mut self, input: &str) -> Self {
+            self.composer.textarea.set_text_clearing_elements(input);
+            self
+        }
+
+        fn submit_enter(&mut self) -> InputResult {
+            use crossterm::event::KeyCode;
+            use crossterm::event::KeyEvent;
+            use crossterm::event::KeyModifiers;
+            self.composer
+                .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .0
+        }
+
+        fn history_messages(&mut self) -> Vec<String> {
+            let mut messages = Vec::new();
+            while let Ok(event) = self.events.try_recv() {
+                if let AppEvent::InsertHistoryCell(cell) = event {
+                    let message = cell
+                        .display_lines(80)
+                        .into_iter()
+                        .map(|line| line.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    messages.push(message);
+                }
+            }
+            messages
+        }
+
+        fn assert_history_contains(&mut self, expected: &str) {
+            assert!(
+                self.history_messages()
+                    .into_iter()
+                    .any(|message| message.contains(expected)),
+                "expected history message containing: {expected}"
+            );
+        }
+    }
 
     #[test]
     fn footer_hint_row_is_separated_from_composer() {
@@ -6055,6 +6201,57 @@ mod tests {
             InputResult::None => panic!("expected Command result for '/init'"),
         }
         assert!(composer.textarea.is_empty(), "composer should be cleared");
+    }
+
+    #[test]
+    fn slash_typo_dispatches_suggested_command() {
+        let mut harness = SlashDispatchHarness::new().set_input("/stauts");
+        let result = harness.submit_enter();
+
+        match result {
+            InputResult::Command(cmd) => assert_eq!(cmd, SlashCommand::Status),
+            _ => panic!("expected Command result for '/stauts' typo correction"),
+        }
+        assert!(harness.composer.textarea.is_empty());
+        harness.assert_history_contains("Did you mean '/status'");
+    }
+
+    #[test]
+    fn slash_typo_with_args_preserves_input_when_command_does_not_support_args() {
+        let mut harness = SlashDispatchHarness::new().set_input("/stauts status-line");
+        let result = harness.submit_enter();
+
+        assert_eq!(result, InputResult::None);
+        assert_eq!(harness.composer.textarea.text(), "/stauts status-line");
+        harness.assert_history_contains("Did you mean '/status'?");
+    }
+
+    #[test]
+    fn slash_typo_with_args_dispatches_suggested_supported_command() {
+        let mut harness = SlashDispatchHarness::new().set_input("/revie fix typo in code");
+        let result = harness.submit_enter();
+
+        match result {
+            InputResult::CommandWithArgs(cmd, args, _args_elements) => {
+                assert_eq!(cmd, SlashCommand::Review);
+                assert_eq!(args, "fix typo in code");
+            }
+            _ => panic!("expected CommandWithArgs for '/revie' typo correction"),
+        }
+        assert!(harness.composer.textarea.is_empty());
+        harness.assert_history_contains("Did you mean '/review'?");
+    }
+
+    #[test]
+    fn slash_unknown_command_shows_unrecognized_message() {
+        let mut harness = SlashDispatchHarness::new().set_input("/~");
+        let result = harness.submit_enter();
+
+        assert_eq!(result, InputResult::None);
+        assert_eq!(harness.composer.textarea.text(), "/~");
+        harness.assert_history_contains(
+            "Unrecognized command '/~'. Type \"/\" for a list of supported commands.",
+        );
     }
 
     #[test]

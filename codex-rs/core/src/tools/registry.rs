@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,13 +24,15 @@ use codex_hooks::HookResult;
 use codex_hooks::HookToolInput;
 use codex_hooks::HookToolInputLocalShell;
 use codex_hooks::HookToolKind;
+pub use codex_protocol::CommandCategory;
+pub use codex_protocol::CommandMeta;
 use codex_protocol::models::ResponseInputItem;
 use codex_tools::ConfiguredToolSpec;
 use codex_utils_readiness::Readiness;
 use serde_json::Value;
 use tracing::warn;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 pub enum ToolKind {
     Function,
     Mcp,
@@ -184,11 +187,15 @@ pub(crate) fn tool_handler_key(tool_name: &str, namespace: Option<&str>) -> Stri
 
 pub struct ToolRegistry {
     handlers: HashMap<String, Arc<dyn AnyToolHandler>>,
+    metas: HashMap<String, CommandMeta>,
 }
 
 impl ToolRegistry {
-    fn new(handlers: HashMap<String, Arc<dyn AnyToolHandler>>) -> Self {
-        Self { handlers }
+    fn new(
+        handlers: HashMap<String, Arc<dyn AnyToolHandler>>,
+        metas: HashMap<String, CommandMeta>,
+    ) -> Self {
+        Self { handlers, metas }
     }
 
     fn handler(&self, name: &str, namespace: Option<&str>) -> Option<Arc<dyn AnyToolHandler>> {
@@ -202,13 +209,118 @@ impl ToolRegistry {
         self.handler(name, namespace).is_some()
     }
 
-    // TODO(jif) for dynamic tools.
-    // pub fn register(&mut self, name: impl Into<String>, handler: Arc<dyn ToolHandler>) {
-    //     let name = name.into();
-    //     if self.handlers.insert(name.clone(), handler).is_some() {
-    //         warn!("overwriting handler for tool {name}");
-    //     }
-    // }
+    pub fn get_metadata(&self, name: &str) -> Option<&CommandMeta> {
+        self.get_metadata_with_namespace(name, None)
+    }
+
+    pub fn get_metadata_with_namespace(
+        &self,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Option<&CommandMeta> {
+        self.metas.get(&tool_handler_key(name, namespace))
+    }
+
+    pub fn list_metadata(&self) -> Vec<CommandMeta> {
+        let mut metas: Vec<_> = self.metas.values().cloned().collect();
+        metas.sort_by(|a, b| a.name.cmp(&b.name));
+        metas
+    }
+
+    pub fn register<H>(&mut self, name: impl Into<String>, handler: Arc<H>, meta: CommandMeta)
+    where
+        H: ToolHandler + 'static,
+    {
+        self.register_with_namespace(name, handler, meta, None);
+    }
+
+    pub fn register_with_namespace<H>(
+        &mut self,
+        name: impl Into<String>,
+        handler: Arc<H>,
+        meta: CommandMeta,
+        namespace: Option<&str>,
+    ) where
+        H: ToolHandler + 'static,
+    {
+        let name = name.into();
+        let key = tool_handler_key(&name, namespace);
+        let handler: Arc<dyn AnyToolHandler> = handler;
+        if self.handlers.insert(key.clone(), handler).is_some() {
+            warn!("overwriting handler for tool {name}");
+        }
+        self.metas.insert(key, meta);
+    }
+
+    pub fn register_many<I, H>(&mut self, names: I, handler: Arc<H>, meta: CommandMeta)
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+        H: ToolHandler + 'static,
+    {
+        self.register_many_with_namespace(names, handler, meta, None);
+    }
+
+    pub fn register_many_with_namespace<I, H>(
+        &mut self,
+        names: I,
+        handler: Arc<H>,
+        meta: CommandMeta,
+        namespace: Option<&str>,
+    ) where
+        I: IntoIterator,
+        I::Item: Into<String>,
+        H: ToolHandler + 'static,
+    {
+        let handler: Arc<dyn AnyToolHandler> = handler;
+        for name in names {
+            let name = name.into();
+            let key = tool_handler_key(&name, namespace);
+            if self
+                .handlers
+                .insert(key.clone(), Arc::clone(&handler))
+                .is_some()
+            {
+                warn!("overwriting handler for tool {name}");
+            }
+            self.metas.insert(key, meta.clone());
+        }
+    }
+
+    pub fn deregister(&mut self, name: impl Into<String>, namespace: Option<&str>) -> bool {
+        let key = tool_handler_key(&name.into(), namespace);
+        let removed_handler = self.handlers.remove(&key).is_some();
+        let removed_meta = self.metas.remove(&key).is_some();
+
+        removed_handler || removed_meta
+    }
+
+    /// Synchronize the registered tools and skills with the Brain MCP subsystem.
+    /// This allows the autonomous self-improving agent loop to recall memories
+    /// and dynamically load specialized toolsets or generated skills.
+    pub async fn sync_with_brain(&self) -> Result<(), String> {
+        tracing::info!("Synchronizing tool registry with Brain MCP bridge...");
+        match tokio::process::Command::new("brain")
+            .arg("sync")
+            .output()
+            .await
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    tracing::info!("Successfully synchronized tools with Brain.");
+                    Ok(())
+                } else {
+                    let err = String::from_utf8_lossy(&output.stderr).to_string();
+                    tracing::warn!("Failed to synchronize with Brain: {}", err);
+                    Err(err)
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to execute brain CLI: {}", e);
+                Err(e.to_string())
+            }
+        }
+    }
 
     pub(crate) async fn dispatch_any(
         &self,
@@ -439,6 +551,7 @@ impl ToolRegistry {
 
 pub struct ToolRegistryBuilder {
     handlers: HashMap<String, Arc<dyn AnyToolHandler>>,
+    metas: HashMap<String, CommandMeta>,
     specs: Vec<ConfiguredToolSpec>,
 }
 
@@ -446,6 +559,7 @@ impl ToolRegistryBuilder {
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
+            metas: HashMap::new(),
             specs: Vec::new(),
         }
     }
@@ -463,41 +577,72 @@ impl ToolRegistryBuilder {
             .push(ConfiguredToolSpec::new(spec, supports_parallel_tool_calls));
     }
 
-    pub fn register_handler<H>(&mut self, name: impl Into<String>, handler: Arc<H>)
-    where
+    pub fn register_handler<H>(
+        &mut self,
+        name: impl Into<String>,
+        handler: Arc<H>,
+        meta: CommandMeta,
+    ) where
+        H: ToolHandler + 'static,
+    {
+        self.register_handler_with_namespace(name, handler, meta, None);
+    }
+
+    pub fn register_handler_with_namespace<H>(
+        &mut self,
+        name: impl Into<String>,
+        handler: Arc<H>,
+        meta: CommandMeta,
+        namespace: Option<&str>,
+    ) where
         H: ToolHandler + 'static,
     {
         let name = name.into();
+        let key = tool_handler_key(&name, namespace);
         let handler: Arc<dyn AnyToolHandler> = handler;
-        if self
-            .handlers
-            .insert(name.clone(), handler.clone())
-            .is_some()
-        {
+        if self.handlers.insert(key.clone(), handler.clone()).is_some() {
             warn!("overwriting handler for tool {name}");
+        }
+        self.metas.insert(key, meta);
+    }
+
+    pub fn register_many<I, H>(&mut self, names: I, handler: Arc<H>, meta: CommandMeta)
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+        H: ToolHandler + 'static,
+    {
+        self.register_many_with_namespace(names, handler, meta, None);
+    }
+
+    pub fn register_many_with_namespace<I, H>(
+        &mut self,
+        names: I,
+        handler: Arc<H>,
+        meta: CommandMeta,
+        namespace: Option<&str>,
+    ) where
+        I: IntoIterator,
+        I::Item: Into<String>,
+        H: ToolHandler + 'static,
+    {
+        let handler: Arc<dyn AnyToolHandler> = handler;
+        for name in names {
+            let name = name.into();
+            let key = tool_handler_key(&name, namespace);
+            if self
+                .handlers
+                .insert(key.clone(), Arc::clone(&handler))
+                .is_some()
+            {
+                warn!("overwriting handler for tool {name}");
+            }
+            self.metas.insert(key, meta.clone());
         }
     }
 
-    // TODO(jif) for dynamic tools.
-    // pub fn register_many<I>(&mut self, names: I, handler: Arc<dyn ToolHandler>)
-    // where
-    //     I: IntoIterator,
-    //     I::Item: Into<String>,
-    // {
-    //     for name in names {
-    //         let name = name.into();
-    //         if self
-    //             .handlers
-    //             .insert(name.clone(), handler.clone())
-    //             .is_some()
-    //         {
-    //             warn!("overwriting handler for tool {name}");
-    //         }
-    //     }
-    // }
-
     pub fn build(self) -> (Vec<ConfiguredToolSpec>, ToolRegistry) {
-        let registry = ToolRegistry::new(self.handlers);
+        let registry = ToolRegistry::new(self.handlers, self.metas);
         (self.specs, registry)
     }
 }
