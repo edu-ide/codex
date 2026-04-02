@@ -65,6 +65,77 @@ pub(super) struct CachedProjectRootName {
 }
 
 impl ChatWidget {
+    fn advisor_preset_label(advisor_preset: &str) -> &'static str {
+        match advisor_preset {
+            "risk_first" => "risk",
+            "plan_first" => "plan",
+            _ => "review",
+        }
+    }
+
+    fn team_merge_policy_label(team_merge_policy: &str) -> &str {
+        match team_merge_policy {
+            "leader_only" => "leader",
+            "append_all" => "append",
+            other => other,
+        }
+    }
+
+    fn pause_policy_label(pause_on_error: bool) -> &'static str {
+        if pause_on_error { "pause" } else { "cont" }
+    }
+
+    fn execution_loop_status_text(&self) -> Option<String> {
+        let runtime = native_runtime_context()?;
+        let settings = runtime.settings_store.get();
+        let agent = &settings.agent;
+
+        let mut parts = Vec::new();
+        parts.push(format!(
+            "p:{}",
+            agent.active_profile.as_deref().unwrap_or("default")
+        ));
+
+        if agent.advisor_mode {
+            parts.push(format!(
+                "adv:{}",
+                Self::advisor_preset_label(&agent.advisor_preset)
+            ));
+        }
+
+        if agent.autonomous_mode {
+            parts.push(format!(
+                "auto:{}t/{}m/{}",
+                agent.auto_max_turns.max(1),
+                agent.auto_timebox_minutes.max(1),
+                Self::pause_policy_label(agent.auto_pause_on_error)
+            ));
+        }
+
+        if agent.team_mode {
+            parts.push(format!(
+                "team:{}/{}/{}",
+                Self::team_merge_policy_label(&agent.team_merge_policy),
+                agent.team_max_retries.max(1),
+                Self::pause_policy_label(agent.team_pause_on_error)
+            ));
+        }
+
+        if agent.kairos_enabled {
+            parts.push("kairos".to_string());
+        }
+
+        if agent.self_improvement_enabled {
+            parts.push("improve".to_string());
+        }
+
+        if parts.len() == 1 {
+            parts.push("idle".to_string());
+        }
+
+        Some(parts.join(" "))
+    }
+
     fn status_surface_selections(&self) -> StatusSurfaceSelections {
         let (status_line_items, invalid_status_line_items) = self.status_line_items_with_invalids();
         let (terminal_title_items, invalid_terminal_title_items) =
@@ -433,6 +504,7 @@ impl ChatWidget {
                 };
                 Some(format!("{} {label}{fast_label}", self.model_display_name()))
             }
+            StatusLineItem::ExecutionLoop => self.execution_loop_status_text(),
             StatusLineItem::CurrentDir => {
                 Some(format_directory_display(
                     self.status_line_cwd(),

@@ -7,6 +7,7 @@ use chrono::DateTime;
 use chrono::Local;
 use codex_core::WireApi;
 use codex_core::config::Config;
+use codex_ilhae::native_runtime_context;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -67,6 +68,16 @@ struct StatusRateLimitState {
 }
 
 #[derive(Debug, Clone)]
+struct StatusExecutionLoopData {
+    profile: String,
+    advisor_mode: String,
+    auto_mode: String,
+    team_mode: String,
+    kairos: String,
+    self_improvement: String,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct StatusHistoryHandle {
     rate_limit_state: Arc<RwLock<StatusRateLimitState>>,
 }
@@ -100,6 +111,7 @@ struct StatusHistoryCell {
     permissions: String,
     agents_summary: String,
     collaboration_mode: Option<String>,
+    execution_loop: Option<StatusExecutionLoopData>,
     model_provider: Option<String>,
     account: Option<StatusAccountDisplay>,
     thread_name: Option<String>,
@@ -224,6 +236,99 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
 }
 
 impl StatusHistoryCell {
+    fn advisor_preset_label(advisor_preset: &str) -> &'static str {
+        match advisor_preset {
+            "risk_first" => "risk-first",
+            "plan_first" => "plan-first",
+            _ => "review-first",
+        }
+    }
+
+    fn pause_policy_label(pause_on_error: bool) -> &'static str {
+        if pause_on_error {
+            "pause on error"
+        } else {
+            "continue on error"
+        }
+    }
+
+    fn team_merge_policy_label(team_merge_policy: &str) -> &str {
+        match team_merge_policy {
+            "leader_only" => "leader-only",
+            "append_all" => "append-all",
+            other => other,
+        }
+    }
+
+    fn execution_loop_data() -> Option<StatusExecutionLoopData> {
+        let runtime = native_runtime_context()?;
+        let settings = runtime.settings_store.get();
+        let agent = &settings.agent;
+
+        let advisor_mode = if agent.advisor_mode {
+            format!(
+                "enabled ({})",
+                Self::advisor_preset_label(&agent.advisor_preset)
+            )
+        } else {
+            "disabled".to_string()
+        };
+
+        let auto_mode = if agent.autonomous_mode {
+            format!(
+                "{} turns, {}m, {}",
+                agent.auto_max_turns.max(1),
+                agent.auto_timebox_minutes.max(1),
+                Self::pause_policy_label(agent.auto_pause_on_error)
+            )
+        } else {
+            "disabled".to_string()
+        };
+
+        let team_mode = if agent.team_mode {
+            format!(
+                "{}, retries {}, {}",
+                Self::team_merge_policy_label(&agent.team_merge_policy),
+                agent.team_max_retries.max(1),
+                Self::pause_policy_label(agent.team_pause_on_error)
+            )
+        } else {
+            "disabled".to_string()
+        };
+
+        let kairos = if agent.kairos_enabled {
+            match agent.task_scope.as_deref().filter(|scope| !scope.trim().is_empty()) {
+                Some(scope) => format!("enabled ({scope})"),
+                None => "enabled".to_string(),
+            }
+        } else {
+            "disabled".to_string()
+        };
+
+        let self_improvement =
+            if agent.self_improvement_enabled {
+                match agent
+                    .memory_scope
+                    .as_deref()
+                    .filter(|scope| !scope.trim().is_empty())
+                {
+                    Some(scope) => format!("enabled ({scope})"),
+                    None => "enabled".to_string(),
+                }
+            } else {
+                "disabled".to_string()
+            };
+
+        Some(StatusExecutionLoopData {
+            profile: agent.active_profile.clone().unwrap_or_else(|| "default".to_string()),
+            advisor_mode,
+            auto_mode,
+            team_mode,
+            kairos,
+            self_improvement,
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new(
         config: &Config,
@@ -303,6 +408,7 @@ impl StatusHistoryCell {
             format!("Custom ({sandbox}, {approval})")
         };
         let agents_summary = compose_agents_summary(config);
+        let execution_loop = Self::execution_loop_data();
         let model_provider = format_model_provider(config);
         let account = compose_account_display(account_display);
         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
@@ -342,6 +448,7 @@ impl StatusHistoryCell {
                 permissions,
                 agents_summary,
                 collaboration_mode: collaboration_mode.map(ToString::to_string),
+                execution_loop,
                 model_provider,
                 account,
                 thread_name,
@@ -583,6 +690,14 @@ impl HistoryCell for StatusHistoryCell {
         if self.collaboration_mode.is_some() {
             push_label(&mut labels, &mut seen, "Collaboration mode");
         }
+        if self.execution_loop.is_some() {
+            push_label(&mut labels, &mut seen, "Runtime profile");
+            push_label(&mut labels, &mut seen, "Advisor");
+            push_label(&mut labels, &mut seen, "Auto mode");
+            push_label(&mut labels, &mut seen, "Team mode");
+            push_label(&mut labels, &mut seen, "Kairos");
+            push_label(&mut labels, &mut seen, "Self-improvement");
+        }
         push_label(&mut labels, &mut seen, "Token usage");
         if self.token_usage.context_window.is_some() {
             push_label(&mut labels, &mut seen, "Context window");
@@ -636,6 +751,32 @@ impl HistoryCell for StatusHistoryCell {
         }
         if let Some(collab_mode) = self.collaboration_mode.as_ref() {
             lines.push(formatter.line("Collaboration mode", vec![Span::from(collab_mode.clone())]));
+        }
+        if let Some(execution_loop) = self.execution_loop.as_ref() {
+            lines.push(formatter.line(
+                "Runtime profile",
+                vec![Span::from(execution_loop.profile.clone())],
+            ));
+            lines.push(formatter.line(
+                "Advisor",
+                vec![Span::from(execution_loop.advisor_mode.clone())],
+            ));
+            lines.push(formatter.line(
+                "Auto mode",
+                vec![Span::from(execution_loop.auto_mode.clone())],
+            ));
+            lines.push(formatter.line(
+                "Team mode",
+                vec![Span::from(execution_loop.team_mode.clone())],
+            ));
+            lines.push(formatter.line(
+                "Kairos",
+                vec![Span::from(execution_loop.kairos.clone())],
+            ));
+            lines.push(formatter.line(
+                "Self-improvement",
+                vec![Span::from(execution_loop.self_improvement.clone())],
+            ));
         }
         if let Some(session) = self.session_id.as_ref() {
             lines.push(formatter.line("Session", vec![Span::from(session.clone())]));

@@ -46,6 +46,7 @@ use crate::key_hint::KeyBinding;
 use crate::render::line_utils::prefix_lines;
 use crate::status::format_tokens_compact;
 use crate::ui_consts::FOOTER_INDENT_COLS;
+use codex_ilhae::native_runtime_context;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -655,6 +656,13 @@ pub(crate) fn passive_footer_status_line(props: &FooterProps) -> Option<Line<'st
         }
     }
 
+    if let Some(runtime_modes) = runtime_mode_footer_line() {
+        if let Some(existing) = line.as_mut() {
+            existing.spans.push(" · ".into());
+            existing.spans.extend(runtime_modes.spans);
+        }
+    }
+
     line
 }
 
@@ -679,6 +687,70 @@ pub(crate) fn shows_passive_footer_line(props: &FooterProps) -> bool {
 /// feature is enabled and the current mode allows contextual footer content.
 pub(crate) fn uses_passive_footer_status_layout(props: &FooterProps) -> bool {
     props.status_line_enabled && shows_passive_footer_line(props)
+}
+
+fn runtime_mode_footer_line() -> Option<Line<'static>> {
+    let runtime = native_runtime_context()?;
+    let settings = runtime.settings_store.get();
+    let agent = &settings.agent;
+
+    let mut parts = Vec::new();
+    parts.push(format!(
+        "pf:{}",
+        agent.active_profile.as_deref().unwrap_or("default")
+    ));
+
+    if agent.advisor_mode {
+        parts.push(format!("adv:{}", advisor_preset_short_label(&agent.advisor_preset)));
+    }
+
+    if agent.autonomous_mode {
+        parts.push(format!(
+            "au:{}t/{}m/{}",
+            agent.auto_max_turns.max(1),
+            agent.auto_timebox_minutes.max(1),
+            pause_policy_short_label(agent.auto_pause_on_error)
+        ));
+    }
+
+    if agent.team_mode {
+        parts.push(format!(
+            "tm:{}/{}/{}",
+            team_merge_policy_short_label(&agent.team_merge_policy),
+            agent.team_max_retries.max(1),
+            pause_policy_short_label(agent.team_pause_on_error)
+        ));
+    }
+
+    if agent.kairos_enabled {
+        parts.push("kx".to_string());
+    }
+
+    if agent.self_improvement_enabled {
+        parts.push("im".to_string());
+    }
+
+    Some(Line::from(format!("ilhae {}", parts.join(" "))).dim())
+}
+
+fn advisor_preset_short_label(advisor_preset: &str) -> &'static str {
+    match advisor_preset {
+        "risk_first" => "risk",
+        "plan_first" => "plan",
+        _ => "review",
+    }
+}
+
+fn team_merge_policy_short_label(team_merge_policy: &str) -> &'static str {
+    match team_merge_policy {
+        "leader_only" => "leader",
+        "append_all" => "append",
+        _ => "custom",
+    }
+}
+
+fn pause_policy_short_label(pause_on_error: bool) -> &'static str {
+    if pause_on_error { "pause" } else { "cont" }
 }
 
 pub(crate) fn footer_line_width(

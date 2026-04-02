@@ -54,6 +54,9 @@ pub(crate) enum StatusLineItem {
     /// Model name with reasoning level suffix.
     ModelWithReasoning,
 
+    /// Active ilhae execution-loop profile and runtime modes.
+    ExecutionLoop,
+
     /// Current working directory path.
     CurrentDir,
 
@@ -103,6 +106,9 @@ impl StatusLineItem {
         match self {
             StatusLineItem::ModelName => "Current model name",
             StatusLineItem::ModelWithReasoning => "Current model name with reasoning level",
+            StatusLineItem::ExecutionLoop => {
+                "Active ilhae profile plus advisor/auto/team/kairos/self-improvement state"
+            }
             StatusLineItem::CurrentDir => "Current working directory",
             StatusLineItem::ProjectRoot => "Project root directory (omitted when unavailable)",
             StatusLineItem::GitBranch => "Current Git branch (omitted when unavailable)",

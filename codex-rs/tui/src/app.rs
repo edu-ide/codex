@@ -3875,7 +3875,7 @@ impl App {
                 loop {
                     match settings_events.recv().await {
                         Ok(event) => {
-                            if event.key == "agent.command" {
+                            if event.key.starts_with("agent.") {
                                 tx.send(AppEvent::RefreshBackendCapabilities);
                             }
                         }
@@ -4590,6 +4590,7 @@ impl App {
             }
             AppEvent::RefreshBackendCapabilities => {
                 self.sync_backend_capabilities();
+                self.refresh_status_line();
             }
             AppEvent::UpdateCollaborationMode(mask) => {
                 self.chat_widget.set_collaboration_mask(mask);
