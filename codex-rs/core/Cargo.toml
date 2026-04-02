@@ -80,6 +80,7 @@ iana-time-zone = { workspace = true }
 image = { workspace = true, features = ["jpeg", "png", "webp"] }
 indexmap = { workspace = true }
 libc = { workspace = true }
+lsp-types = { workspace = true }
 notify = { workspace = true }
 once_cell = { workspace = true }
 rand = { workspace = true }

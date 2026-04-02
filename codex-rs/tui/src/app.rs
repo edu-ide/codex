@@ -1923,7 +1923,12 @@ impl App {
     }
 
     fn refresh_rate_limits(&mut self, app_server: &AppServerSession, request_id: u64) {
-        let request_handle = app_server.request_handle();
+        let Some(request_handle) = app_server.request_handle() else {
+            self.chat_widget.add_error_message(
+                "Rate limits are unavailable for the current backend.".to_string(),
+            );
+            return;
+        };
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let result = fetch_account_rate_limits(request_handle)
@@ -2034,7 +2039,12 @@ impl App {
         reason: Option<String>,
         include_logs: bool,
     ) {
-        let request_handle = app_server.request_handle();
+        let Some(request_handle) = app_server.request_handle() else {
+            self.chat_widget.add_error_message(
+                "Feedback submission is unavailable for the current backend.".to_string(),
+            );
+            return;
+        };
         let app_event_tx = self.app_event_tx.clone();
         let origin_thread_id = self.chat_widget.thread_id();
         let rollout_path = if include_logs {

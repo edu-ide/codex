@@ -52,7 +52,7 @@ pub use plan::PlanHandler;
 pub use read_file::ReadFileHandler;
 pub use request_permissions::RequestPermissionsHandler;
 pub use request_user_input::RequestUserInputHandler;
-pub(crate) use request_user_input::request_user_input_tool_description;
+pub(crate) use codex_tools::request_user_input_tool_description;
 pub use self_check::SelfCheckHandler;
 pub use shell::ShellCommandHandler;
 pub use shell::ShellHandler;

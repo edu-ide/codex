@@ -375,8 +375,8 @@ use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
-use codex_tools::ToolsConfig;
-use codex_tools::ToolsConfigParams;
+use crate::tools::spec::ToolsConfig;
+use crate::tools::spec::ToolsConfigParams;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_readiness::Readiness;
 use codex_utils_readiness::ReadinessFlag;
@@ -5203,7 +5203,7 @@ mod handlers {
 
         let event = Event {
             id: sub_id,
-            msg: EventMsg::ListCommandsResponse(crate::protocol::ListCommandsResponseEvent {
+            msg: EventMsg::ListCommandsResponse(codex_protocol::protocol::ListCommandsResponseEvent {
                 commands,
             }),
         };

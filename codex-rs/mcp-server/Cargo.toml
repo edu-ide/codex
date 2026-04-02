@@ -17,6 +17,8 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+axum = { workspace = true }
+bytes = { workspace = true }
 codex-arg0 = { workspace = true }
 codex-config = { workspace = true }
 codex-core = { workspace = true }
@@ -39,6 +41,7 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
     "signal",
 ] }
+tokio-stream = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
