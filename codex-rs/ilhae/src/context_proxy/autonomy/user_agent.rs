@@ -3,6 +3,15 @@ use tracing::{info, warn};
 
 use super::resolve_user_agent_endpoint;
 
+#[derive(Debug, Clone)]
+pub struct UserAgentLoopContext<'a> {
+    pub goal: &'a str,
+    pub last_directive: Option<&'a str>,
+    pub stalled_turns: u32,
+    pub remaining_turns: u32,
+    pub remaining_time_secs: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserAgentDirective {
     Continue(String),
@@ -14,9 +23,29 @@ pub async fn request_next_directive(
     session_id: &str,
     progress: &str,
 ) -> Result<UserAgentDirective, String> {
+    let default_goal = progress.trim();
+    request_next_directive_with_context(
+        session_id,
+        progress,
+        &UserAgentLoopContext {
+            goal: default_goal,
+            last_directive: None,
+            stalled_turns: 0,
+            remaining_turns: 1,
+            remaining_time_secs: 0,
+        },
+    )
+    .await
+}
+
+pub async fn request_next_directive_with_context(
+    session_id: &str,
+    progress: &str,
+    loop_context: &UserAgentLoopContext<'_>,
+) -> Result<UserAgentDirective, String> {
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        request_next_directive_inner(session_id, progress),
+        request_next_directive_inner(session_id, progress, loop_context),
     )
     .await
     .map_err(|_| "User Agent timed out after 5s".to_string())?
@@ -25,20 +54,47 @@ pub async fn request_next_directive(
 async fn request_next_directive_inner(
     session_id: &str,
     progress: &str,
+    loop_context: &UserAgentLoopContext<'_>,
 ) -> Result<UserAgentDirective, String> {
+    let last_directive = loop_context
+        .last_directive
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("(none)");
+    let stall_hint = if loop_context.stalled_turns > 0 {
+        format!(
+            "The loop has stalled for {} consecutive turns with no material progress. Change tactic, narrow scope, or conclude the goal is blocked/completed.\n",
+            loop_context.stalled_turns
+        )
+    } else {
+        String::new()
+    };
     let ua_prompt = format!(
         "Leader agent has finished its turn.\n\n\
+         [Goal]\n{}\n\n\
          [Leader's Latest Output]\n{}\n\n\
+         [Last Directive]\n{}\n\n\
+         [Loop Status]\n\
+         Remaining turns: {}\n\
+         Remaining time (seconds): {}\n\
+         {}\n\
          [System Directive]\n\
-         You are the Autonomous Tech Lead & Visionary Product Manager. Do NOT accept completion easily.\n\
+         You are the Autonomous Tech Lead & Visionary Product Manager closing an execution loop.\n\
+         Decide the next best directive based on the current goal, last observation, and loop status.\n\
          1. TECHNICAL: Scrutinize the output for unhandled edge cases, potential runtime errors, or missing tests.\n\
          2. CONCEPTUAL: If the basic task is done, suggest the 'Next Logical Feature' or UX improvement to expand the project's value.\n\
+         3. LOOP CLOSURE: If the goal is blocked, explicitly request a different tactic. If the goal is complete, say so. If the loop is stalled, do not repeat the same directive.\n\
          If the system is not absolutely bulletproof AND functionally rich, provide a directive to improve or expand it.\n\
-         Only if the project is 100% robust and you cannot think of ANY valuable new features, say '모든 작업이 완료되었습니다'.\n\
+         Only if the current goal is complete or genuinely blocked with no higher-value next step, say '모든 작업이 완료되었습니다'.\n\
          CRITICAL: Return PLAIN TEXT ONLY. Do NOT call tools. Do NOT delegate. Do NOT use MCP. Do NOT emit tool calls.\n\
          Your output must be exactly one short next directive sentence in Korean, or exactly '모든 작업이 완료되었습니다'.\n\
          What is your next directive?",
+        loop_context.goal,
         progress
+        ,
+        last_directive,
+        loop_context.remaining_turns,
+        loop_context.remaining_time_secs,
+        stall_hint,
     );
 
     let ua_request = json!({

@@ -4,11 +4,15 @@ use agent_client_protocol_schema::{
 };
 use sacp::{Agent, Client, Conductor, ConnectionTo, UntypedMessage};
 use serde_json::json;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use crate::SharedState;
-use crate::context_proxy::autonomy::state::{AutonomousPhase, set_autonomous_phase};
+use crate::context_proxy::autonomy::state::{
+    AutonomousPhase, AutonomousSessionState, set_autonomous_snapshot,
+};
 
 use crate::context_proxy::load_team_runtime_config;
 
@@ -66,6 +70,41 @@ fn upsert_tool_call(tool_calls: &mut Vec<serde_json::Value>, tool_call: serde_js
     tool_calls.push(tool_call);
 }
 
+fn compact_loop_text(text: &str, max_chars: usize) -> String {
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    compact.chars().take(max_chars).collect()
+}
+
+fn progress_signature(text: &str) -> u64 {
+    let normalized = compact_loop_text(text, 1200);
+    let mut hasher = DefaultHasher::new();
+    normalized.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn build_loop_snapshot(
+    phase: AutonomousPhase,
+    loop_iteration: u32,
+    note: Option<String>,
+    queued_directive: Option<String>,
+    goal: &str,
+    last_observation: &str,
+    stalled_turns: u32,
+    stop_reason: Option<String>,
+) -> AutonomousSessionState {
+    let mut snapshot =
+        AutonomousSessionState::new(phase, loop_iteration, note, queued_directive);
+    if !goal.trim().is_empty() {
+        snapshot.goal = Some(compact_loop_text(goal, 240));
+    }
+    if !last_observation.trim().is_empty() {
+        snapshot.last_observation = Some(compact_loop_text(last_observation, 400));
+    }
+    snapshot.stalled_turns = stalled_turns;
+    snapshot.stop_reason = stop_reason;
+    snapshot
+}
+
 pub fn spawn_autonomous_loop(
     state: std::sync::Arc<SharedState>,
     cx: ConnectionTo<Conductor>,
@@ -80,7 +119,11 @@ pub fn spawn_autonomous_loop(
         );
         let pause_on_error = settings_snapshot.agent.auto_pause_on_error;
         let started_at = Instant::now();
+        let goal_summary = compact_loop_text(&leader_text, 240);
         let mut context_so_far = leader_text;
+        let mut last_directive: Option<String> = None;
+        let mut stalled_turns = 0u32;
+        let mut last_progress_signature = Some(progress_signature(&context_so_far));
         let _leader_a2a_proxy = resolve_leader_a2a_proxy(&state);
 
         for turn in 1..=max_turns {
@@ -90,24 +133,36 @@ pub fn spawn_autonomous_loop(
                     started_at.elapsed(),
                     session_id
                 );
-                set_autonomous_phase(
+                set_autonomous_snapshot(
                     &state,
                     &session_id,
-                    AutonomousPhase::Completed,
-                    turn.saturating_sub(1),
-                    Some("autonomous timebox reached".to_string()),
-                    None,
+                    build_loop_snapshot(
+                        AutonomousPhase::Completed,
+                        turn.saturating_sub(1),
+                        Some("autonomous timebox reached".to_string()),
+                        None,
+                        &goal_summary,
+                        &context_so_far,
+                        stalled_turns,
+                        Some("timebox_reached".to_string()),
+                    ),
                 )
                 .await;
                 break;
             }
-            set_autonomous_phase(
+            set_autonomous_snapshot(
                 &state,
                 &session_id,
-                AutonomousPhase::Running,
-                turn,
-                Some("autonomous loop executing".to_string()),
-                None,
+                build_loop_snapshot(
+                    AutonomousPhase::Running,
+                    turn,
+                    Some("autonomous loop executing".to_string()),
+                    None,
+                    &goal_summary,
+                    &context_so_far,
+                    stalled_turns,
+                    None,
+                ),
             )
             .await;
             info!(
@@ -115,22 +170,38 @@ pub fn spawn_autonomous_loop(
                 turn, max_turns, session_id
             );
 
-            let ua_response = match super::user_agent::request_next_directive(
+            let remaining_turns = max_turns.saturating_sub(turn).saturating_add(1);
+            let remaining_time_secs = timebox
+                .saturating_sub(started_at.elapsed())
+                .as_secs();
+            let ua_response = match super::user_agent::request_next_directive_with_context(
                 &session_id,
                 &context_so_far,
+                &super::user_agent::UserAgentLoopContext {
+                    goal: &goal_summary,
+                    last_directive: last_directive.as_deref(),
+                    stalled_turns,
+                    remaining_turns,
+                    remaining_time_secs,
+                },
             )
-            .await
-            {
+            .await {
                 Ok(super::user_agent::UserAgentDirective::Continue(text)) => text,
                 Ok(super::user_agent::UserAgentDirective::Complete) => {
                     info!("[AutoMode] User Agent signaled completion. Ending auto-loop.");
-                    set_autonomous_phase(
+                    set_autonomous_snapshot(
                         &state,
                         &session_id,
-                        AutonomousPhase::Completed,
-                        turn,
-                        Some("user-agent signaled completion".to_string()),
-                        None,
+                        build_loop_snapshot(
+                            AutonomousPhase::Completed,
+                            turn,
+                            Some("user-agent signaled completion".to_string()),
+                            None,
+                            &goal_summary,
+                            &context_so_far,
+                            stalled_turns,
+                            Some("planner_complete".to_string()),
+                        ),
                     )
                     .await;
                     break;
@@ -153,23 +224,36 @@ pub fn spawn_autonomous_loop(
                 &ua_response[..ua_response.len().min(100)]
             );
 
-            set_autonomous_phase(
+            last_directive = Some(ua_response.clone());
+            set_autonomous_snapshot(
                 &state,
                 &session_id,
-                AutonomousPhase::QueuedTurn,
-                turn,
-                Some("next directive queued".to_string()),
-                Some(ua_response.clone()),
+                build_loop_snapshot(
+                    AutonomousPhase::QueuedTurn,
+                    turn,
+                    Some("next directive queued".to_string()),
+                    Some(ua_response.clone()),
+                    &goal_summary,
+                    &context_so_far,
+                    stalled_turns,
+                    None,
+                ),
             )
             .await;
 
-            set_autonomous_phase(
+            set_autonomous_snapshot(
                 &state,
                 &session_id,
-                AutonomousPhase::Running,
-                turn,
-                Some("queued turn dispatched".to_string()),
-                None,
+                build_loop_snapshot(
+                    AutonomousPhase::Running,
+                    turn,
+                    Some("queued turn dispatched".to_string()),
+                    None,
+                    &goal_summary,
+                    &context_so_far,
+                    stalled_turns,
+                    None,
+                ),
             )
             .await;
 
@@ -205,18 +289,24 @@ pub fn spawn_autonomous_loop(
                     );
                     if resp.stop_reason != StopReason::EndTurn {
                         info!("[AutoMode] Leader stop_reason != EndTurn. Ending auto-loop.");
-                        set_autonomous_phase(
+                        set_autonomous_snapshot(
                             &state,
                             &session_id,
-                            AutonomousPhase::Completed,
-                            turn,
-                            Some(format!("leader stop_reason={:?}", resp.stop_reason)),
-                            None,
+                            build_loop_snapshot(
+                                AutonomousPhase::Completed,
+                                turn,
+                                Some(format!("leader stop_reason={:?}", resp.stop_reason)),
+                                None,
+                                &goal_summary,
+                                &context_so_far,
+                                stalled_turns,
+                                Some(format!("leader_{:?}", resp.stop_reason)),
+                            ),
                         )
                         .await;
                         break;
                     }
-                    context_so_far = state
+                    let latest_observation = state
                         .infra
                         .brain
                         .sessions()
@@ -225,28 +315,89 @@ pub fn spawn_autonomous_loop(
                         .flatten()
                         .filter(|text| !text.trim().is_empty())
                         .unwrap_or_else(|| ua_response.clone());
-                }
-                Err(error) => {
-                    warn!("[AutoMode] Autonomous turn failed: {}", error);
-                    if pause_on_error {
-                        set_autonomous_phase(
+                    let observation_signature = progress_signature(&latest_observation);
+                    if last_progress_signature == Some(observation_signature) {
+                        stalled_turns = stalled_turns.saturating_add(1);
+                    } else {
+                        stalled_turns = 0;
+                    }
+                    last_progress_signature = Some(observation_signature);
+                    context_so_far = latest_observation;
+
+                    if stalled_turns >= 2 {
+                        warn!(
+                            "[AutoMode] No material progress detected across consecutive turns. Stopping autonomous loop (session={})",
+                            session_id
+                        );
+                        set_autonomous_snapshot(
                             &state,
                             &session_id,
-                            AutonomousPhase::Failed,
-                            turn,
-                            Some(format!("{}", error)),
-                            None,
+                            build_loop_snapshot(
+                                AutonomousPhase::Completed,
+                                turn,
+                                Some(
+                                    "no material progress across consecutive turns".to_string(),
+                                ),
+                                None,
+                                &goal_summary,
+                                &context_so_far,
+                                stalled_turns,
+                                Some("stalled_no_progress".to_string()),
+                            ),
                         )
                         .await;
                         break;
                     }
-                    set_autonomous_phase(
+
+                    set_autonomous_snapshot(
                         &state,
                         &session_id,
-                        AutonomousPhase::Running,
-                        turn,
-                        Some(format!("turn failed but continuing: {}", error)),
-                        None,
+                        build_loop_snapshot(
+                            AutonomousPhase::Running,
+                            turn,
+                            Some("observation recorded; replanning".to_string()),
+                            None,
+                            &goal_summary,
+                            &context_so_far,
+                            stalled_turns,
+                            None,
+                        ),
+                    )
+                    .await;
+                }
+                Err(error) => {
+                    warn!("[AutoMode] Autonomous turn failed: {}", error);
+                    if pause_on_error {
+                        set_autonomous_snapshot(
+                            &state,
+                            &session_id,
+                            build_loop_snapshot(
+                                AutonomousPhase::Failed,
+                                turn,
+                                Some(format!("{}", error)),
+                                None,
+                                &goal_summary,
+                                &context_so_far,
+                                stalled_turns,
+                                Some("leader_turn_failed".to_string()),
+                            ),
+                        )
+                        .await;
+                        break;
+                    }
+                    set_autonomous_snapshot(
+                        &state,
+                        &session_id,
+                        build_loop_snapshot(
+                            AutonomousPhase::Running,
+                            turn,
+                            Some(format!("turn failed but continuing: {}", error)),
+                            None,
+                            &goal_summary,
+                            &context_so_far,
+                            stalled_turns,
+                            None,
+                        ),
                     )
                     .await;
                     continue;

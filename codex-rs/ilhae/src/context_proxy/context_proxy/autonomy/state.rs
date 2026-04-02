@@ -24,6 +24,14 @@ pub struct AutonomousSessionState {
     pub updated_at_ms: u64,
     pub note: Option<String>,
     pub queued_directive: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_observation: Option<String>,
+    #[serde(default)]
+    pub stalled_turns: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
 }
 
 impl AutonomousSessionState {
@@ -39,23 +47,21 @@ impl AutonomousSessionState {
             updated_at_ms: now_millis(),
             note,
             queued_directive,
+            goal: None,
+            last_observation: None,
+            stalled_turns: 0,
+            stop_reason: None,
         }
     }
 }
 
-pub async fn set_autonomous_phase(
+pub async fn set_autonomous_snapshot(
     state: &Arc<SharedState>,
     session_id: &str,
-    phase: AutonomousPhase,
-    loop_iteration: u32,
-    note: Option<String>,
-    queued_directive: Option<String>,
+    snapshot: AutonomousSessionState,
 ) {
     let sessions = &state.sessions.autonomous_sessions;
-    sessions.insert(
-        session_id.to_string(),
-        AutonomousSessionState::new(phase, loop_iteration, note, queued_directive),
-    );
+    sessions.insert(session_id.to_string(), snapshot);
     let snapshot = sessions.get(session_id);
     if let Some(snapshot) = snapshot {
         state
@@ -71,10 +77,30 @@ pub async fn set_autonomous_phase(
                     "updatedAtMs": snapshot.updated_at_ms,
                     "note": snapshot.note,
                     "queuedDirective": snapshot.queued_directive,
+                    "goal": snapshot.goal,
+                    "lastObservation": snapshot.last_observation,
+                    "stalledTurns": snapshot.stalled_turns,
+                    "stopReason": snapshot.stop_reason,
                 }),
             )
             .await;
     }
+}
+
+pub async fn set_autonomous_phase(
+    state: &Arc<SharedState>,
+    session_id: &str,
+    phase: AutonomousPhase,
+    loop_iteration: u32,
+    note: Option<String>,
+    queued_directive: Option<String>,
+) {
+    set_autonomous_snapshot(
+        state,
+        session_id,
+        AutonomousSessionState::new(phase, loop_iteration, note, queued_directive),
+    )
+    .await;
 }
 
 pub async fn current_autonomous_iteration(state: &Arc<SharedState>, session_id: &str) -> u32 {
@@ -112,6 +138,10 @@ pub async fn clear_autonomous_state(state: &Arc<SharedState>, session_id: &str) 
                 "updatedAtMs": now_millis(),
                 "note": null,
                 "queuedDirective": null,
+                "goal": null,
+                "lastObservation": null,
+                "stalledTurns": 0,
+                "stopReason": null,
             }),
         )
         .await;

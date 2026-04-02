@@ -7,7 +7,7 @@ use codex_protocol::user_input::UserInput;
 use sacp::DynConnectTo;
 
 use moka::sync::Cache;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock, atomic::AtomicU64};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -93,6 +93,41 @@ fn normalize_task_scope(task_scope: Option<&str>) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn compact_runtime_text(text: &str, max_chars: usize) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max_chars)
+        .collect()
+}
+
+fn normalize_loop_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+fn basename_for_runtime(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path)
+        .to_string()
+}
+
+fn extract_recommended_summarize_paths(analysis: &serde_json::Value) -> HashSet<String> {
+    analysis
+        .pointer("/recommended_actions/summarize_paths")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(normalize_loop_path)
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default()
 }
 
 pub async fn prepare_session_turn_inputs(
@@ -759,18 +794,27 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
             let mut last_reported_groups: usize = 0;
+            let mut last_review_signature: Option<String> = None;
+            let mut applied_group_signatures: HashSet<String> = HashSet::new();
             loop {
                 interval.tick().await;
 
                 let settings_snapshot = settings_for_self_improvement.get();
                 if !settings_snapshot.agent.self_improvement_enabled {
                     last_reported_groups = 0;
+                    last_review_signature = None;
+                    applied_group_signatures.clear();
                     continue;
                 }
 
                 let Ok(preview) = brain_for_self_improvement.memory_dream_preview(5) else {
                     continue;
                 };
+                let groups = preview
+                    .get("groups")
+                    .and_then(|value| value.as_array())
+                    .cloned()
+                    .unwrap_or_default();
                 let group_count = preview
                     .get("group_count")
                     .and_then(|value| value.as_u64())
@@ -778,35 +822,156 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
 
                 if group_count == 0 {
                     last_reported_groups = 0;
+                    last_review_signature = None;
+                    applied_group_signatures.clear();
                     continue;
                 }
-                if group_count == last_reported_groups {
+
+                let mut candidate_dirs = Vec::new();
+                for group in &groups {
+                    let Some(path) = group.get("path").and_then(|value| value.as_str()) else {
+                        continue;
+                    };
+                    let Some(parent) = std::path::Path::new(path).parent() else {
+                        continue;
+                    };
+                    let normalized_parent = normalize_loop_path(parent.to_string_lossy().as_ref());
+                    if !candidate_dirs.iter().any(|existing| existing == &normalized_parent) {
+                        candidate_dirs.push(normalized_parent);
+                    }
+                    if candidate_dirs.len() >= 3 {
+                        break;
+                    }
+                }
+
+                let mut summarize_paths: HashSet<String> = HashSet::new();
+                for dir in &candidate_dirs {
+                    let Ok(analysis) = brain_for_self_improvement
+                        .memory_dream_analyze(std::path::Path::new(dir), 6)
+                    else {
+                        continue;
+                    };
+                    summarize_paths.extend(extract_recommended_summarize_paths(&analysis));
+                }
+
+                let mut auto_summarized = Vec::new();
+                for group in &groups {
+                    let Some(path) = group.get("path").and_then(|value| value.as_str()) else {
+                        continue;
+                    };
+                    let normalized_path = normalize_loop_path(path);
+                    if !summarize_paths.contains(&normalized_path) {
+                        continue;
+                    }
+
+                    let ids = group
+                        .get("chunk_ids")
+                        .and_then(|value| value.as_array())
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|item| item.as_i64())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let chunk_count = group
+                        .get("chunk_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or(ids.len() as u64) as usize;
+
+                    if ids.is_empty() || chunk_count < 2 {
+                        continue;
+                    }
+
+                    let signature = format!(
+                        "{}#{}",
+                        normalized_path,
+                        ids.iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    );
+                    if applied_group_signatures.contains(&signature) {
+                        continue;
+                    }
+
+                    match brain_for_self_improvement.memory_dream_summarize(&ids) {
+                        Ok(_) => {
+                            applied_group_signatures.insert(signature);
+                            auto_summarized.push((normalized_path, chunk_count));
+                        }
+                        Err(error) => {
+                            warn!(
+                                "[Self-Improvement] Failed to auto-summarize dream group {}: {}",
+                                path, error
+                            );
+                        }
+                    }
+                }
+
+                if !auto_summarized.is_empty() {
+                    let follow_up = brain_for_self_improvement.memory_dream_preview(5).ok();
+                    let remaining_groups = follow_up
+                        .as_ref()
+                        .and_then(|value| value.get("group_count"))
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or(group_count as u64) as usize;
+                    last_reported_groups = remaining_groups;
+                    last_review_signature = None;
+
+                    let preview_paths = auto_summarized
+                        .iter()
+                        .take(3)
+                        .map(|(path, _)| basename_for_runtime(path))
+                        .collect::<Vec<_>>();
+                    let suffix = if auto_summarized.len() > preview_paths.len() {
+                        format!(" 외 {}개", auto_summarized.len() - preview_paths.len())
+                    } else {
+                        String::new()
+                    };
+                    let message = format!(
+                        "[Self-Improvement] Auto-summarized {} dream groups (remaining: {}): {}{}",
+                        auto_summarized.len(),
+                        remaining_groups,
+                        preview_paths.join(", "),
+                        suffix
+                    );
+                    info!("{}", message);
+                    if let Err(e) = notif_store_for_self_improvement.add(
+                        &message,
+                        "info",
+                        "self-improvement",
+                    ) {
+                        warn!(
+                            "[Self-Improvement] Failed to persist auto-apply notification: {}",
+                            e
+                        );
+                    }
+                    broadcast_event(
+                        &relay_tx_for_self_improvement,
+                        RelayEvent::UiNotification {
+                            message,
+                            level: "info".to_string(),
+                            source: Some("self-improvement".to_string()),
+                        },
+                    );
+                    continue;
+                }
+
+                let top_paths = groups
+                    .iter()
+                    .take(3)
+                    .filter_map(|group| group.get("path").and_then(|value| value.as_str()))
+                    .map(basename_for_runtime)
+                    .collect::<Vec<_>>();
+                let review_signature = format!("{}:{}", group_count, top_paths.join("|"));
+                if group_count == last_reported_groups
+                    && last_review_signature.as_deref() == Some(review_signature.as_str())
+                {
                     continue;
                 }
                 last_reported_groups = group_count;
-
-                let top_paths = preview
-                    .get("groups")
-                    .and_then(|value| value.as_array())
-                    .map(|groups| {
-                        groups
-                            .iter()
-                            .take(3)
-                            .filter_map(|group| {
-                                group
-                                    .get("path")
-                                    .and_then(|value| value.as_str())
-                                    .map(|path| {
-                                        std::path::Path::new(path)
-                                            .file_name()
-                                            .and_then(|name| name.to_str())
-                                            .unwrap_or(path)
-                                            .to_string()
-                                    })
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
+                last_review_signature = Some(review_signature);
 
                 let suffix = if top_paths.is_empty() {
                     String::new()
@@ -814,7 +979,7 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                     format!(" ({})", top_paths.join(", "))
                 };
                 let message = format!(
-                    "[Self-Improvement] {} dream groups are ready for review{}",
+                    "[Self-Improvement] {} dream groups need review after auto-analysis{}",
                     group_count, suffix
                 );
 
