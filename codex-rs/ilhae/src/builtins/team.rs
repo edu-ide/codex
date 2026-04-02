@@ -53,6 +53,58 @@ pub fn should_emit_team_response(state: &Arc<crate::SharedState>, role: &str) ->
     }
 }
 
+pub fn current_main_team_role(state: &Arc<crate::SharedState>) -> String {
+    load_team_runtime_config(&state.infra.ilhae_dir)
+        .and_then(|cfg| cfg.agents.into_iter().find(|agent| agent.is_main))
+        .map(|agent| agent.role.to_ascii_lowercase())
+        .unwrap_or_else(|| "leader".to_string())
+}
+
+fn summarize_worker_response_for_leader(role: &str, text: &str) -> String {
+    let normalized = text.trim().replace("\r\n", "\n");
+    let mut bullets = normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(3)
+        .map(|line| {
+            if line.starts_with("- ") || line.starts_with("* ") {
+                line.to_string()
+            } else {
+                format!("- {line}")
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if bullets.is_empty() {
+        let compact = normalized.chars().take(280).collect::<String>();
+        bullets.push(format!("- {}", compact.trim()));
+    }
+
+    format!(
+        "Leader summary from {role}:\n{}\n- Full worker output is preserved in the team timeline and audit log.",
+        bullets.join("\n")
+    )
+}
+
+fn client_facing_team_response(
+    state: &Arc<crate::SharedState>,
+    role: &str,
+    text: &str,
+) -> Option<(String, String)> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match current_team_merge_policy(state).as_str() {
+        "leader_only" if !should_emit_team_response(state, role) => Some((
+            current_main_team_role(state),
+            summarize_worker_response_for_leader(role, trimmed),
+        )),
+        _ => Some((role.to_string(), trimmed.to_string())),
+    }
+}
+
 pub(crate) async fn is_team_role_healthy(state: &crate::SharedState, role_lower: &str) -> bool {
     let key = format!("team-{}", role_lower.to_ascii_lowercase());
     let sv = state.team_state().supervisor.read().await;
@@ -68,14 +120,18 @@ pub(crate) async fn is_team_role_healthy(state: &crate::SharedState, role_lower:
         .unwrap_or(false)
 }
 
-pub(crate) async fn select_fallback_target(
+pub(crate) async fn select_fallback_targets(
     state: &crate::SharedState,
     failed_role: &str,
-) -> Option<TeamRoleTarget> {
-    let team_cfg = load_team_runtime_config(&state.infra.ilhae_dir)?;
+) -> Vec<TeamRoleTarget> {
+    let Some(team_cfg) = load_team_runtime_config(&state.infra.ilhae_dir) else {
+        return Vec::new();
+    };
     let failed_role = failed_role.to_ascii_lowercase();
-    let mut non_leaders = Vec::new();
-    let mut leader = None;
+    let mut healthy_non_leaders = Vec::new();
+    let mut degraded_non_leaders = Vec::new();
+    let mut healthy_leader = None;
+    let mut degraded_leader = None;
 
     for agent in team_cfg.agents {
         let role_lower = agent.role.to_ascii_lowercase();
@@ -90,27 +146,168 @@ pub(crate) async fn select_fallback_target(
         {
             continue;
         }
+        let healthy = is_team_role_healthy(state, &role_lower).await;
         if agent.is_main {
-            leader = Some(agent);
+            if healthy {
+                healthy_leader = Some(agent);
+            } else {
+                degraded_leader = Some(agent);
+            }
+        } else if healthy {
+            healthy_non_leaders.push(agent);
         } else {
-            non_leaders.push(agent);
+            degraded_non_leaders.push(agent);
         }
     }
 
-    for agent in non_leaders {
-        if is_team_role_healthy(state, &agent.role.to_ascii_lowercase()).await {
-            return Some(agent);
+    let mut ordered = Vec::new();
+    ordered.extend(healthy_non_leaders);
+    ordered.extend(degraded_non_leaders);
+    if let Some(agent) = healthy_leader {
+        ordered.push(agent);
+    }
+    if let Some(agent) = degraded_leader {
+        ordered.push(agent);
+    }
+    ordered
+}
+
+pub(crate) async fn try_sync_fallback_chain(
+    state: &Arc<crate::SharedState>,
+    cx: &ConnectionTo<Conductor>,
+    active_session_id: Option<&str>,
+    failed_role: &str,
+    query: &str,
+    started_at: Instant,
+) -> Result<Option<String>, sacp::Error> {
+    let fallback_targets = select_fallback_targets(state, failed_role).await;
+    if fallback_targets.is_empty() {
+        return Ok(None);
+    }
+
+    let mut last_err = String::new();
+    for fallback_agent in fallback_targets {
+        let fallback_role = fallback_agent.role.to_ascii_lowercase();
+        tracing::warn!(
+            "[Team-Tools] {} failed; attempting sync redistribution to {}",
+            failed_role,
+            fallback_role
+        );
+        let (fallback_proxy, fallback_query, fallback_role) =
+            build_proxy_for_target(state, &fallback_agent, query).await?;
+        match fallback_proxy
+            .send_and_subscribe(&fallback_query, None, None)
+            .await
+        {
+            Ok((schedule_id, mut rx)) => {
+                let mut accumulated_text = String::new();
+                while let Some(result) = rx.recv().await {
+                    match result {
+                        Ok(event) => {
+                            let text = a2a_rs::proxy::extract_text_from_stream_event(&event);
+                            if !text.is_empty() {
+                                accumulated_text = text;
+                            }
+                        }
+                        Err(e) => {
+                            last_err = format!("{}", e);
+                            break;
+                        }
+                    }
+                }
+                if let Some(session_id) = active_session_id {
+                    if !accumulated_text.is_empty() {
+                        emit_team_assistant_response(
+                            state,
+                            cx,
+                            session_id,
+                            &fallback_role,
+                            &accumulated_text,
+                        )
+                        .await;
+                    }
+                    emit_team_delegation_complete(
+                        state,
+                        cx,
+                        session_id,
+                        &fallback_role,
+                        "sync-fallback",
+                        Some(&schedule_id),
+                        &accumulated_text,
+                    )
+                    .await;
+                }
+                record_team_delegation_outcome(state, &fallback_role, true, started_at).await;
+                return Ok(Some(if accumulated_text.is_empty() {
+                    format!(
+                        "[{}] Fallback task {} completed with no text output.",
+                        fallback_role, schedule_id
+                    )
+                } else {
+                    format!("[{}] {}", fallback_role, accumulated_text)
+                }));
+            }
+            Err(e) => {
+                last_err = format!("{}", e);
+                record_team_delegation_outcome(state, &fallback_role, false, started_at).await;
+            }
         }
     }
 
-    if let Some(agent) = leader {
-        if is_team_role_healthy(state, &agent.role.to_ascii_lowercase()).await {
-            return Some(agent);
-        }
-        return Some(agent);
+    if !last_err.is_empty() {
+        tracing::warn!(
+            "[Team-Tools] sync fallback chain exhausted after {} failed: {}",
+            failed_role,
+            last_err
+        );
+    }
+    Ok(None)
+}
+
+pub(crate) async fn try_background_fallback_chain(
+    state: &Arc<crate::SharedState>,
+    failed_role: &str,
+    query: &str,
+    started_at: Instant,
+) -> Result<Option<String>, sacp::Error> {
+    let fallback_targets = select_fallback_targets(state, failed_role).await;
+    if fallback_targets.is_empty() {
+        return Ok(None);
     }
 
-    None
+    let mut last_err = String::new();
+    for fallback_agent in fallback_targets {
+        let fallback_role = fallback_agent.role.to_ascii_lowercase();
+        tracing::warn!(
+            "[Team-Tools] {} background delegation failed; attempting redistribution to {}",
+            failed_role,
+            fallback_role
+        );
+        let (fallback_proxy, fallback_query, fallback_role) =
+            build_proxy_for_target(state, &fallback_agent, query).await?;
+        match fallback_proxy.fire_and_forget(&fallback_query, None, None).await {
+            Ok(schedule_id) => {
+                record_team_delegation_outcome(state, &fallback_role, true, started_at).await;
+                return Ok(Some(format!(
+                    "[{}] background fallback delegated. schedule_id={}",
+                    fallback_role, schedule_id
+                )));
+            }
+            Err(e) => {
+                last_err = format!("{}", e);
+                record_team_delegation_outcome(state, &fallback_role, false, started_at).await;
+            }
+        }
+    }
+
+    if !last_err.is_empty() {
+        tracing::warn!(
+            "[Team-Tools] background fallback chain exhausted after {} failed: {}",
+            failed_role,
+            last_err
+        );
+    }
+    Ok(None)
 }
 
 pub(crate) async fn build_proxy_for_target(
@@ -308,55 +505,15 @@ macro_rules! with_team_server {
 
                             $crate::builtins::team::record_team_delegation_outcome(&state, &role_lower, false, started_at).await;
                             if !pause_on_error {
-                                if let Some(fallback_agent) =
-                                    $crate::builtins::team::select_fallback_target(&state, &role_lower).await
-                                {
-                                    let fallback_role = fallback_agent.role.to_lowercase();
-                                    tracing::warn!(
-                                        "[Team-Tools] {} failed; redistributing sync delegation to {}",
-                                        role_lower, fallback_role
-                                    );
-                                    let (fallback_proxy, fallback_query, fallback_role) =
-                                        $crate::builtins::team::build_proxy_for_target(&state, &fallback_agent, &enriched_query).await?;
-                                    match fallback_proxy.send_and_subscribe(&fallback_query, None, None).await {
-                                        Ok((schedule_id, mut rx)) => {
-                                            let mut accumulated_text = String::new();
-                                            while let Some(result) = rx.recv().await {
-                                                match result {
-                                                    Ok(event) => {
-                                                        let text = a2a_rs::proxy::extract_text_from_stream_event(&event);
-                                                        if !text.is_empty() {
-                                                            accumulated_text = text;
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        last_err = format!("{}", e);
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                            if let Some(session_id) = active_session_id.as_deref() {
-                                                if !accumulated_text.is_empty() {
-                                                    $crate::builtins::team::emit_team_assistant_response(
-                                                        &state, &cx, session_id, &fallback_role, &accumulated_text,
-                                                    ).await;
-                                                }
-                                                $crate::builtins::team::emit_team_delegation_complete(
-                                                    &state, &cx, session_id, &fallback_role, "sync-fallback", Some(&schedule_id), &accumulated_text,
-                                                ).await;
-                                            }
-                                            $crate::builtins::team::record_team_delegation_outcome(&state, &fallback_role, true, started_at).await;
-                                            return Ok::<String, sacp::Error>(if accumulated_text.is_empty() {
-                                                format!("[{}] Fallback task {} completed with no text output.", fallback_role, schedule_id)
-                                            } else {
-                                                format!("[{}] {}", fallback_role, accumulated_text)
-                                            });
-                                        }
-                                        Err(e) => {
-                                            last_err = format!("{}", e);
-                                            $crate::builtins::team::record_team_delegation_outcome(&state, &fallback_role, false, started_at).await;
-                                        }
-                                    }
+                                if let Some(message) = $crate::builtins::team::try_sync_fallback_chain(
+                                    &state,
+                                    &cx,
+                                    active_session_id.as_deref(),
+                                    &role_lower,
+                                    &enriched_query,
+                                    started_at,
+                                ).await? {
+                                    return Ok::<String, sacp::Error>(message);
                                 }
                             }
 
@@ -854,27 +1011,11 @@ pub async fn run_background_delegate(
 
     record_team_delegation_outcome(&state, &role_lower, false, started_at).await;
     if !pause_on_error {
-        if let Some(fallback_agent) = select_fallback_target(&state, &role_lower).await {
-            let fallback_role = fallback_agent.role.to_lowercase();
-            warn!(
-                "[Team-Tools] {} background delegation failed; redistributing to {}",
-                role_lower, fallback_role
-            );
-            let (fallback_proxy, fallback_query, fallback_role) =
-                build_proxy_for_target(&state, &fallback_agent, &enriched_query).await?;
-            match fallback_proxy.fire_and_forget(&fallback_query, None, None).await {
-                Ok(schedule_id) => {
-                    record_team_delegation_outcome(&state, &fallback_role, true, started_at).await;
-                    return Ok(format!(
-                        "[{}] background fallback delegated. schedule_id={}",
-                        fallback_role, schedule_id
-                    ));
-                }
-                Err(e) => {
-                    last_err = format!("{}", e);
-                    record_team_delegation_outcome(&state, &fallback_role, false, started_at).await;
-                }
-            }
+        if let Some(message) =
+            try_background_fallback_chain(&state, &role_lower, &enriched_query, started_at)
+                .await?
+        {
+            return Ok(message);
         }
     }
 
@@ -977,22 +1118,21 @@ pub async fn emit_team_assistant_response(
     role: &str,
     text: &str,
 ) {
-    if text.trim().is_empty() {
+    let Some((visible_role, visible_text)) = client_facing_team_response(state, role, text) else {
         return;
-    }
-    let emit_response = should_emit_team_response(state, role);
+    };
     let turn_id = format!("team-response-{}", Uuid::new_v4());
-    if emit_response {
+    if !visible_text.trim().is_empty() {
         if let Ok(notif) = UntypedMessage::new(
             crate::types::NOTIF_APP_SESSION_EVENT,
             crate::types::IlhaeAppSessionEventNotification {
-                engine: role.to_string(),
+                engine: visible_role.clone(),
                 event: crate::types::IlhaeAppSessionEventDto::MessageDelta {
                     thread_id: session_id.to_string(),
                     turn_id: turn_id.clone(),
-                    item_id: format!("{turn_id}:{role}"),
+                    item_id: format!("{turn_id}:{visible_role}"),
                     channel: "assistant".to_string(),
-                    delta: text.to_string(),
+                    delta: visible_text.clone(),
                 },
             },
         ) {
@@ -1001,7 +1141,7 @@ pub async fn emit_team_assistant_response(
         if let Ok(notif) = UntypedMessage::new(
             crate::types::NOTIF_APP_SESSION_EVENT,
             crate::types::IlhaeAppSessionEventNotification {
-                engine: role.to_string(),
+                engine: visible_role,
                 event: crate::types::IlhaeAppSessionEventDto::TurnCompleted {
                     thread_id: session_id.to_string(),
                     turn_id,
