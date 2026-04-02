@@ -29,6 +29,23 @@ pub const NOTIF_HISTORY_SYNC: &str = "session/history_sync";
 pub const NOTIF_CRON_TRIGGERED: &str = "ilhae/cron_triggered";
 
 pub const REQ_SESSION_SET_MODEL: &str = "session/set_model";
+pub const REQ_APP_SESSION_LIST: &str = "ilhae/app/session/list";
+pub const REQ_APP_SESSION_GET: &str = "ilhae/app/session/get";
+pub const REQ_APP_SESSION_CREATE: &str = "ilhae/app/session/create";
+pub const REQ_APP_SESSION_SEARCH: &str = "ilhae/app/session/search";
+pub const REQ_APP_SESSION_DELETE: &str = "ilhae/app/session/delete";
+pub const REQ_APP_SESSION_UPDATE: &str = "ilhae/app/session/update";
+pub const REQ_APP_ARTIFACT_LIST: &str = "ilhae/app/artifact/list";
+pub const REQ_APP_ARTIFACT_VERSIONS: &str = "ilhae/app/artifact/versions";
+pub const REQ_APP_ARTIFACT_GET: &str = "ilhae/app/artifact/get";
+pub const REQ_APP_WORKFLOW_LIST: &str = "ilhae/app/workflow/list";
+pub const REQ_APP_WORKFLOW_GET: &str = "ilhae/app/workflow/get";
+pub const REQ_APP_TIMELINE_READ: &str = "ilhae/app/timeline/read";
+pub const REQ_APP_TIMELINE_SUBSCRIBE: &str = "ilhae/app/timeline/subscribe";
+pub const REQ_APP_TURN_START: &str = "ilhae/app/turn/start";
+pub const REQ_APP_TURN_INTERRUPT: &str = "ilhae/app/turn/interrupt";
+pub const REQ_APP_ENGINE_GET: &str = "ilhae/app/engine/get";
+pub const REQ_APP_ENGINE_SET: &str = "ilhae/app/engine/set";
 
 // ─── Canonical client-facing DTOs for ilhae app-server v1 ───────────────
 
@@ -40,6 +57,285 @@ pub struct IlhaeEngineStatePayload {
     pub command: String,
     pub capabilities: serde_json::Value,
     pub capability_matrix: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/session/list", response = IlhaeAppSessionListResponse)]
+pub struct IlhaeAppSessionListRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppSessionListResponse {
+    pub sessions: Vec<SessionInfoDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/session/get", response = IlhaeAppSessionGetResponse)]
+pub struct IlhaeAppSessionGetRequest {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppSessionGetResponse {
+    pub session: Option<SessionInfoDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/session/create", response = IlhaeAppSessionCreateResponse)]
+pub struct IlhaeAppSessionCreateRequest {
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(rename = "agentId", default)]
+    pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppSessionCreateResponse {
+    pub session: Option<SessionInfoDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/session/search", response = IlhaeAppSessionSearchResponse)]
+pub struct IlhaeAppSessionSearchRequest {
+    pub query: String,
+    #[serde(default = "default_search_sessions_limit")]
+    pub limit: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppSessionSearchResponse {
+    pub sessions: Vec<SessionInfoDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/session/delete", response = IlhaeAppSessionDeleteResponse)]
+pub struct IlhaeAppSessionDeleteRequest {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppSessionDeleteResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/session/update", response = IlhaeAppSessionUpdateResponse)]
+pub struct IlhaeAppSessionUpdateRequest {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppSessionUpdateResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/artifact/list", response = IlhaeAppArtifactListResponse)]
+pub struct IlhaeAppArtifactListRequest {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppArtifactListResponse {
+    pub artifacts: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/artifact/versions", response = IlhaeAppArtifactVersionsResponse)]
+pub struct IlhaeAppArtifactVersionsRequest {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub filename: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppArtifactVersionsResponse {
+    pub versions: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/artifact/get", response = IlhaeAppArtifactGetResponse)]
+pub struct IlhaeAppArtifactGetRequest {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub filename: String,
+    pub version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppArtifactGetResponse {
+    pub artifact: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/workflow/list", response = IlhaeAppWorkflowListResponse)]
+pub struct IlhaeAppWorkflowListRequest {
+    #[serde(rename = "projectPath", default)]
+    pub project_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppWorkflowListResponse {
+    pub artifacts: Vec<WorkflowArtifactDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/workflow/get", response = IlhaeAppWorkflowGetResponse)]
+pub struct IlhaeAppWorkflowGetRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppWorkflowGetResponse {
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/timeline/read", response = IlhaeAppTimelineReadResponse)]
+pub struct IlhaeAppTimelineReadRequest {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "includeTeam", default)]
+    pub include_team: bool,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(rename = "beforeId", default)]
+    pub before_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTimelineReadResponse {
+    pub messages: Vec<SessionMessageDto>,
+    #[serde(rename = "teamEvents", default, skip_serializing_if = "Vec::is_empty")]
+    pub team_events: Vec<TeamTimelineEventDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/timeline/subscribe", response = IlhaeAppTimelineSubscribeResponse)]
+pub struct IlhaeAppTimelineSubscribeRequest {
+    #[serde(rename = "sessionId", default)]
+    pub session_id: String,
+    #[serde(rename = "sessionIds", default, skip_serializing_if = "Vec::is_empty")]
+    pub session_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTimelineSubscribeResponse {
+    pub ok: bool,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "sessionIds", default, skip_serializing_if = "Vec::is_empty")]
+    pub session_ids: Vec<String>,
+    #[serde(rename = "notificationMethod")]
+    pub notification_method: String,
+}
+
+impl IlhaeAppTimelineSubscribeRequest {
+    pub fn normalized_session_ids(&self) -> Vec<String> {
+        let mut normalized = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for session_id in std::iter::once(&self.session_id).chain(self.session_ids.iter()) {
+            let trimmed = session_id.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if seen.insert(trimmed.to_string()) {
+                normalized.push(trimmed.to_string());
+            }
+        }
+
+        normalized
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/turn/start", response = IlhaeAppTurnStartResponse)]
+pub struct IlhaeAppTurnStartRequest {
+    #[serde(rename = "sessionId", default)]
+    pub session_id: Option<String>,
+    pub input: String,
+    #[serde(rename = "agentId", default)]
+    pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTurnStartResponse {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "stopReason")]
+    pub stop_reason: String,
+    #[serde(default)]
+    pub meta: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/turn/interrupt", response = IlhaeAppTurnInterruptResponse)]
+pub struct IlhaeAppTurnInterruptRequest {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "turnId", default)]
+    pub turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTurnInterruptResponse {
+    pub ok: bool,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "turnId", default)]
+    pub turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/engine/get", response = IlhaeAppEngineGetResponse)]
+pub struct IlhaeAppEngineGetRequest {
+    #[serde(rename = "engineId", default)]
+    pub engine_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppEngineGetResponse {
+    #[serde(rename = "currentEngine")]
+    pub current_engine: String,
+    pub command: String,
+    #[serde(rename = "teamMode")]
+    pub team_mode: bool,
+    pub endpoint: String,
+    #[serde(rename = "enabledEngines")]
+    pub enabled_engines: Vec<String>,
+    pub profile: serde_json::Value,
+    pub matrix: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/engine/set", response = IlhaeAppEngineSetResponse)]
+pub struct IlhaeAppEngineSetRequest {
+    #[serde(rename = "engineId")]
+    pub engine_id: String,
+    #[serde(default)]
+    pub command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppEngineSetResponse {
+    pub ok: bool,
+    #[serde(rename = "currentEngine")]
+    pub current_engine: String,
+    pub command: String,
+    #[serde(rename = "teamMode")]
+    pub team_mode: bool,
+    pub endpoint: String,
+    #[serde(rename = "enabledEngines")]
+    pub enabled_engines: Vec<String>,
+    pub profile: serde_json::Value,
+    pub matrix: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +459,19 @@ impl sacp::JsonRpcMessage for IlhaeAppSessionEventNotification {
     }
 }
 impl sacp::JsonRpcNotification for IlhaeAppSessionEventNotification {}
+
+impl IlhaeAppSessionEventNotification {
+    pub fn session_id(&self) -> &str {
+        match &self.event {
+            IlhaeAppSessionEventDto::InteractiveRequest { request } => &request.thread_id,
+            IlhaeAppSessionEventDto::TurnStarted { thread_id, .. }
+            | IlhaeAppSessionEventDto::TurnCompleted { thread_id, .. }
+            | IlhaeAppSessionEventDto::MessageDelta { thread_id, .. }
+            | IlhaeAppSessionEventDto::ToolCallStarted { thread_id, .. }
+            | IlhaeAppSessionEventDto::ToolCallCompleted { thread_id, .. } => thread_id,
+        }
+    }
+}
 
 // ─── Misc arg types ──────────────────────────────────────────────────────
 

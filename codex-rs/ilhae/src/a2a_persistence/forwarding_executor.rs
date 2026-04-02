@@ -299,8 +299,7 @@ impl ForwardingExecutor {
     /// Send UI patch via relay_conductor_cx.
     async fn notify_ui(&self, method: &str, params: Value) {
         use sacp::{Client, Conductor, ConnectionTo, UntypedMessage};
-        let maybe_cx: Option<ConnectionTo<Conductor>> =
-            self.cx_cache.inner.read().await.last().cloned();
+        let maybe_cx: Option<ConnectionTo<Conductor>> = self.cx_cache.latest().await;
         if let Some(cx) = maybe_cx {
             if let Ok(notif) = UntypedMessage::new(method, params) {
                 let _ = cx.send_notification_to(Client, notif);

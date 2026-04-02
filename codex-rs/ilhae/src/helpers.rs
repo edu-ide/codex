@@ -3,6 +3,7 @@
 //! Codex config management, relay utilities, attachment handling,
 //! browser tool detection, and other shared utilities.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -73,6 +74,21 @@ pub fn infer_agent_id_from_command(command: &str) -> String {
         .to_string()
 }
 
+pub fn resolve_engine_command(engine_id: &str, explicit_command: Option<&str>) -> Option<String> {
+    if let Some(command) = explicit_command.map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(command.to_string());
+    }
+
+    match engine_id.trim().to_ascii_lowercase().as_str() {
+        "ilhae" => Some("ilhae".to_string()),
+        "codex" => Some("codex".to_string()),
+        "codex-ilhae" | "codex-ilhae-llama-nemotron" => Some("codex-ilhae".to_string()),
+        "gemini" => Some("gemini-ilhae --experimental-acp".to_string()),
+        "claude" => Some("claude-code-acp serve".to_string()),
+        _ => None,
+    }
+}
+
 // ─── CxCache — Conductor connection cache ───────────────────────────────
 
 /// Shared cache for multiple `ConnectionTo<Conductor>` handles.
@@ -84,7 +100,14 @@ pub fn infer_agent_id_from_command(command: &str) -> String {
 /// - `notify_desktop(method, payload)` — broadcast extNotification to ALL connected Clients
 #[derive(Clone)]
 pub struct CxCache {
-    pub inner: Arc<RwLock<Vec<ConnectionTo<Conductor>>>>,
+    inner: Arc<RwLock<Vec<CxCacheEntry>>>,
+}
+
+#[derive(Clone)]
+struct CxCacheEntry {
+    key: String,
+    cx: ConnectionTo<Conductor>,
+    timeline_subscriptions: HashSet<String>,
 }
 
 impl CxCache {
@@ -94,17 +117,69 @@ impl CxCache {
         }
     }
 
+    fn connection_key(cx: &ConnectionTo<Conductor>) -> String {
+        format!("{cx:?}")
+    }
+
+    fn normalize_timeline_subscriptions(
+        session_ids: impl IntoIterator<Item = String>,
+    ) -> HashSet<String> {
+        session_ids
+            .into_iter()
+            .filter_map(|session_id| {
+                let trimmed = session_id.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            })
+            .collect()
+    }
+
+    fn trim_entries(entries: &mut Vec<CxCacheEntry>) {
+        if entries.len() > CX_CACHE_MAX_ENTRIES {
+            let overflow = entries.len() - CX_CACHE_MAX_ENTRIES;
+            entries.drain(0..overflow);
+        }
+    }
+
     /// Add a conductor connection to the pool.
     pub async fn try_add(&self, cx: ConnectionTo<Conductor>) {
+        let key = Self::connection_key(&cx);
         let mut w = self.inner.write().await;
-        w.push(cx);
-        // Prevent unbounded growth from frequent try_add calls in hot paths
-        // (session notifications, permission requests, settings updates).
-        // Keep only recent entries; stale connections are still cleaned up on send failures.
-        if w.len() > CX_CACHE_MAX_ENTRIES {
-            let overflow = w.len() - CX_CACHE_MAX_ENTRIES;
-            w.drain(0..overflow);
+        if let Some(entry) = w.iter_mut().find(|entry| entry.key == key) {
+            entry.cx = cx;
+        } else {
+            w.push(CxCacheEntry {
+                key,
+                cx,
+                timeline_subscriptions: HashSet::new(),
+            });
         }
+        Self::trim_entries(&mut w);
+    }
+
+    pub async fn set_timeline_subscriptions(
+        &self,
+        cx: &ConnectionTo<Conductor>,
+        session_ids: impl IntoIterator<Item = String>,
+    ) {
+        let key = Self::connection_key(cx);
+        let timeline_subscriptions = Self::normalize_timeline_subscriptions(session_ids);
+        let mut w = self.inner.write().await;
+        if let Some(entry) = w.iter_mut().find(|entry| entry.key == key) {
+            entry.cx = cx.clone();
+            entry.timeline_subscriptions = timeline_subscriptions;
+        } else {
+            w.push(CxCacheEntry {
+                key,
+                cx: cx.clone(),
+                timeline_subscriptions,
+            });
+        }
+        Self::trim_entries(&mut w);
+    }
+
+    pub async fn latest(&self) -> Option<ConnectionTo<Conductor>> {
+        let r = self.inner.read().await;
+        r.last().map(|entry| entry.cx.clone())
     }
 
     /// Send an extNotification to ALL desktop Clients in the pool.
@@ -115,8 +190,8 @@ impl CxCache {
 
         match UntypedMessage::new(method, payload) {
             Ok(notif) => {
-                for (i, cx) in conns.iter().enumerate() {
-                    if let Err(e) = cx.send_notification_to(Client, notif.clone()) {
+                for (i, entry) in conns.iter().enumerate() {
+                    if let Err(e) = entry.cx.send_notification_to(Client, notif.clone()) {
                         debug!(
                             "[CxCache] Connection {} is stale, marking for removal: {}",
                             i, e
@@ -137,20 +212,59 @@ impl CxCache {
         }
     }
 
+    pub async fn notify_desktop_for_session(
+        &self,
+        method: &str,
+        payload: serde_json::Value,
+        session_id: &str,
+    ) {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            self.notify_desktop(method, payload).await;
+            return;
+        }
+
+        let mut conns = self.inner.write().await;
+        let mut to_remove = Vec::new();
+
+        match UntypedMessage::new(method, payload) {
+            Ok(notif) => {
+                for (i, entry) in conns.iter().enumerate() {
+                    let is_legacy_connection = entry.timeline_subscriptions.is_empty();
+                    let is_subscribed = entry.timeline_subscriptions.contains(session_id);
+                    if !is_legacy_connection && !is_subscribed {
+                        continue;
+                    }
+                    if let Err(e) = entry.cx.send_notification_to(Client, notif.clone()) {
+                        debug!(
+                            "[CxCache] Connection {} is stale, marking for removal: {}",
+                            i, e
+                        );
+                        to_remove.push(i);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("[CxCache] Failed to build {}: {}", method, e);
+                return;
+            }
+        }
+
+        for i in to_remove.into_iter().rev() {
+            conns.remove(i);
+        }
+    }
+
     /// Poll until at least one connection is available or timeout expires.
     pub async fn wait_for(&self, timeout: Duration) -> Option<ConnectionTo<Conductor>> {
-        {
-            let r = self.inner.read().await;
-            if let Some(cx) = r.last() {
-                return Some(cx.clone());
-            }
+        if let Some(cx) = self.latest().await {
+            return Some(cx);
         }
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             sleep(Duration::from_millis(RELAY_DESKTOP_READY_POLL_MS)).await;
-            let r = self.inner.read().await;
-            if let Some(cx) = r.last() {
-                return Some(cx.clone());
+            if let Some(cx) = self.latest().await {
+                return Some(cx);
             }
         }
         None

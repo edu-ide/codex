@@ -110,6 +110,94 @@ macro_rules! register_admin_artifact_handlers {
                 },
                 sacp::on_receive_request!(),
             )
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let ilhae_dir = s.infra.ilhae_dir.clone();
+                    async move |req: IlhaeAppWorkflowListRequest,
+                                responder: Responder<IlhaeAppWorkflowListResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        info!(
+                            "ilhae/app/workflow/list RPC project_path={:?}",
+                            req.project_path
+                        );
+                        let vault_dir = ilhae_dir.join("vault").join("workflow");
+                        let mut artifacts = Vec::new();
+
+                        if let Ok(entries) = std::fs::read_dir(&vault_dir) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path.is_file()
+                                    && path.extension().map_or(false, |ext| ext == "md")
+                                {
+                                    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                        if !filename.starts_with("DESIGN_")
+                                            && !filename.starts_with("PLAN_")
+                                            && !filename.starts_with("VERIFICATION_")
+                                            && !filename.starts_with("TEST_")
+                                        {
+                                            continue;
+                                        }
+
+                                        let mut artifact_type = "UNKNOWN".to_string();
+                                        if filename.starts_with("DESIGN_") {
+                                            artifact_type = "DESIGN".to_string();
+                                        } else if filename.starts_with("PLAN_") {
+                                            artifact_type = "PLAN".to_string();
+                                        } else if filename.starts_with("VERIFICATION_") {
+                                            artifact_type = "VERIFICATION".to_string();
+                                        } else if filename.starts_with("TEST_") {
+                                            artifact_type = "TEST".to_string();
+                                        }
+
+                                        let timestamp = entry
+                                            .metadata()
+                                            .and_then(|m| m.modified())
+                                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                                            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_millis() as i64;
+
+                                        let content = std::fs::read_to_string(&path).unwrap_or_default();
+                                        let mut doc_project_path = None;
+                                        let mut doc_date = None;
+
+                                        if content.starts_with("---\n") {
+                                            if let Some(end_idx) = content[4..].find("\n---\n") {
+                                                let frontmatter = &content[4..end_idx + 4];
+                                                for line in frontmatter.lines() {
+                                                    if let Some(rest) = line.strip_prefix("project_path: ") {
+                                                        doc_project_path = Some(rest.trim_matches('"').trim().to_string());
+                                                    } else if let Some(rest) = line.strip_prefix("date: ") {
+                                                        doc_date = Some(rest.trim_matches('"').trim().to_string());
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if let Some(target_path) = &req.project_path {
+                                            if doc_project_path.as_ref() != Some(target_path) {
+                                                continue;
+                                            }
+                                        }
+
+                                        artifacts.push(WorkflowArtifactDto {
+                                            id: filename.to_string(),
+                                            artifact_type,
+                                            project_path: doc_project_path,
+                                            date: doc_date,
+                                            timestamp,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        artifacts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                        responder.respond(IlhaeAppWorkflowListResponse { artifacts })
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
             // ═══ Workflow Artifact Read ═══
             .on_receive_request_from(
                 sacp::Client,
@@ -124,6 +212,23 @@ macro_rules! register_admin_artifact_handlers {
 
                         let content = std::fs::read_to_string(file_path).unwrap_or_default();
                         responder.respond(ReadWorkflowArtifactResponse { content })
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let ilhae_dir = s.infra.ilhae_dir.clone();
+                    async move |req: IlhaeAppWorkflowGetRequest,
+                                responder: Responder<IlhaeAppWorkflowGetResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        info!("ilhae/app/workflow/get RPC id={:?}", req.id);
+                        let vault_dir = ilhae_dir.join("vault").join("workflow");
+                        let file_path = vault_dir.join(&req.id);
+
+                        let content = std::fs::read_to_string(file_path).unwrap_or_default();
+                        responder.respond(IlhaeAppWorkflowGetResponse { content })
                     }
                 },
                 sacp::on_receive_request!(),
@@ -151,6 +256,28 @@ macro_rules! register_admin_artifact_handlers {
                 },
                 sacp::on_receive_request!(),
             )
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let artifact_store = s.infra.brain.artifacts().clone();
+                    async move |req: IlhaeAppArtifactListRequest,
+                                responder: Responder<IlhaeAppArtifactListResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        info!(
+                            "ilhae/app/artifact/list RPC session={}",
+                            req.session_id
+                        );
+                        let artifacts = artifact_store
+                            .list_session_artifacts(&req.session_id)
+                            .unwrap_or_else(|e| {
+                                warn!("DB error listing artifacts: {}", e);
+                                vec![]
+                            });
+                        responder.respond(IlhaeAppArtifactListResponse { artifacts })
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
             // ═══ Artifact Versioning — list versions of a file ═══
             .on_receive_request_from(
                 sacp::Client,
@@ -174,6 +301,28 @@ macro_rules! register_admin_artifact_handlers {
                 },
                 sacp::on_receive_request!(),
             )
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let artifact_store = s.infra.brain.artifacts().clone();
+                    async move |req: IlhaeAppArtifactVersionsRequest,
+                                responder: Responder<IlhaeAppArtifactVersionsResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        info!(
+                            "ilhae/app/artifact/versions RPC session={} filename={}",
+                            req.session_id, req.filename
+                        );
+                        let versions = artifact_store
+                            .list_artifact_versions(&req.session_id, &req.filename)
+                            .unwrap_or_else(|e| {
+                                warn!("DB error listing versions: {}", e);
+                                vec![]
+                            });
+                        responder.respond(IlhaeAppArtifactVersionsResponse { versions })
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
             // ═══ Artifact Versioning — get specific version ═══
             .on_receive_request_from(
                 sacp::Client,
@@ -193,6 +342,28 @@ macro_rules! register_admin_artifact_handlers {
                                 None
                             });
                         responder.respond(GetArtifactVersionResponse { artifact })
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let artifact_store = s.infra.brain.artifacts().clone();
+                    async move |req: IlhaeAppArtifactGetRequest,
+                                responder: Responder<IlhaeAppArtifactGetResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        info!(
+                            "ilhae/app/artifact/get RPC session={} filename={} version={}",
+                            req.session_id, req.filename, req.version
+                        );
+                        let artifact = artifact_store
+                            .get_artifact_version(&req.session_id, &req.filename, req.version)
+                            .unwrap_or_else(|e| {
+                                warn!("DB error getting version: {}", e);
+                                None
+                            });
+                        responder.respond(IlhaeAppArtifactGetResponse { artifact })
                     }
                 },
                 sacp::on_receive_request!(),

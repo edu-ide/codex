@@ -78,13 +78,7 @@ pub async fn start_health_server(shared: Arc<SharedState>) -> anyhow::Result<()>
     }
 
     async fn health(AxState(state): AxState<Arc<SharedState>>) -> Json<serde_json::Value> {
-        let desktop_ready = !state
-            .infra_context()
-            .relay_conductor_cx
-            .inner
-            .read()
-            .await
-            .is_empty();
+        let desktop_ready = state.infra_context().relay_conductor_cx.latest().await.is_some();
         let (agent_endpoint, mock_mode) = resolve_agent_endpoint(&state);
         let (host, port) = parse_host_port(&agent_endpoint);
         let agent_ready = if mock_mode {
@@ -197,14 +191,8 @@ pub async fn start_health_server(shared: Arc<SharedState>) -> anyhow::Result<()>
         );
 
         // ── Relay to desktop UI via SACP ──
-        let maybe_cx: Option<sacp::ConnectionTo<sacp::Conductor>> = state
-            .infra_context()
-            .relay_conductor_cx
-            .inner
-            .read()
-            .await
-            .last()
-            .cloned();
+        let maybe_cx: Option<sacp::ConnectionTo<sacp::Conductor>> =
+            state.infra_context().relay_conductor_cx.latest().await;
         if let Some(cx) = maybe_cx {
             // Send ilhae/a2a_task_update
             let update_payload = serde_json::json!({
@@ -495,12 +483,9 @@ pub async fn spawn_background_workers(
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
                 // Wait until we have a conductor connection to send UI patches
-                let cx_read = shared.infra_context().relay_conductor_cx.inner.read().await;
-                let Some(cx) = cx_read.last().cloned() else {
-                    drop(cx_read);
+                let Some(cx) = shared.infra_context().relay_conductor_cx.latest().await else {
                     continue;
                 };
-                drop(cx_read);
 
                 let Some(team_cfg) = context_proxy::team_a2a::load_team_runtime_config(
                     &shared.infra_context().ilhae_dir,

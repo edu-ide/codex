@@ -884,7 +884,7 @@ pub fn start_daemon_webhook(
         let patch_ids = patch_message_ids.clone();
         async move {
             async fn try_get_cx(shared: &crate::SharedState) -> Option<ConnectionTo<Conductor>> {
-                shared.infra.relay_conductor_cx.inner.read().await.last().cloned()
+                shared.infra.relay_conductor_cx.latest().await
             }
 
             async fn try_notify(shared: &crate::SharedState, method: &str, params: serde_json::Value) {

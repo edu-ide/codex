@@ -9,13 +9,18 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use agent_client_protocol_schema::{
-    CancelNotification, SetSessionModeRequest, SetSessionModeResponse,
+    CancelNotification, ContentBlock, PromptRequest, SessionId, SetSessionModeRequest,
+    SetSessionModeResponse, StopReason, TextContent,
 };
 use sacp::{Agent, Client, Conductor, ConnectTo, ConnectionTo, Proxy, Responder};
 use tracing::debug;
 
 use crate::approval_manager::ApprovalEvent;
-use crate::{SetSessionConfigOptionRequest, SetSessionConfigOptionResponse};
+use crate::{
+    IlhaeAppTimelineSubscribeRequest, IlhaeAppTimelineSubscribeResponse,
+    IlhaeAppTurnInterruptRequest, IlhaeAppTurnInterruptResponse, IlhaeAppTurnStartRequest,
+    IlhaeAppTurnStartResponse, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+};
 
 pub mod autonomy;
 pub mod capabilities;
@@ -265,6 +270,86 @@ impl ConnectTo<Conductor> for ContextProxy {
                         debug!("[session/set_mode] modeId={}", req.mode_id);
                         cx.send_request_to(Agent, req)
                             .forward_response_to(responder)
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            .on_receive_request_from(
+                Client,
+                {
+                    let cx_cache = s.infra.relay_conductor_cx.clone();
+                    async move |req: IlhaeAppTimelineSubscribeRequest,
+                                responder: Responder<IlhaeAppTimelineSubscribeResponse>,
+                                cx: ConnectionTo<Conductor>| {
+                        let session_ids = req.normalized_session_ids();
+                        let primary_session_id = session_ids.first().cloned().unwrap_or_default();
+                        cx_cache.try_add(cx.clone()).await;
+                        cx_cache
+                            .set_timeline_subscriptions(&cx, session_ids.clone())
+                            .await;
+                        responder.respond(IlhaeAppTimelineSubscribeResponse {
+                            ok: true,
+                            session_id: primary_session_id,
+                            session_ids,
+                            notification_method: crate::types::NOTIF_APP_SESSION_EVENT.to_string(),
+                        })
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            .on_receive_request_from(
+                Client,
+                {
+                    async move |req: IlhaeAppTurnStartRequest,
+                                responder: Responder<IlhaeAppTurnStartResponse>,
+                                cx: ConnectionTo<Conductor>| {
+                        let session_id = req
+                            .session_id
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                        let mut prompt_req = PromptRequest::new(
+                            SessionId::new(session_id.clone()),
+                            vec![ContentBlock::Text(TextContent::new(req.input))],
+                        );
+                        if let Some(agent_id) = req.agent_id.filter(|s| !s.trim().is_empty()) {
+                            prompt_req.meta = serde_json::json!({ "agentId": agent_id })
+                                .as_object()
+                                .cloned();
+                        }
+                        let response = cx.send_request_to(Agent, prompt_req).block_task().await?;
+                        let stop_reason = match response.stop_reason {
+                            StopReason::Cancelled => "cancelled",
+                            StopReason::EndTurn => "completed",
+                            StopReason::MaxTokens => "max_tokens",
+                            StopReason::MaxTurnRequests => "max_turn_requests",
+                            StopReason::Refusal => "refusal",
+                            _ => "unknown",
+                        }
+                        .to_string();
+                        responder.respond(IlhaeAppTurnStartResponse {
+                            session_id,
+                            stop_reason,
+                            meta: serde_json::to_value(response.meta).unwrap_or(serde_json::Value::Null),
+                        })
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            .on_receive_request_from(
+                Client,
+                {
+                    async move |req: IlhaeAppTurnInterruptRequest,
+                                responder: Responder<IlhaeAppTurnInterruptResponse>,
+                                cx: ConnectionTo<Conductor>| {
+                        cx.send_notification_to(
+                            Agent,
+                            CancelNotification::new(SessionId::new(req.session_id.clone())),
+                        )?;
+                        responder.respond(IlhaeAppTurnInterruptResponse {
+                            ok: true,
+                            session_id: req.session_id,
+                            turn_id: req.turn_id,
+                        })
                     }
                 },
                 sacp::on_receive_request!(),

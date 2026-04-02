@@ -96,6 +96,10 @@ pub async fn dispatch(ctx: &crate::SharedState, relay_cmd: RelayCommandWithClien
             sessions::handle_session_load(ctx, cmd, client_id.try_into().unwrap(), maybe_respond)
                 .await
         }
+        "ilhae/app/timeline/read" => {
+            sessions::handle_session_load(ctx, cmd, client_id.try_into().unwrap(), maybe_respond)
+                .await
+        }
         "session_timeline" => {
             sessions::handle_session_timeline(
                 ctx,
@@ -109,7 +113,15 @@ pub async fn dispatch(ctx: &crate::SharedState, relay_cmd: RelayCommandWithClien
             sessions::handle_session_list(ctx, cmd, client_id.try_into().unwrap(), maybe_respond)
                 .await
         }
+        "ilhae/app/session/list" => {
+            sessions::handle_session_list(ctx, cmd, client_id.try_into().unwrap(), maybe_respond)
+                .await
+        }
         "session_search" => {
+            sessions::handle_session_search(ctx, cmd, client_id.try_into().unwrap(), maybe_respond)
+                .await
+        }
+        "ilhae/app/session/search" => {
             sessions::handle_session_search(ctx, cmd, client_id.try_into().unwrap(), maybe_respond)
                 .await
         }
@@ -117,7 +129,15 @@ pub async fn dispatch(ctx: &crate::SharedState, relay_cmd: RelayCommandWithClien
             sessions::handle_session_delete(ctx, cmd, client_id.try_into().unwrap(), maybe_respond)
                 .await
         }
+        "ilhae/app/session/delete" => {
+            sessions::handle_session_delete(ctx, cmd, client_id.try_into().unwrap(), maybe_respond)
+                .await
+        }
         "session_create" => {
+            sessions::handle_session_create(ctx, cmd, client_id.try_into().unwrap(), maybe_respond)
+                .await
+        }
+        "ilhae/app/session/create" => {
             sessions::handle_session_create(ctx, cmd, client_id.try_into().unwrap(), maybe_respond)
                 .await
         }

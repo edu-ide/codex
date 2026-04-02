@@ -48,6 +48,14 @@ impl SessionRegistryService {
         Ok(brain.session_get_raw(session_id)?)
     }
 
+    pub fn get_session(
+        brain: &Arc<BrainService>,
+        session_id: &str,
+    ) -> anyhow::Result<Option<SessionInfoDto>> {
+        Ok(Self::get_session_info(brain, session_id)?
+            .map(|session| Self::to_session_info_dto(session, String::new())))
+    }
+
     pub fn ensure_session(
         brain: &Arc<BrainService>,
         session_id: &str,

@@ -1839,9 +1839,10 @@ impl App {
         while let Some(event) = app_server.next_ilhae_event().await {
             runtime
                 .cx_cache
-                .notify_desktop(
+                .notify_desktop_for_session(
                     NOTIF_APP_SESSION_EVENT,
                     serde_json::to_value(&event).unwrap_or(serde_json::Value::Null),
+                    event.session_id(),
                 )
                 .await;
         }

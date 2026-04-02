@@ -10,9 +10,13 @@ use tracing::{info, warn};
 
 use crate::{
     DeleteSessionRequest, DeleteSessionResponse, ListSessionsRequest, ListSessionsResponse,
+    IlhaeAppSessionCreateRequest, IlhaeAppSessionCreateResponse,
+    IlhaeAppSessionDeleteRequest, IlhaeAppSessionDeleteResponse, IlhaeAppSessionGetRequest,
+    IlhaeAppSessionGetResponse, IlhaeAppSessionListRequest, IlhaeAppSessionListResponse,
+    IlhaeAppSessionSearchRequest, IlhaeAppSessionSearchResponse, IlhaeAppSessionUpdateRequest,
+    IlhaeAppSessionUpdateResponse, IlhaeAppTimelineReadRequest, IlhaeAppTimelineReadResponse, SessionInfoDto,
     LoadSessionMessagesRequest, LoadSessionMessagesResponse, LoadTeamTimelineRequest,
-    LoadTeamTimelineResponse, SearchSessionsRequest, SearchSessionsResponse, SessionInfoDto,
-    SessionMessageDto, TeamTimelineEventDto, UpdateSessionTitleRequest, UpdateSessionTitleResponse,
+    LoadTeamTimelineResponse, SearchSessionsRequest, SearchSessionsResponse, UpdateSessionTitleRequest, UpdateSessionTitleResponse,
     enrich_response_with_config_options, infer_agent_id_from_command,
 };
 use agent_client_protocol_schema::{
@@ -44,6 +48,56 @@ impl ConnectTo<Conductor> for PersistenceProxy {
             }, sacp::on_receive_request!())
             .on_receive_request_from(Client, {
                 let state = s.clone();
+                async move |_req: IlhaeAppSessionListRequest, responder: Responder<IlhaeAppSessionListResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/session/list RPC");
+                    match crate::session_persistence_service::SessionRegistryService::list_sessions(&state.infra.brain) {
+                        Ok(response) => responder.respond(IlhaeAppSessionListResponse { sessions: response.sessions }),
+                        Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
+                    }
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let state = s.clone();
+                async move |req: IlhaeAppSessionGetRequest, responder: Responder<IlhaeAppSessionGetResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/session/get RPC for {}", req.session_id);
+                    match crate::session_persistence_service::SessionRegistryService::get_session(
+                        &state.infra.brain,
+                        &req.session_id,
+                    ) {
+                        Ok(session) => responder.respond(IlhaeAppSessionGetResponse { session }),
+                        Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
+                    }
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let state = s.clone();
+                async move |req: IlhaeAppSessionCreateRequest, responder: Responder<IlhaeAppSessionCreateResponse>, _cx: ConnectionTo<Conductor>| {
+                    let cwd = req.cwd.as_deref().map(str::trim).filter(|v| !v.is_empty()).unwrap_or("/");
+                    let title = req.title.as_deref().map(str::trim).filter(|v| !v.is_empty()).unwrap_or("Untitled");
+                    let settings_snapshot = state.infra.settings_store.get();
+                    let inferred_agent_id = infer_agent_id_from_command(&settings_snapshot.agent.command);
+                    let agent_id = req.agent_id.as_deref().map(str::trim).filter(|v| !v.is_empty()).unwrap_or(&inferred_agent_id);
+                    let session_id = uuid::Uuid::new_v4().to_string();
+                    info!("ilhae/app/session/create RPC cwd={} agent_id={}", cwd, agent_id);
+                    match state.infra.brain.session_create(&session_id, title, agent_id, cwd) {
+                        Ok(()) => match state.infra.brain.session_get(&session_id) {
+                            Ok(session) => {
+                                let session = session
+                                    .map(serde_json::from_value::<SessionInfoDto>)
+                                    .transpose();
+                                match session {
+                                    Ok(session) => responder.respond(IlhaeAppSessionCreateResponse { session }),
+                                    Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
+                                }
+                            }
+                            Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
+                        },
+                        Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
+                    }
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let state = s.clone();
                 async move |req: SearchSessionsRequest, responder: Responder<SearchSessionsResponse>, _cx: ConnectionTo<Conductor>| {
                     info!("ilhae/search_sessions RPC query={}", req.query);
                     match crate::session_persistence_service::SessionRegistryService::search_sessions(
@@ -53,6 +107,58 @@ impl ConnectTo<Conductor> for PersistenceProxy {
                     ) {
                         Ok(response) => responder.respond(response),
                         Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
+                    }
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let state = s.clone();
+                async move |req: IlhaeAppSessionSearchRequest, responder: Responder<IlhaeAppSessionSearchResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/session/search RPC query={}", req.query);
+                    match crate::session_persistence_service::SessionRegistryService::search_sessions(
+                        &state.infra.brain,
+                        &req.query,
+                        req.limit.try_into().unwrap_or(50),
+                    ) {
+                        Ok(response) => responder.respond(IlhaeAppSessionSearchResponse { sessions: response.sessions }),
+                        Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
+                    }
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let state = s.clone();
+                async move |req: IlhaeAppTimelineReadRequest, responder: Responder<IlhaeAppTimelineReadResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/timeline/read RPC for {}", req.session_id);
+                    let messages = state.infra.brain.session_load_window(
+                        &req.session_id,
+                        req.limit.and_then(|v| usize::try_from(v).ok()),
+                        req.before_id,
+                    );
+                    let team_events = if req.include_team {
+                        crate::session_persistence_service::SessionPersistenceService::load_team_timeline(
+                            &state.infra.brain,
+                            &req.session_id,
+                        )
+                    } else {
+                        Ok(LoadTeamTimelineResponse { events: Vec::new() })
+                    };
+
+                    match (messages, team_events) {
+                        (Ok(messages), Ok(team_events)) => {
+                            let messages = messages
+                                .into_iter()
+                                .map(serde_json::from_value)
+                                .collect::<Result<Vec<_>, _>>();
+                            match messages {
+                                Ok(messages) => responder.respond(IlhaeAppTimelineReadResponse {
+                                    messages,
+                                    team_events: team_events.events,
+                                }),
+                                Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
+                            }
+                        }
+                        (Err(e), _) | (_, Err(e)) => {
+                            responder.respond_with_error(sacp::util::internal_error(e.to_string()))
+                        }
                     }
                 }
             }, sacp::on_receive_request!())
@@ -107,6 +213,19 @@ impl ConnectTo<Conductor> for PersistenceProxy {
             }, sacp::on_receive_request!())
             .on_receive_request_from(Client, {
                 let state = s.clone();
+                async move |req: IlhaeAppSessionDeleteRequest, responder: Responder<IlhaeAppSessionDeleteResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/session/delete RPC for {}", req.session_id);
+                    match crate::session_persistence_service::SessionRegistryService::delete_session(
+                        &state.infra.brain,
+                        &req.session_id,
+                    ) {
+                        Ok(response) => responder.respond(IlhaeAppSessionDeleteResponse { ok: response.ok }),
+                        Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
+                    }
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let state = s.clone();
                 async move |req: UpdateSessionTitleRequest, responder: Responder<UpdateSessionTitleResponse>, _cx: ConnectionTo<Conductor>| {
                     info!("ilhae/update_session_title RPC for {}", req.session_id);
                     match crate::session_persistence_service::SessionRegistryService::update_session_title(
@@ -115,6 +234,20 @@ impl ConnectTo<Conductor> for PersistenceProxy {
                         &req.title,
                     ) {
                         Ok(response) => responder.respond(response),
+                        Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
+                    }
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let state = s.clone();
+                async move |req: IlhaeAppSessionUpdateRequest, responder: Responder<IlhaeAppSessionUpdateResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/session/update RPC for {}", req.session_id);
+                    match crate::session_persistence_service::SessionRegistryService::update_session_title(
+                        &state.infra.brain,
+                        &req.session_id,
+                        &req.title,
+                    ) {
+                        Ok(response) => responder.respond(IlhaeAppSessionUpdateResponse { ok: response.ok }),
                         Err(e) => responder.respond_with_error(sacp::util::internal_error(e.to_string())),
                     }
                 }

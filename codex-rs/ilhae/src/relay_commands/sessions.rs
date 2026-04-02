@@ -5,6 +5,17 @@ use crate::infer_agent_id_from_command;
 use serde_json::json;
 use uuid::Uuid;
 
+fn payload_str<'a>(payload: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| payload.get(*key).and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+}
+
+fn payload_i64(payload: &serde_json::Value, keys: &[&str]) -> Option<i64> {
+    keys.iter().find_map(|key| payload.get(*key).and_then(|v| v.as_i64()))
+}
+
 pub async fn handle_session_list(
     ctx: &SharedState,
     cmd: &crate::relay_server::RelayCommand,
@@ -62,17 +73,10 @@ pub async fn handle_session_load(
     _client_id: u32,
     maybe_respond: impl Fn(Option<&str>, serde_json::Value, Option<String>),
 ) {
-    let session_id = cmd
-        .payload
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let limit = cmd
-        .payload
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize);
-    let before_id = cmd.payload.get("before_id").and_then(|v| v.as_i64());
+    let session_id = payload_str(&cmd.payload, &["session_id", "sessionId"]).unwrap_or("");
+    let limit = payload_i64(&cmd.payload, &["limit"])
+        .and_then(|v| usize::try_from(v).ok());
+    let before_id = payload_i64(&cmd.payload, &["before_id", "beforeId"]);
     match ctx
         .infra
         .brain
@@ -98,11 +102,7 @@ pub async fn handle_session_timeline(
     _client_id: u32,
     maybe_respond: impl Fn(Option<&str>, serde_json::Value, Option<String>),
 ) {
-    let session_id = cmd
-        .payload
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let session_id = payload_str(&cmd.payload, &["session_id", "sessionId"]).unwrap_or("");
     match crate::team_timeline::load_session_timeline(&ctx.infra.brain.sessions(), session_id) {
         Ok(events) => {
             let dto = events
@@ -149,11 +149,7 @@ pub async fn handle_session_delete(
     _client_id: u32,
     maybe_respond: impl Fn(Option<&str>, serde_json::Value, Option<String>),
 ) {
-    let session_id = cmd
-        .payload
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let session_id = payload_str(&cmd.payload, &["session_id", "sessionId"]).unwrap_or("");
     match ctx.infra.brain.session_delete(session_id) {
         Ok(()) => {
             maybe_respond(cmd.request_id.as_deref(), json!({"ok": true}), None);
@@ -175,24 +171,12 @@ pub async fn handle_session_create(
     maybe_respond: impl Fn(Option<&str>, serde_json::Value, Option<String>),
 ) {
     let payload = &cmd.payload;
-    let cwd = payload
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or("/");
-    let title = payload
-        .get("title")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or("Untitled");
+    let cwd = payload_str(payload, &["cwd"]).unwrap_or("/");
+    let title = payload_str(payload, &["title"]).unwrap_or("Untitled");
 
     let settings_snapshot = ctx.infra.settings_store.get();
     let inferred_agent_id = infer_agent_id_from_command(&settings_snapshot.agent.command);
-    let agent_id = payload
-        .get("agent_id")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or(&inferred_agent_id);
+    let agent_id = payload_str(payload, &["agent_id", "agentId"]).unwrap_or(&inferred_agent_id);
 
     let session_id = Uuid::new_v4().to_string();
     match ctx
