@@ -172,8 +172,113 @@ fn specialization_score(target: &TeamRoleTarget, query: &str) -> i32 {
     score
 }
 
+fn response_summary_line(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.chars().take(180).collect::<String>())
+        .unwrap_or_default()
+}
+
+fn response_similarity_score(left: &str, right: &str) -> i32 {
+    let left_tokens = team_query_tokens(left);
+    let right_tokens = team_query_tokens(right);
+    if left_tokens.is_empty() || right_tokens.is_empty() {
+        return 0;
+    }
+    let overlap = left_tokens
+        .iter()
+        .filter(|token| right_tokens.contains(token))
+        .count() as i32;
+    let baseline = left_tokens.len().min(right_tokens.len()) as i32;
+    overlap * 100 / baseline.max(1)
+}
+
+fn recent_team_worker_responses(
+    state: &Arc<crate::SharedState>,
+    session_id: &str,
+    exclude_role: &str,
+) -> Vec<(String, String)> {
+    let Ok(messages) = state.infra.brain.session_load_messages(session_id) else {
+        return Vec::new();
+    };
+    let mut results = Vec::new();
+    let mut seen_roles = std::collections::HashSet::new();
+    for message in messages.iter().rev() {
+        if message.role != "assistant" || message.channel_id != "team" {
+            continue;
+        }
+        let role = message.agent_id.trim().to_ascii_lowercase();
+        if role.is_empty() || role == exclude_role.to_ascii_lowercase() || role == "leader" {
+            continue;
+        }
+        if !seen_roles.insert(role.clone()) {
+            continue;
+        }
+        let summary = response_summary_line(&message.content);
+        if summary.is_empty() {
+            continue;
+        }
+        results.push((role, summary));
+        if results.len() >= 3 {
+            break;
+        }
+    }
+    results
+}
+
+fn arbitration_header(
+    current_summary: &str,
+    related_summaries: &[(String, String)],
+) -> String {
+    if related_summaries.is_empty() {
+        return "Leader judgment: no parallel worker responses were available, so this recommendation stands on the current specialist output.".to_string();
+    }
+    let agreement_count = related_summaries
+        .iter()
+        .filter(|(_, summary)| response_similarity_score(current_summary, summary) >= 35)
+        .count();
+    if agreement_count > 0 {
+        format!(
+            "Leader judgment: consensus detected across {} additional worker response(s); keeping the current specialist recommendation.",
+            agreement_count
+        )
+    } else {
+        "Leader judgment: conflicting worker summaries detected; leader selected the current specialist recommendation and preserved the alternatives in the audit trail.".to_string()
+    }
+}
+
+async fn planning_score(
+    state: &crate::SharedState,
+    target: &TeamRoleTarget,
+    query: &str,
+) -> i32 {
+    let role_lower = target.role.to_ascii_lowercase();
+    let mut score = specialization_score(target, query);
+    if crate::process_supervisor::is_delegation_allowed(
+        &state.team_state().delegation_metrics,
+        &role_lower,
+    )
+    .await
+    {
+        score += 12;
+    } else {
+        score -= 100;
+    }
+    if is_team_role_healthy(state, &role_lower).await {
+        score += 8;
+    } else {
+        score -= 6;
+    }
+    if target.is_main {
+        score -= 2;
+    }
+    score
+}
+
 fn summarize_worker_response_for_leader(
     state: &Arc<crate::SharedState>,
+    session_id: &str,
     role: &str,
     text: &str,
 ) -> String {
@@ -197,18 +302,38 @@ fn summarize_worker_response_for_leader(
         bullets.push(format!("- {}", compact.trim()));
     }
 
+    let current_summary = bullets
+        .first()
+        .map(|line| line.trim_start_matches("- ").trim().to_string())
+        .unwrap_or_default();
+    let related_summaries = recent_team_worker_responses(state, session_id, role);
+
     let profile = find_team_role_target(state, role)
         .map(|target| team_role_profile_label(&target))
         .unwrap_or_else(|| role.to_string());
 
     format!(
-        "Leader arbitration summary from {profile}:\n{}\n- Full worker output is preserved in the team timeline and audit log.",
-        bullets.join("\n")
+        "Leader arbitration summary from {profile}:\n- {}\n{}\n{}\n- Full worker output is preserved in the team timeline and audit log.",
+        arbitration_header(&current_summary, &related_summaries),
+        bullets.join("\n"),
+        if related_summaries.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "Recent parallel worker summaries:\n{}",
+                related_summaries
+                    .iter()
+                    .map(|(role, summary)| format!("- {}: {}", role, summary))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        }
     )
 }
 
 fn client_facing_team_response(
     state: &Arc<crate::SharedState>,
+    session_id: &str,
     role: &str,
     text: &str,
 ) -> Option<(String, String)> {
@@ -219,7 +344,7 @@ fn client_facing_team_response(
     match current_team_merge_policy(state).as_str() {
         "leader_only" if !should_emit_team_response(state, role) => Some((
             current_main_team_role(state),
-            summarize_worker_response_for_leader(state, role, trimmed),
+            summarize_worker_response_for_leader(state, session_id, role, trimmed),
         )),
         _ => Some((role.to_string(), trimmed.to_string())),
     }
@@ -847,9 +972,13 @@ pub async fn setup_a2a_proxy(
         if other_agents.len() == 1 {
             (other_agents[0].clone(), query_trimmed.to_string())
         } else {
-            let mut candidates = other_agents.into_iter().cloned().collect::<Vec<_>>();
-            candidates.sort_by_key(|agent| -specialization_score(agent, query_trimmed));
-            if let Some(best) = candidates.into_iter().next() {
+            let mut scored = Vec::new();
+            for agent in other_agents.into_iter().cloned() {
+                let score = planning_score(state, &agent, query_trimmed).await;
+                scored.push((score, agent));
+            }
+            scored.sort_by_key(|(score, _)| -*score);
+            if let Some((_, best)) = scored.into_iter().next() {
                 (best, query_trimmed.to_string())
             } else {
                 return Err(sacp::Error::invalid_request().data(format!(
@@ -1248,7 +1377,9 @@ pub async fn emit_team_assistant_response(
     role: &str,
     text: &str,
 ) {
-    let Some((visible_role, visible_text)) = client_facing_team_response(state, role, text) else {
+    let Some((visible_role, visible_text)) =
+        client_facing_team_response(state, session_id, role, text)
+    else {
         return;
     };
     let turn_id = format!("team-response-{}", Uuid::new_v4());
