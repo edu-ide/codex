@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 use crate::settings_store::SettingsStore;
-use crate::settings_types::{default_advisor_preset, default_approval_preset};
+use crate::settings_types::{
+    default_advisor_preset, default_approval_preset, default_auto_max_turns,
+    default_auto_pause_on_error, default_auto_timebox_minutes,
+};
 
 /// Resolve the ilhae data directory (~⁄ilhae), using the generic name.
 pub fn resolve_ilhae_data_dir() -> PathBuf {
@@ -85,6 +88,12 @@ pub struct IlhaeProfileAgentConfig {
     pub advisor: bool,
     #[serde(default = "default_advisor_preset")]
     pub advisor_preset: String,
+    #[serde(default = "default_auto_max_turns")]
+    pub auto_max_turns: u32,
+    #[serde(default = "default_auto_timebox_minutes")]
+    pub auto_timebox_minutes: u32,
+    #[serde(default = "default_auto_pause_on_error")]
+    pub auto_pause_on_error: bool,
     pub kairos: bool,
     pub self_improvement: bool,
 }
@@ -154,6 +163,9 @@ pub fn profile_to_dto(id: &str, profile: &IlhaeProfileConfig) -> crate::IlhaeApp
             auto_mode: profile.agent.auto_mode,
             advisor: profile.agent.advisor,
             advisor_preset: profile.agent.advisor_preset.clone(),
+            auto_max_turns: profile.agent.auto_max_turns,
+            auto_timebox_minutes: profile.agent.auto_timebox_minutes,
+            auto_pause_on_error: profile.agent.auto_pause_on_error,
             kairos: profile.agent.kairos,
             self_improvement: profile.agent.self_improvement,
         },
@@ -182,6 +194,9 @@ pub fn dto_to_profile(dto: &crate::IlhaeAppProfileDto) -> IlhaeProfileConfig {
             } else {
                 dto.agent.advisor_preset.clone()
             },
+            auto_max_turns: dto.agent.auto_max_turns.max(1),
+            auto_timebox_minutes: dto.agent.auto_timebox_minutes.max(1),
+            auto_pause_on_error: dto.agent.auto_pause_on_error,
             kairos: dto.agent.kairos,
             self_improvement: dto.agent.self_improvement,
         },
@@ -298,6 +313,18 @@ pub fn apply_ilhae_profile_projection(
         } else {
             profile.agent.advisor_preset.clone()
         }),
+    )?;
+    settings.set_value(
+        "agent.auto_max_turns",
+        serde_json::json!(profile.agent.auto_max_turns.max(1)),
+    )?;
+    settings.set_value(
+        "agent.auto_timebox_minutes",
+        serde_json::json!(profile.agent.auto_timebox_minutes.max(1)),
+    )?;
+    settings.set_value(
+        "agent.auto_pause_on_error",
+        serde_json::json!(profile.agent.auto_pause_on_error),
     )?;
     settings.set_value("agent.kairos_enabled", serde_json::json!(profile.agent.kairos))?;
     settings.set_value(

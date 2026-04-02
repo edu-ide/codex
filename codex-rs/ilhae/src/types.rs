@@ -373,6 +373,12 @@ pub struct IlhaeAppProfileAgentDto {
     pub advisor: bool,
     #[serde(rename = "advisorPreset", default)]
     pub advisor_preset: String,
+    #[serde(rename = "autoMaxTurns", default)]
+    pub auto_max_turns: u32,
+    #[serde(rename = "autoTimeboxMinutes", default)]
+    pub auto_timebox_minutes: u32,
+    #[serde(rename = "autoPauseOnError", default)]
+    pub auto_pause_on_error: bool,
     pub kairos: bool,
     #[serde(rename = "selfImprovement")]
     pub self_improvement: bool,
@@ -539,6 +545,12 @@ pub struct IlhaeEngineStateNotification {
     pub advisor_mode: bool,
     #[serde(default)]
     pub advisor_preset: String,
+    #[serde(default)]
+    pub auto_max_turns: u32,
+    #[serde(default)]
+    pub auto_timebox_minutes: u32,
+    #[serde(default)]
+    pub auto_pause_on_error: bool,
     pub kairos_enabled: bool,
     pub self_improvement_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

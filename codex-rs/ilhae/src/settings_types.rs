@@ -176,6 +176,15 @@ pub struct AgentSettings {
     /// Advisor response preset projected from profile.
     #[serde(default = "default_advisor_preset")]
     pub advisor_preset: String,
+    /// Autonomous loop iteration budget projected from profile.
+    #[serde(default = "default_auto_max_turns")]
+    pub auto_max_turns: u32,
+    /// Autonomous loop time budget in minutes projected from profile.
+    #[serde(default = "default_auto_timebox_minutes")]
+    pub auto_timebox_minutes: u32,
+    /// Whether autonomous execution pauses immediately on execution errors.
+    #[serde(default = "default_auto_pause_on_error")]
+    pub auto_pause_on_error: bool,
     /// Kairos proactive scheduling enablement projected from profile.
     #[serde(default)]
     pub kairos_enabled: bool,
@@ -210,6 +219,18 @@ pub fn default_enabled_engines() -> Vec<String> {
 
 pub fn default_advisor_preset() -> String {
     "review_first".to_string()
+}
+
+pub fn default_auto_max_turns() -> u32 {
+    10
+}
+
+pub fn default_auto_timebox_minutes() -> u32 {
+    15
+}
+
+pub fn default_auto_pause_on_error() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -346,6 +367,9 @@ impl Default for AgentSettings {
             autonomous_mode: false,
             advisor_mode: false,
             advisor_preset: default_advisor_preset(),
+            auto_max_turns: default_auto_max_turns(),
+            auto_timebox_minutes: default_auto_timebox_minutes(),
+            auto_pause_on_error: default_auto_pause_on_error(),
             kairos_enabled: false,
             self_improvement_enabled: false,
             memory_scope: None,

@@ -4,6 +4,7 @@ use agent_client_protocol_schema::{
 };
 use sacp::{Agent, Client, Conductor, ConnectionTo, UntypedMessage};
 use serde_json::json;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use crate::SharedState;
@@ -11,7 +12,7 @@ use crate::context_proxy::autonomy::state::{AutonomousPhase, set_autonomous_phas
 
 use crate::context_proxy::load_team_runtime_config;
 
-use super::{AUTONOMOUS_MAX_TURNS, build_ralph_loop_prompt};
+use super::build_ralph_loop_prompt;
 
 fn resolve_leader_a2a_proxy(state: &std::sync::Arc<SharedState>) -> Option<A2aProxy> {
     if !state.infra.settings_store.get().agent.team_mode {
@@ -72,10 +73,34 @@ pub fn spawn_autonomous_loop(
     leader_text: String,
 ) {
     tokio::spawn(async move {
+        let settings_snapshot = state.infra.settings_store.get();
+        let max_turns = settings_snapshot.agent.auto_max_turns.max(1);
+        let timebox = Duration::from_secs(
+            u64::from(settings_snapshot.agent.auto_timebox_minutes.max(1)) * 60,
+        );
+        let pause_on_error = settings_snapshot.agent.auto_pause_on_error;
+        let started_at = Instant::now();
         let mut context_so_far = leader_text;
         let _leader_a2a_proxy = resolve_leader_a2a_proxy(&state);
 
-        for turn in 1..=AUTONOMOUS_MAX_TURNS {
+        for turn in 1..=max_turns {
+            if started_at.elapsed() >= timebox {
+                info!(
+                    "[AutoMode] Timebox reached after {:?} (session={})",
+                    started_at.elapsed(),
+                    session_id
+                );
+                set_autonomous_phase(
+                    &state,
+                    &session_id,
+                    AutonomousPhase::Completed,
+                    turn.saturating_sub(1),
+                    Some("autonomous timebox reached".to_string()),
+                    None,
+                )
+                .await;
+                break;
+            }
             set_autonomous_phase(
                 &state,
                 &session_id,
@@ -87,7 +112,7 @@ pub fn spawn_autonomous_loop(
             .await;
             info!(
                 "[AutoMode] Turn {}/{} (session={})",
-                turn, AUTONOMOUS_MAX_TURNS, session_id
+                turn, max_turns, session_id
             );
 
             let ua_response = match super::user_agent::request_next_directive(
@@ -203,16 +228,28 @@ pub fn spawn_autonomous_loop(
                 }
                 Err(error) => {
                     warn!("[AutoMode] Autonomous turn failed: {}", error);
+                    if pause_on_error {
+                        set_autonomous_phase(
+                            &state,
+                            &session_id,
+                            AutonomousPhase::Failed,
+                            turn,
+                            Some(format!("{}", error)),
+                            None,
+                        )
+                        .await;
+                        break;
+                    }
                     set_autonomous_phase(
                         &state,
                         &session_id,
-                        AutonomousPhase::Failed,
+                        AutonomousPhase::Running,
                         turn,
-                        Some(format!("{}", error)),
+                        Some(format!("turn failed but continuing: {}", error)),
                         None,
                     )
                     .await;
-                    break;
+                    continue;
                 }
             }
 
