@@ -1,7 +1,7 @@
-use crate::config::types::Personality;
 use crate::error::Result;
 use crate::model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
 pub use codex_api::common::ResponseEvent;
+use codex_config::types::Personality;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::ResponseItem;
@@ -160,14 +160,6 @@ fn strip_total_output_header(output: &str) -> Option<(&str, u32)> {
     let total_lines = total_segment.parse::<u32>().ok()?;
     let remainder = remainder.strip_prefix('\n').unwrap_or(remainder);
     Some((remainder, total_lines))
-}
-
-pub(crate) mod tools {
-    pub(crate) use codex_tools::FreeformTool;
-    pub(crate) use codex_tools::FreeformToolFormat;
-    pub(crate) use codex_tools::ResponsesApiTool;
-    pub(crate) use codex_tools::ToolSearchOutputTool;
-    pub(crate) use codex_tools::ToolSpec;
 }
 
 pub struct ResponseStream {

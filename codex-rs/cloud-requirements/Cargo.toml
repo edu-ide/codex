@@ -1,72 +1,31 @@
 [package]
 name = "codex-cloud-requirements"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
+async-trait = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+codex-backend-client = { workspace = true }
+codex-core = { workspace = true }
+codex-login = { workspace = true }
+codex-otel = { workspace = true }
+codex-protocol = { workspace = true }
 hmac = "0.12.1"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "sync", "time"] }
+toml = { workspace = true }
+tracing = { workspace = true }
 
-[package.version]
-workspace = true
-
-[package.edition]
-workspace = true
-
-[package.license]
-workspace = true
-
-[dependencies.async-trait]
-workspace = true
-
-[dependencies.base64]
-version = "0.22.1"
-
-[dependencies.chrono]
-version = "0.4.43"
-features = [ "serde",]
-
-[dependencies.codex-backend-client]
-workspace = true
-
-[dependencies.codex-core]
-workspace = true
-
-[dependencies.codex-otel]
-workspace = true
-
-[dependencies.codex-protocol]
-workspace = true
-
-[dependencies.serde]
-version = "1"
-features = [ "derive",]
-
-[dependencies.serde_json]
-workspace = true
-
-[dependencies.sha2]
-workspace = true
-
-[dependencies.thiserror]
-version = "2.0.17"
-
-[dependencies.tokio]
-version = "1"
-features = [ "fs", "sync", "time",]
-
-[dependencies.toml]
-workspace = true
-
-[dependencies.tracing]
-version = "0.1.44"
-
-[dev-dependencies.pretty_assertions]
-workspace = true
-
-[dev-dependencies.tempfile]
-workspace = true
-
-[dev-dependencies.tokio]
-version = "1"
-features = [ "macros", "rt", "test-util", "time",]
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }

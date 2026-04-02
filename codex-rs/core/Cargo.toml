@@ -1,411 +1,173 @@
-[[bin]]
-name = "codex-write-config-schema"
-path = "src/bin/config_schema.rs"
-
 [package]
+edition.workspace = true
+license.workspace = true
 name = "codex-core"
+version.workspace = true
 
 [lib]
 doctest = false
 name = "codex_core"
 path = "src/lib.rs"
 
+[[bin]]
+name = "codex-write-config-schema"
+path = "src/bin/config_schema.rs"
+
 [lints]
 workspace = true
 
-[dev-dependencies]
-test-case = "3.3.1"
-
-[package.edition]
-workspace = true
-
-[package.license]
-workspace = true
-
-[package.version]
-workspace = true
-
-
-[dependencies.anyhow]
-workspace = true
-
-[dependencies.arc-swap]
-workspace = true
-
-[dependencies.async-channel]
-workspace = true
-
-[dependencies.async-trait]
-workspace = true
-
-[dependencies.base64]
-version = "0.22.1"
-
-[dependencies.bm25]
-workspace = true
-
-[dependencies.chardetng]
-workspace = true
-
-[dependencies.chrono]
-version = "0.4.43"
-features = [ "serde",]
-
-[dependencies.clap]
-version = "4"
-features = [ "derive",]
-
-[dependencies.codex-analytics]
-workspace = true
-
-[dependencies.codex-api]
-workspace = true
-
-[dependencies.codex-app-server-protocol]
-workspace = true
-
-[dependencies.codex-apply-patch]
-workspace = true
-
-[dependencies.codex-async-utils]
-workspace = true
-
-[dependencies.codex-code-mode]
-workspace = true
-
-[dependencies.codex-connectors]
-workspace = true
-
-[dependencies.codex-config]
-workspace = true
-
-[dependencies.codex-core-skills]
-workspace = true
-
-[dependencies.codex-exec-server]
-workspace = true
-
-[dependencies.codex-features]
-workspace = true
-
-[dependencies.codex-login]
-workspace = true
-
-[dependencies.codex-shell-command]
-workspace = true
-
-[dependencies.codex-execpolicy]
-workspace = true
-
-[dependencies.codex-git-utils]
-workspace = true
-
-[dependencies.codex-hooks]
-workspace = true
-
-[dependencies.codex-instructions]
-workspace = true
-
-[dependencies.codex-network-proxy]
-workspace = true
-
-[dependencies.codex-otel]
-workspace = true
-
-[dependencies.codex-plugin]
-workspace = true
-
-[dependencies.codex-protocol]
-workspace = true
-
-[dependencies.codex-rollout]
-workspace = true
-
-[dependencies.codex-rmcp-client]
-workspace = true
-
-[dependencies.codex-sandboxing]
-workspace = true
-
-[dependencies.codex-state]
-workspace = true
-
-[dependencies.codex-terminal-detection]
-workspace = true
-
-[dependencies.codex-tools]
-workspace = true
-
-[dependencies.codex-utils-absolute-path]
-workspace = true
-
-[dependencies.codex-utils-cache]
-workspace = true
-
-[dependencies.codex-utils-image]
-workspace = true
-
-[dependencies.codex-utils-home-dir]
-workspace = true
-
-[dependencies.codex-utils-output-truncation]
-workspace = true
-
-[dependencies.codex-utils-path]
-workspace = true
-
-[dependencies.codex-utils-plugins]
-workspace = true
-
-[dependencies.codex-utils-pty]
-workspace = true
-
-[dependencies.codex-utils-readiness]
-workspace = true
-
-[dependencies.codex-secrets]
-workspace = true
-
-[dependencies.codex-utils-string]
-workspace = true
-
-[dependencies.codex-utils-stream-parser]
-workspace = true
-
-[dependencies.codex-utils-template]
-workspace = true
-
-[dependencies.codex-windows-sandbox]
-package = "codex-windows-sandbox"
-path = "../windows-sandbox-rs"
-
-[dependencies.csv]
-workspace = true
-
-[dependencies.dirs]
-workspace = true
-
-[dependencies.dunce]
-workspace = true
-
-[dependencies.encoding_rs]
-workspace = true
-
-[dependencies.env-flags]
-workspace = true
-
-[dependencies.eventsource-stream]
-workspace = true
-
-[dependencies.futures]
-version = "0.3"
-default-features = false
-
-[dependencies.http]
-workspace = true
-
-[dependencies.iana-time-zone]
-workspace = true
-
-[dependencies.image]
-workspace = true
-features = [ "jpeg", "png", "webp",]
-
-[dependencies.indexmap]
-workspace = true
-
-[dependencies.libc]
-workspace = true
-
-[dependencies.notify]
-workspace = true
-
-[dependencies.once_cell]
-workspace = true
-
-[dependencies.rand]
-workspace = true
-
-[dependencies.regex-lite]
-workspace = true
-
-[dependencies.reqwest]
-workspace = true
-features = [ "json", "stream",]
-
-[dependencies.rmcp]
-version = "0.15.0"
-default-features = false
-features = [ "base64", "macros", "schemars", "server",]
-
-[dependencies.schemars]
-version = "0.8.22"
-
-[dependencies.serde]
-version = "1"
-features = [ "derive",]
-
-[dependencies.serde_json]
-workspace = true
-
-[dependencies.sha1]
-workspace = true
-
-[dependencies.shlex]
-workspace = true
-
-[dependencies.similar]
-workspace = true
-
-[dependencies.tempfile]
-workspace = true
-
-[dependencies.test-log]
-workspace = true
-
-[dependencies.thiserror]
-version = "2.0.17"
-
-[dependencies.tokio]
-version = "1"
-features = [ "io-std", "macros", "process", "rt-multi-thread", "signal",]
-
-[dependencies.tokio-util]
-version = "0.7.18"
-features = [ "rt",]
-
-[dependencies.tokio-tungstenite]
-workspace = true
-
-[dependencies.toml]
-workspace = true
-
-[dependencies.toml_edit]
-workspace = true
-
-[dependencies.tracing]
-version = "0.1.44"
-features = [ "log",]
-
-[dependencies.url]
-version = "2"
-
-[dependencies.uuid]
-version = "1"
-features = [ "serde", "v4", "v5",]
-
-[dependencies.which]
-workspace = true
-
-[dependencies.wildmatch]
-workspace = true
-
-[dependencies.zip]
-workspace = true
-
-[dev-dependencies.assert_cmd]
-workspace = true
-
-[dev-dependencies.assert_matches]
-workspace = true
-
-[dev-dependencies.codex-arg0]
-workspace = true
-
-[dev-dependencies.codex-otel]
-workspace = true
-features = [ "disable-default-metrics-exporter",]
-
-[dev-dependencies.codex-utils-cargo-bin]
-workspace = true
-
-[dev-dependencies.core_test_support]
-workspace = true
-
-[dev-dependencies.ctor]
-workspace = true
-
-[dev-dependencies.insta]
-workspace = true
-
-[dev-dependencies.maplit]
-workspace = true
-
-[dev-dependencies.opentelemetry]
-workspace = true
-
-[dev-dependencies.predicates]
-workspace = true
-
-[dev-dependencies.pretty_assertions]
-workspace = true
-
-[dev-dependencies.opentelemetry_sdk]
-workspace = true
-features = [ "experimental_metrics_custom_reader", "metrics",]
-
-[dev-dependencies.serial_test]
-workspace = true
-
-[dev-dependencies.tempfile]
-workspace = true
-
-[dev-dependencies.tracing-opentelemetry]
-workspace = true
-
-[dev-dependencies.tracing-subscriber]
-version = "0.3.22"
-
-[dev-dependencies.tracing-test]
-workspace = true
-features = [ "no-env-filter",]
-
-[dev-dependencies.walkdir]
-workspace = true
-
-[dev-dependencies.wiremock]
-workspace = true
-
-[dev-dependencies.zstd]
-workspace = true
-
 [dependencies]
-lsp-types = "0.94.1"
+anyhow = { workspace = true }
+arc-swap = { workspace = true }
+async-channel = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bm25 = { workspace = true }
+chardetng = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+clap = { workspace = true, features = ["derive"] }
+codex-analytics = { workspace = true }
+codex-api = { workspace = true }
+codex-app-server-protocol = { workspace = true }
+codex-apply-patch = { workspace = true }
+codex-async-utils = { workspace = true }
+codex-code-mode = { workspace = true }
+codex-connectors = { workspace = true }
+codex-config = { workspace = true }
+codex-core-skills = { workspace = true }
+codex-exec-server = { workspace = true }
+codex-features = { workspace = true }
+codex-login = { workspace = true }
+codex-mcp = { workspace = true }
+codex-shell-command = { workspace = true }
+codex-execpolicy = { workspace = true }
+codex-git-utils = { workspace = true }
+codex-hooks = { workspace = true }
+codex-instructions = { workspace = true }
+codex-network-proxy = { workspace = true }
+codex-otel = { workspace = true }
+codex-plugin = { workspace = true }
+codex-protocol = { workspace = true }
+codex-rollout = { workspace = true }
+codex-rmcp-client = { workspace = true }
+codex-sandboxing = { workspace = true }
+codex-state = { workspace = true }
+codex-terminal-detection = { workspace = true }
+codex-tools = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-cache = { workspace = true }
+codex-utils-image = { workspace = true }
+codex-utils-home-dir = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+codex-utils-path = { workspace = true }
+codex-utils-plugins = { workspace = true }
+codex-utils-pty = { workspace = true }
+codex-utils-readiness = { workspace = true }
+codex-secrets = { workspace = true }
+codex-utils-string = { workspace = true }
+codex-utils-stream-parser = { workspace = true }
+codex-utils-template = { workspace = true }
+codex-windows-sandbox = { package = "codex-windows-sandbox", path = "../windows-sandbox-rs" }
+csv = { workspace = true }
+dirs = { workspace = true }
+dunce = { workspace = true }
+encoding_rs = { workspace = true }
+env-flags = { workspace = true }
+eventsource-stream = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+iana-time-zone = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png", "webp"] }
+indexmap = { workspace = true }
+libc = { workspace = true }
+notify = { workspace = true }
+once_cell = { workspace = true }
+rand = { workspace = true }
+regex-lite = { workspace = true }
+reqwest = { workspace = true, features = ["json", "stream"] }
+rmcp = { workspace = true, default-features = false, features = [
+    "base64",
+    "macros",
+    "schemars",
+    "server",
+] }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha1 = { workspace = true }
+shlex = { workspace = true }
+similar = { workspace = true }
+tempfile = { workspace = true }
+test-log = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "signal",
+] }
+tokio-util = { workspace = true, features = ["rt"] }
+tokio-tungstenite = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+url = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4", "v5"] }
+which = { workspace = true }
+zip = { workspace = true }
 
-[package.metadata.cargo-shear]
-ignored = [ "openssl-sys",]
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = { workspace = true }
+seccompiler = { workspace = true }
 
-[target."cfg(target_os = \"macos\")".dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"
 
-[target."cfg(target_os = \"linux\")".dependencies.landlock]
-workspace = true
+# Build OpenSSL from source for musl builds.
+[target.x86_64-unknown-linux-musl.dependencies]
+openssl-sys = { workspace = true, features = ["vendored"] }
 
-[target."cfg(target_os = \"linux\")".dependencies.seccompiler]
-workspace = true
+# Build OpenSSL from source for musl builds.
+[target.aarch64-unknown-linux-musl.dependencies]
+openssl-sys = { workspace = true, features = ["vendored"] }
 
-[target.x86_64-unknown-linux-musl.dependencies.openssl-sys]
-workspace = true
-features = [ "vendored",]
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+] }
 
-[target.aarch64-unknown-linux-musl.dependencies.openssl-sys]
-workspace = true
-features = [ "vendored",]
+[target.'cfg(unix)'.dependencies]
+codex-shell-escalation = { workspace = true }
 
-[target."cfg(target_os = \"windows\")".dependencies.windows-sys]
-version = "0.52"
-features = [ "Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell",]
+[dev-dependencies]
+assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
+codex-arg0 = { workspace = true }
+codex-otel = { workspace = true }
+codex-utils-cargo-bin = { workspace = true }
+core_test_support = { workspace = true }
+ctor = { workspace = true }
+insta = { workspace = true }
+maplit = { workspace = true }
+opentelemetry = { workspace = true }
+predicates = { workspace = true }
+pretty_assertions = { workspace = true }
+test-case = "3.3.1"
+opentelemetry_sdk = { workspace = true, features = [
+    "experimental_metrics_custom_reader",
+    "metrics",
+] }
+serial_test = { workspace = true }
+tempfile = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+walkdir = { workspace = true }
+wiremock = { workspace = true }
+zstd = { workspace = true }
 
-[target."cfg(unix)".dependencies.codex-shell-escalation]
-workspace = true
-
-[dependencies.action-browser-rs]
-path = "../../../action-browser-rs"
-default-features = false
-features = ["cdp", "playwright"]
-
-[dependencies.action-computer-rs]
-path = "../../../action-computer-rs"
-
-[dependencies.brain-rs]
-path = "../../../brain-rs"
+[package.metadata.cargo-shear]
+ignored = ["openssl-sys"]

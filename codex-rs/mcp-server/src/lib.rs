@@ -298,8 +298,8 @@ fn extract_outgoing_id(msg: &crate::outgoing_message::OutgoingJsonRpcMessage) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_config::types::OtelExporterKind;
     use codex_core::config::ConfigBuilder;
-    use codex_core::config::types::OtelExporterKind;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use tempfile::TempDir;

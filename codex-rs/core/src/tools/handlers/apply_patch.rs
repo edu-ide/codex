@@ -1,13 +1,8 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::apply_patch;
 use crate::apply_patch::InternalApplyPatchInvocation;
 use crate::apply_patch::convert_apply_patch_to_protocol;
-use crate::client_common::tools::FreeformTool;
-use crate::client_common::tools::FreeformToolFormat;
-use crate::client_common::tools::ResponsesApiTool;
-use crate::client_common::tools::ToolSpec;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::function_tool::FunctionCallError;
@@ -26,8 +21,6 @@ use crate::tools::registry::ToolKind;
 use crate::tools::runtimes::apply_patch::ApplyPatchRequest;
 use crate::tools::runtimes::apply_patch::ApplyPatchRuntime;
 use crate::tools::sandboxing::ToolCtx;
-use crate::tools::spec::ApplyPatchToolArgs;
-use crate::tools::spec::JsonSchema;
 use async_trait::async_trait;
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
@@ -36,69 +29,12 @@ use codex_protocol::models::PermissionProfile;
 use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use codex_sandboxing::policy_transforms::normalize_additional_permissions;
+use codex_tools::ApplyPatchToolArgs;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::tools::handlers::lsp_manager::LspServerManager;
-
-pub struct ApplyPatchHandler {
-    lsp_manager: Arc<LspServerManager>,
-}
-
-impl ApplyPatchHandler {
-    pub fn new(lsp_manager: Arc<LspServerManager>) -> Self {
-        Self { lsp_manager }
-    }
-
-    async fn append_diagnostics(
-        &self,
-        cwd: &Path,
-        file_paths: &[AbsolutePathBuf],
-        mut content: String,
-    ) -> String {
-        let mut has_diags = false;
-        let mut diags_str = String::new();
-
-        for path in file_paths {
-            let path_str = path.as_path().display().to_string();
-            let ext = Path::new(&path_str)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
-            if ext.is_empty() {
-                continue;
-            }
-
-            let root_uri = format!("file://{}", cwd.display());
-            if let Ok(diags) = self
-                .lsp_manager
-                .get_current_diagnostics(ext, &root_uri, &path_str)
-                .await
-            {
-                if !diags.is_empty() {
-                    has_diags = true;
-                    diags_str.push_str(&format!("\nDiagnostics for {}:\n", path_str));
-                    for diag in diags {
-                        if let Some(msg) = diag.get("message").and_then(|m| m.as_str()) {
-                            // Optionally extract line number or just message
-                            diags_str.push_str(&format!("- {}\n", msg));
-                        }
-                    }
-                }
-            }
-        }
-
-        if has_diags {
-            content.push_str("\n\nLSP Diagnostics Error/Warning Report (After Edit):\n");
-            content.push_str(&diags_str);
-        }
-
-        content
-    }
-}
-
-const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("tool_apply_patch.lark");
+pub struct ApplyPatchHandler;
 
 fn file_paths_for_action(action: &ApplyPatchAction) -> Vec<AbsolutePathBuf> {
     let mut keys = Vec::new();
@@ -216,12 +152,12 @@ impl ToolHandler for ApplyPatchHandler {
             ..
         } = invocation;
 
-        let (patch_input, expected_mtime) = match payload {
+        let patch_input = match payload {
             ToolPayload::Function { arguments } => {
                 let args: ApplyPatchToolArgs = parse_arguments(&arguments)?;
-                (args.input, args.expected_mtime)
+                args.input
             }
-            ToolPayload::Custom { input } => (input, None),
+            ToolPayload::Custom { input } => input,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
                     "apply_patch handler received unsupported payload".to_string(),
@@ -237,42 +173,12 @@ impl ToolHandler for ApplyPatchHandler {
             codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
                 let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
                     effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes).await;
-
-                // Concurrency Guard: Check mtime if expected_mtime was provided
-                if let Some(expected_str) = expected_mtime {
-                    if let Ok(expected_val) = expected_str.parse::<f64>() {
-                        for path in &file_paths {
-                            if let Ok(metadata) = std::fs::metadata(path.as_path()) {
-                                if let Ok(mtime) = metadata.modified() {
-                                    let current_val = mtime
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .map(|d| d.as_secs_f64())
-                                        .unwrap_or(0.0);
-
-                                    // Use a small epsilon for float comparison if needed, but f64 is usually exact for timestamps from the same source
-                                    if (current_val - expected_val).abs() > 0.001 {
-                                        return Err(FunctionCallError::RespondToModel(format!(
-                                            "Concurrency Error: File {} has been modified since it was last read. Current mtime: {}, Expected: {}. Please re-read the file before applying changes.",
-                                            path.as_path().display(),
-                                            current_val,
-                                            expected_val
-                                        )));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
                 match apply_patch::apply_patch(turn.as_ref(), &file_system_sandbox_policy, changes)
                     .await
                 {
                     InternalApplyPatchInvocation::Output(item) => {
                         let content = item?;
-                        let final_content = self
-                            .append_diagnostics(cwd.as_path(), &file_paths, content)
-                            .await;
-                        Ok(ApplyPatchToolOutput::from_text(final_content))
+                        Ok(ApplyPatchToolOutput::from_text(content))
                     }
                     InternalApplyPatchInvocation::DelegateToExec(apply) => {
                         let changes = convert_apply_patch_to_protocol(&apply.action);
@@ -288,7 +194,7 @@ impl ToolHandler for ApplyPatchHandler {
 
                         let req = ApplyPatchRequest {
                             action: apply.action,
-                            file_paths: file_paths.clone(),
+                            file_paths,
                             changes,
                             exec_approval_requirement: apply.exec_approval_requirement,
                             additional_permissions: effective_additional_permissions
@@ -323,10 +229,7 @@ impl ToolHandler for ApplyPatchHandler {
                             Some(&tracker),
                         );
                         let content = emitter.finish(event_ctx, out).await?;
-                        let final_content = self
-                            .append_diagnostics(cwd.as_path(), &file_paths, content)
-                            .await;
-                        Ok(ApplyPatchToolOutput::from_text(final_content))
+                        Ok(ApplyPatchToolOutput::from_text(content))
                     }
                 }
             }
@@ -443,119 +346,6 @@ pub(crate) async fn intercept_apply_patch(
         }
         codex_apply_patch::MaybeApplyPatchVerified::NotApplyPatch => Ok(None),
     }
-}
-
-/// Returns a custom tool that can be used to edit files. Well-suited for GPT-5 models
-/// https://platform.openai.com/docs/guides/function-calling#custom-tools
-pub(crate) fn create_apply_patch_freeform_tool() -> ToolSpec {
-    ToolSpec::Freeform(FreeformTool {
-        name: "apply_patch".to_string(),
-        description: "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.".to_string(),
-        format: FreeformToolFormat {
-            r#type: "grammar".to_string(),
-            syntax: "lark".to_string(),
-            definition: APPLY_PATCH_LARK_GRAMMAR.to_string(),
-        },
-    })
-}
-
-/// Returns a json tool that can be used to edit files. Should only be used with gpt-oss models
-pub(crate) fn create_apply_patch_json_tool() -> ToolSpec {
-    let mut properties = BTreeMap::new();
-    properties.insert(
-        "input".to_string(),
-        JsonSchema::String {
-            description: Some(r#"The entire contents of the apply_patch command"#.to_string()),
-        },
-    );
-    properties.insert(
-        "expected_mtime".to_string(),
-        JsonSchema::String {
-            description: Some(r#"The expected last modified time of the file (from read_file metadata). Provides a safety guard against concurrent edits."#.to_string()),
-        },
-    );
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "apply_patch".to_string(),
-        description: r#"Use the `apply_patch` tool to edit files.
-If you previously read the file using `read_file`, you SHOULD provide the `expected_mtime` from the metadata to prevent overwriting concurrent changes.
-
-Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:
-
-*** Begin Patch
-[ one or more file sections ]
-*** End Patch
-
-Within that envelope, you get a sequence of file operations.
-You MUST include a header to specify the action you are taking.
-Each operation starts with one of three headers:
-
-*** Add File: <path> - create a new file. Every following line is a + line (the initial contents).
-*** Delete File: <path> - remove an existing file. Nothing follows.
-*** Update File: <path> - patch an existing file in place (optionally with a rename).
-
-May be immediately followed by *** Move to: <new path> if you want to rename the file.
-Then one or more “hunks”, each introduced by @@ (optionally followed by a hunk header).
-Within a hunk each line starts with:
-
-For instructions on [context_before] and [context_after]:
-- By default, show 3 lines of code immediately above and 3 lines immediately below each change. If a change is within 3 lines of a previous change, do NOT duplicate the first change’s [context_after] lines in the second change’s [context_before] lines.
-- If 3 lines of context is insufficient to uniquely identify the snippet of code within the file, use the @@ operator to indicate the class or function to which the snippet belongs. For instance, we might have:
-@@ class BaseClass
-[3 lines of pre-context]
-- [old_code]
-+ [new_code]
-[3 lines of post-context]
-
-- If a code block is repeated so many times in a class or function such that even a single `@@` statement and 3 lines of context cannot uniquely identify the snippet of code, you can use multiple `@@` statements to jump to the right context. For instance:
-
-@@ class BaseClass
-@@ 	 def method():
-[3 lines of pre-context]
-- [old_code]
-+ [new_code]
-[3 lines of post-context]
-
-The full grammar definition is below:
-Patch := Begin { FileOp } End
-Begin := "*** Begin Patch" NEWLINE
-End := "*** End Patch" NEWLINE
-FileOp := AddFile | DeleteFile | UpdateFile
-AddFile := "*** Add File: " path NEWLINE { "+" line NEWLINE }
-DeleteFile := "*** Delete File: " path NEWLINE
-UpdateFile := "*** Update File: " path NEWLINE [ MoveTo ] { Hunk }
-MoveTo := "*** Move to: " newPath NEWLINE
-Hunk := "@@" [ header ] NEWLINE { HunkLine } [ "*** End of File" NEWLINE ]
-HunkLine := (" " | "-" | "+") text NEWLINE
-
-A full patch can combine several operations:
-
-*** Begin Patch
-*** Add File: hello.txt
-+Hello world
-*** Update File: src/app.py
-*** Move to: src/main.py
-@@ def greet():
--print("Hi")
-+print("Hello, world!")
-*** Delete File: obsolete.txt
-*** End Patch
-
-It is important to remember:
-
-- You must include a header with your intended action (Add/Delete/Update)
-- You must prefix new lines with `+` even when creating a new file
-- File references can only be relative, NEVER ABSOLUTE.
-"#.to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: JsonSchema::Object {
-            properties,
-            required: Some(vec!["input".to_string()]),
-            additional_properties: Some(false.into()),
-        },
-        output_schema: None,
-    })
 }
 
 #[cfg(test)]

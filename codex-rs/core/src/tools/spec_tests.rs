@@ -1883,7 +1883,7 @@ fn search_tool_description_lists_each_codex_apps_connector_once() {
             (
                 "mcp__codex_apps__calendar_create_event".to_string(),
                 ToolInfo {
-                    server_name: crate::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
+                    server_name: codex_mcp::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
                     tool_name: "_create_event".to_string(),
                     tool_namespace: "mcp__codex_apps__calendar".to_string(),
                     tool: mcp_tool(
@@ -1902,7 +1902,7 @@ fn search_tool_description_lists_each_codex_apps_connector_once() {
             (
                 "mcp__codex_apps__calendar_list_events".to_string(),
                 ToolInfo {
-                    server_name: crate::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
+                    server_name: codex_mcp::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
                     tool_name: "_list_events".to_string(),
                     tool_namespace: "mcp__codex_apps__calendar".to_string(),
                     tool: mcp_tool(
@@ -1921,7 +1921,7 @@ fn search_tool_description_lists_each_codex_apps_connector_once() {
             (
                 "mcp__codex_apps__gmail_search_threads".to_string(),
                 ToolInfo {
-                    server_name: crate::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
+                    server_name: codex_mcp::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
                     tool_name: "_search_threads".to_string(),
                     tool_namespace: "mcp__codex_apps__gmail".to_string(),
                     tool: mcp_tool(
@@ -1975,7 +1975,7 @@ fn search_tool_requires_model_capability_and_feature_flag() {
     let app_tools = Some(HashMap::from([(
         "mcp__codex_apps__calendar_create_event".to_string(),
         ToolInfo {
-            server_name: crate::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
+            server_name: codex_mcp::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
             tool_name: "calendar_create_event".to_string(),
             tool_namespace: "mcp__codex_apps__calendar".to_string(),
             tool: mcp_tool(
@@ -2235,7 +2235,7 @@ fn search_tool_description_falls_back_to_connector_name_without_description() {
         Some(HashMap::from([(
             "mcp__codex_apps__calendar_create_event".to_string(),
             ToolInfo {
-                server_name: crate::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
+                server_name: codex_mcp::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
                 tool_name: "_create_event".to_string(),
                 tool_namespace: "mcp__codex_apps__calendar".to_string(),
                 tool: mcp_tool(
@@ -2285,7 +2285,7 @@ fn search_tool_registers_namespaced_app_tool_aliases() {
             (
                 "mcp__codex_apps__calendar_create_event".to_string(),
                 ToolInfo {
-                    server_name: crate::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
+                    server_name: codex_mcp::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
                     tool_name: "_create_event".to_string(),
                     tool_namespace: "mcp__codex_apps__calendar".to_string(),
                     tool: mcp_tool(
@@ -2302,7 +2302,7 @@ fn search_tool_registers_namespaced_app_tool_aliases() {
             (
                 "mcp__codex_apps__calendar_list_events".to_string(),
                 ToolInfo {
-                    server_name: crate::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
+                    server_name: codex_mcp::mcp::CODEX_APPS_MCP_SERVER_NAME.to_string(),
                     tool_name: "_list_events".to_string(),
                     tool_namespace: "mcp__codex_apps__calendar".to_string(),
                     tool: mcp_tool(

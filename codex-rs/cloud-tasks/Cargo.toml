@@ -1,5 +1,8 @@
 [package]
+edition.workspace = true
+license.workspace = true
 name = "codex-cloud-tasks"
+version.workspace = true
 
 [lib]
 name = "codex_cloud_tasks"
@@ -8,99 +11,35 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[package.version]
-workspace = true
-
-[package.edition]
-workspace = true
-
-[package.license]
-workspace = true
-
-[dependencies.anyhow]
-workspace = true
-
-[dependencies.base64]
-version = "0.22.1"
-
-[dependencies.chrono]
-version = "0.4.43"
-features = [ "serde",]
-
-[dependencies.clap]
-version = "4"
-features = [ "derive",]
-
-[dependencies.codex-cloud-tasks-client]
-path = "../cloud-tasks-client"
-features = [ "mock", "online",]
-
-[dependencies.codex-client]
-workspace = true
-
-[dependencies.codex-core]
-path = "../core"
-
-[dependencies.codex-git-utils]
-workspace = true
-
-[dependencies.codex-login]
-path = "../login"
-
-[dependencies.codex-tui]
-workspace = true
-
-[dependencies.codex-utils-cli]
-workspace = true
-
-[dependencies.crossterm]
-workspace = true
-features = [ "event-stream",]
-
-[dependencies.ratatui]
-workspace = true
-
-[dependencies.reqwest]
-workspace = true
-features = [ "json",]
-
-[dependencies.serde]
-version = "1"
-features = [ "derive",]
-
-[dependencies.serde_json]
-workspace = true
-
-[dependencies.tokio]
-version = "1"
-features = [ "macros", "rt-multi-thread",]
-
-[dependencies.tokio-stream]
-workspace = true
-
-[dependencies.tracing]
-version = "0.1.44"
-features = [ "log",]
-
-[dependencies.tracing-subscriber]
-version = "0.3.22"
-features = [ "env-filter",]
-
-[dependencies.unicode-width]
-workspace = true
-
-[dependencies.owo-colors]
-workspace = true
-features = [ "supports-colors",]
-
-[dependencies.supports-color]
-workspace = true
+[dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+clap = { workspace = true, features = ["derive"] }
+codex-client = { workspace = true }
+codex-cloud-tasks-client = { workspace = true }
+# TODO: codex-cloud-tasks-mock-client should be in dev-dependencies.
+codex-cloud-tasks-mock-client = { workspace = true }
+codex-core = { workspace = true }
+codex-git-utils = { workspace = true }
+codex-login = { path = "../login" }
+codex-tui = { workspace = true }
+codex-utils-cli = { workspace = true }
+crossterm = { workspace = true, features = ["event-stream"] }
+owo-colors = { workspace = true, features = ["supports-colors"] }
+ratatui = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+supports-color = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-stream = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+unicode-width = { workspace = true }
 
 [dependencies.async-trait]
 workspace = true
 
-[dev-dependencies.async-trait]
-workspace = true
-
-[dev-dependencies.pretty_assertions]
-workspace = true
+[dev-dependencies]
+pretty_assertions = { workspace = true }

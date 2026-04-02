@@ -1844,6 +1844,7 @@ dependencies = [
  "codex-login",
  "codex-plugin",
  "codex-protocol",
+ "os_info",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -1902,11 +1903,13 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
+ "codex-analytics",
  "codex-app-server-protocol",
  "codex-arg0",
  "codex-backend-client",
  "codex-chatgpt",
  "codex-cloud-requirements",
+ "codex-config",
  "codex-core",
  "codex-exec-server",
  "codex-features",
@@ -1914,9 +1917,11 @@ dependencies = [
  "codex-file-search",
  "codex-git-utils",
  "codex-login",
+ "codex-mcp",
  "codex-otel",
  "codex-protocol",
  "codex-rmcp-client",
+ "codex-rollout",
  "codex-sandboxing",
  "codex-shell-command",
  "codex-state",
@@ -2073,7 +2078,7 @@ dependencies = [
  "anyhow",
  "codex-backend-openapi-models",
  "codex-client",
- "codex-core",
+ "codex-login",
  "codex-protocol",
  "pretty_assertions",
  "reqwest 0.12.28",
@@ -2153,6 +2158,7 @@ dependencies = [
  "codex-features",
  "codex-ilhae",
  "codex-login",
+ "codex-mcp",
  "codex-mcp-server",
  "codex-protocol",
  "codex-responses-api-proxy",
@@ -2164,6 +2170,7 @@ dependencies = [
  "codex-tui",
  "codex-utils-cargo-bin",
  "codex-utils-cli",
+ "codex-utils-path",
  "codex-windows-sandbox",
  "libc",
  "owo-colors",
@@ -2220,6 +2227,7 @@ dependencies = [
  "chrono",
  "codex-backend-client",
  "codex-core",
+ "codex-login",
  "codex-otel",
  "codex-protocol",
  "hmac",
@@ -2245,6 +2253,7 @@ dependencies = [
  "clap",
  "codex-client",
  "codex-cloud-tasks-client",
+ "codex-cloud-tasks-mock-client",
  "codex-core",
  "codex-git-utils",
  "codex-login",
@@ -2274,10 +2283,19 @@ dependencies = [
  "chrono",
  "codex-backend-client",
  "codex-git-utils",
- "diffy",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "codex-cloud-tasks-mock-client"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "codex-cloud-tasks-client",
+ "diffy",
 ]
 
 [[package]]
@@ -2311,11 +2329,13 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "sha2",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml 0.9.11+spec-1.1.0",
  "toml_edit 0.24.0+spec-1.1.0",
  "tracing",
+ "wildmatch",
 ]
 
 [[package]]
@@ -2365,6 +2385,7 @@ dependencies = [
  "codex-hooks",
  "codex-instructions",
  "codex-login",
+ "codex-mcp",
  "codex-network-proxy",
  "codex-otel",
  "codex-plugin",
@@ -2447,7 +2468,6 @@ dependencies = [
  "uuid",
  "walkdir",
  "which 8.0.0",
- "wildmatch",
  "windows-sys 0.52.0",
  "wiremock",
  "zip 2.4.2",
@@ -2510,6 +2530,7 @@ dependencies = [
  "codex-core",
  "codex-feedback",
  "codex-git-utils",
+ "codex-login",
  "codex-otel",
  "codex-protocol",
  "codex-utils-absolute-path",
@@ -2776,6 +2797,7 @@ version = "0.0.0"
 dependencies = [
  "cc",
  "clap",
+ "codex-config",
  "codex-core",
  "codex-protocol",
  "codex-sandboxing",
@@ -2845,6 +2867,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-mcp"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "codex-async-utils",
+ "codex-config",
+ "codex-login",
+ "codex-otel",
+ "codex-plugin",
+ "codex-protocol",
+ "codex-rmcp-client",
+ "codex-utils-plugins",
+ "futures",
+ "pretty_assertions",
+ "regex-lite",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "codex-mcp-server"
 version = "0.0.0"
 dependencies = [
@@ -2853,9 +2904,11 @@ dependencies = [
  "bytes",
  "clap",
  "codex-arg0",
+ "codex-config",
  "codex-core",
  "codex-exec-server",
  "codex-features",
+ "codex-login",
  "codex-protocol",
  "codex-shell-command",
  "codex-utils-cli",
@@ -3218,11 +3271,15 @@ version = "0.0.0"
 dependencies = [
  "codex-app-server-protocol",
  "codex-code-mode",
+ "codex-features",
  "codex-protocol",
+ "codex-utils-absolute-path",
+ "codex-utils-pty",
  "pretty_assertions",
  "rmcp 0.15.0",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -3245,6 +3302,7 @@ dependencies = [
  "codex-chatgpt",
  "codex-cli",
  "codex-cloud-requirements",
+ "codex-config",
  "codex-core",
  "codex-features",
  "codex-feedback",
@@ -3252,8 +3310,10 @@ dependencies = [
  "codex-git-utils",
  "codex-ilhae",
  "codex-login",
+ "codex-mcp",
  "codex-otel",
  "codex-protocol",
+ "codex-rollout",
  "codex-shell-command",
  "codex-state",
  "codex-terminal-detection",
@@ -3444,6 +3504,7 @@ dependencies = [
 name = "codex-utils-plugins"
 version = "0.0.0"
 dependencies = [
+ "codex-login",
  "serde",
  "serde_json",
  "tempfile",
@@ -3857,6 +3918,7 @@ dependencies = [
  "codex-core",
  "codex-exec-server",
  "codex-features",
+ "codex-login",
  "codex-protocol",
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
@@ -7433,7 +7495,7 @@ name = "mcp_test_support"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "codex-core",
+ "codex-login",
  "codex-mcp-server",
  "codex-terminal-detection",
  "codex-utils-cargo-bin",
