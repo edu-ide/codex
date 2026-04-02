@@ -15,10 +15,17 @@ use crate::{
 const ADVISOR_MODE_INSTRUCTION: &str = r#"
 <system_directive priority="high">
 ADVISOR MODE IS ENABLED.
+- Treat this as a response contract for every turn, not just an initial preference.
 - Default to analysis, review, risk discovery, and plan-first guidance.
 - Do not rush into mutating actions unless the user explicitly asks for execution.
-- Prefer surfacing trade-offs, assumptions, and safer alternatives before acting.
-- When execution is requested, keep the advice concise and then proceed.
+- Prefer surfacing trade-offs, assumptions, unknowns, and safer alternatives before acting.
+- When the user has not explicitly asked for execution, prefer a concise structure:
+  1. current understanding
+  2. key risks or gaps
+  3. recommended approach
+  4. concrete next steps
+- When execution is requested, keep the advisory framing concise, then proceed with the requested work.
+- If a requested action looks high-risk, say why before executing.
 </system_directive>
 "#;
 
@@ -106,6 +113,11 @@ pub async fn prepare_session_prompt_context(
                 .is_some_and(|info| info.message_count == 0));
 
     let mut prompt_blocks = Vec::new();
+    if settings_snapshot.agent.advisor_mode {
+        prompt_blocks.push(ContentBlock::Text(TextContent::new(
+            ADVISOR_MODE_INSTRUCTION.to_string(),
+        )));
+    }
     if should_inject_context {
         info!("Injecting context for session: {}", session_id);
 
@@ -130,11 +142,6 @@ pub async fn prepare_session_prompt_context(
             prompt_blocks.push(ContentBlock::Text(TextContent::new(locale_instruction)));
         }
 
-        if settings_snapshot.agent.advisor_mode {
-            prompt_blocks.push(ContentBlock::Text(TextContent::new(
-                ADVISOR_MODE_INSTRUCTION.to_string(),
-            )));
-        }
         if settings_snapshot.agent.self_improvement_enabled {
             prompt_blocks.push(ContentBlock::Text(TextContent::new(
                 SELF_IMPROVEMENT_MODE_INSTRUCTION.to_string(),
