@@ -141,7 +141,7 @@ impl ChatWidget {
         Some(parts.join(" "))
     }
 
-    fn workflow_surface_status_text(&self) -> String {
+    pub(super) fn workflow_surface_status_text(&self) -> String {
         let tmux = if std::env::var_os("TMUX").is_some() {
             "on"
         } else {
@@ -157,7 +157,7 @@ impl ChatWidget {
         format!("wf:tmux:{tmux} worktree:{worktree} remote:{remote}")
     }
 
-    fn workflow_surface_worktree_status(cwd: &Path) -> &'static str {
+    pub(super) fn workflow_surface_worktree_status(cwd: &Path) -> &'static str {
         let Some(repo_root) = get_git_repo_root(cwd) else {
             return "none";
         };
@@ -412,7 +412,7 @@ impl ChatWidget {
         })
     }
 
-    fn status_line_cwd(&self) -> &Path {
+    pub(super) fn status_line_cwd(&self) -> &Path {
         self.current_cwd
             .as_deref()
             .unwrap_or(self.config.cwd.as_path())

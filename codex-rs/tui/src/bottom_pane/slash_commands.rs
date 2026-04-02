@@ -25,6 +25,13 @@ pub(crate) const RUNTIME_MODE_COMMANDS: &[SlashCommand] = &[
     SlashCommand::Improve,
 ];
 
+#[cfg(test)]
+pub(crate) const WORKFLOW_SURFACE_COMMANDS: &[SlashCommand] = &[
+    SlashCommand::Tmux,
+    SlashCommand::Worktree,
+    SlashCommand::Remote,
+];
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct BuiltinCommandFlags {
     pub(crate) collaboration_modes_enabled: bool,
@@ -225,6 +232,20 @@ mod tests {
         let command_names: Vec<&str> = popup_commands.iter().map(|(name, _)| *name).collect();
 
         for command in RUNTIME_MODE_COMMANDS {
+            let name = command.command();
+            assert!(
+                command_names.contains(&name),
+                "expected popup list to include /{name}, got {command_names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn popup_commands_include_workflow_surface_commands() {
+        let popup_commands = builtins_for_popup(all_enabled_flags());
+        let command_names: Vec<&str> = popup_commands.iter().map(|(name, _)| *name).collect();
+
+        for command in WORKFLOW_SURFACE_COMMANDS {
             let name = command.command();
             assert!(
                 command_names.contains(&name),

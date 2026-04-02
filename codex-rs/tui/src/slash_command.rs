@@ -21,6 +21,9 @@ pub enum SlashCommand {
     Team,
     Kairos,
     Improve,
+    Tmux,
+    Worktree,
+    Remote,
     Approvals,
     Permissions,
     #[strum(serialize = "setup-default-sandbox")]
@@ -111,6 +114,9 @@ impl SlashCommand {
             SlashCommand::Team => "toggle team mode",
             SlashCommand::Kairos => "toggle kairos scheduling",
             SlashCommand::Improve => "toggle self-improvement mode",
+            SlashCommand::Tmux => "show tmux workflow guidance",
+            SlashCommand::Worktree => "show git worktree workflow guidance",
+            SlashCommand::Remote => "show remote-control workflow guidance",
             SlashCommand::Personality => "choose a communication style for Codex",
             SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
             SlashCommand::Settings => "configure realtime microphone/speaker",
@@ -156,7 +162,10 @@ impl SlashCommand {
             | SlashCommand::Auto
             | SlashCommand::Team
             | SlashCommand::Kairos
-            | SlashCommand::Improve => CommandCategory::System,
+            | SlashCommand::Improve
+            | SlashCommand::Tmux
+            | SlashCommand::Worktree
+            | SlashCommand::Remote => CommandCategory::System,
             SlashCommand::Mcp | SlashCommand::Apps | SlashCommand::Plugins => {
                 CommandCategory::Mcp
             }
@@ -225,6 +234,9 @@ impl SlashCommand {
             | SlashCommand::Skills
             | SlashCommand::Status
             | SlashCommand::DebugConfig
+            | SlashCommand::Tmux
+            | SlashCommand::Worktree
+            | SlashCommand::Remote
             | SlashCommand::Ps
             | SlashCommand::Stop
             | SlashCommand::Mcp
@@ -303,6 +315,21 @@ mod tests {
     }
 
     #[test]
+    fn workflow_surface_commands_are_system_commands() {
+        use codex_protocol::commands::CommandCategory;
+
+        for command in [
+            SlashCommand::Tmux,
+            SlashCommand::Worktree,
+            SlashCommand::Remote,
+        ] {
+            let meta = command.to_meta();
+            assert_eq!(meta.category, CommandCategory::System);
+            assert!(meta.available_during_task);
+        }
+    }
+
+    #[test]
     fn runtime_mode_descriptions_match_trigger_semantics() {
         let cases = [
             (SlashCommand::Profile, "choose the active profile"),
@@ -311,6 +338,15 @@ mod tests {
             (SlashCommand::Team, "toggle team mode"),
             (SlashCommand::Kairos, "toggle kairos scheduling"),
             (SlashCommand::Improve, "toggle self-improvement mode"),
+            (SlashCommand::Tmux, "show tmux workflow guidance"),
+            (
+                SlashCommand::Worktree,
+                "show git worktree workflow guidance",
+            ),
+            (
+                SlashCommand::Remote,
+                "show remote-control workflow guidance",
+            ),
         ];
 
         for (command, expected) in cases {

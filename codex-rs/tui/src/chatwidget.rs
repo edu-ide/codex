@@ -111,6 +111,7 @@ use codex_ilhae::native_runtime_context;
 #[cfg(test)]
 use codex_git_utils::CommitLogEntry;
 use codex_git_utils::current_branch_name;
+use codex_git_utils::get_git_repo_root;
 use codex_git_utils::local_git_branches;
 use codex_git_utils::recent_commits;
 use codex_otel::RuntimeMetricsSummary;
@@ -5098,6 +5099,15 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::SetIlhaeImproveMode { enabled: None });
             }
+            SlashCommand::Tmux => {
+                self.show_tmux_workflow_surface();
+            }
+            SlashCommand::Worktree => {
+                self.show_worktree_workflow_surface();
+            }
+            SlashCommand::Remote => {
+                self.show_remote_workflow_surface();
+            }
             SlashCommand::Fast => {
                 let next_tier = if matches!(self.config.service_tier, Some(ServiceTier::Fast)) {
                     None
@@ -7901,6 +7911,111 @@ impl ChatWidget {
             enabled: Some(true),
             preset: Some(next.to_string()),
         });
+    }
+
+    fn show_tmux_workflow_surface(&mut self) {
+        let tmux_on = std::env::var_os("TMUX").is_some();
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push("Workflow surface: tmux".into());
+        lines.push(Line::from(format!(
+            "Status: {}",
+            if tmux_on { "on" } else { "off" }
+        )));
+        lines.push(Line::from(self.workflow_surface_status_text()));
+
+        if tmux_on {
+            lines.push("Current session is already inside tmux.".into());
+            lines.push(
+                "Recommended next steps: split a pane, open a new window, or keep teammate work isolated per pane."
+                    .into(),
+            );
+            lines.push(
+                "Examples: tmux split-window -h | tmux split-window -v | tmux new-window -n ilhae-team"
+                    .into(),
+            );
+        } else {
+            lines.push("This session is not running inside tmux.".into());
+            lines.push(
+                "Recommended next step: start a tmux session before spawning teammate or long-running workflow work."
+                    .into(),
+            );
+            lines.push("Example: tmux new-session -s ilhae".into());
+        }
+
+        self.add_plain_history_lines(lines);
+    }
+
+    fn show_worktree_workflow_surface(&mut self) {
+        let cwd = self.status_line_cwd();
+        let worktree = Self::workflow_surface_worktree_status(cwd);
+        let repo_root = get_git_repo_root(cwd);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push("Workflow surface: worktree".into());
+        lines.push(Line::from(format!("Status: {worktree}")));
+        lines.push(Line::from(self.workflow_surface_status_text()));
+
+        match repo_root {
+            None => {
+                lines.push("Current directory is not inside a git repository.".into());
+                lines.push(
+                    "Recommended next step: move into a repository before using worktree-isolated task execution."
+                        .into(),
+                );
+            }
+            Some(repo_root) => {
+                lines.push(Line::from(format!("Repo root: {}", repo_root.display())));
+                if worktree == "linked" {
+                    lines.push("Current session is already running inside a linked worktree.".into());
+                    lines.push(
+                        "Recommended next step: keep task-specific edits isolated here and avoid mixing them back into the main repo tree."
+                            .into(),
+                    );
+                } else {
+                    lines.push("Current session is running from the main repository checkout.".into());
+                    lines.push(
+                        "Recommended next step: create a linked worktree for isolated task or teammate execution."
+                            .into(),
+                    );
+                    let repo_name = repo_root
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("repo");
+                    lines.push(Line::from(format!(
+                        "Example: git worktree add ../{repo_name}-task <new-branch>"
+                    )));
+                }
+            }
+        }
+
+        self.add_plain_history_lines(lines);
+    }
+
+    fn show_remote_workflow_surface(&mut self) {
+        let remote = if native_runtime_context().is_some() {
+            "native"
+        } else {
+            "remote"
+        };
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push("Workflow surface: remote-control".into());
+        lines.push(Line::from(format!("Status: {remote}")));
+        lines.push(Line::from(self.workflow_surface_status_text()));
+
+        if remote == "native" {
+            lines.push("Current session is using the native embedded ilhae runtime.".into());
+            lines.push(
+                "Recommended next step: use desktop/mobile or a remote app-server connection when you need handoff or remote-control style operation."
+                    .into(),
+            );
+        } else {
+            lines.push("Current session is already running against a remote workflow surface.".into());
+            lines.push(
+                "Recommended next step: keep long-running work attached here and use local clients only as control surfaces."
+                    .into(),
+            );
+        }
+
+        self.add_plain_history_lines(lines);
     }
 
     pub(crate) fn open_realtime_audio_popup(&mut self) {
