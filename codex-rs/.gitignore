@@ -6,3 +6,11 @@
 
 # Value of CARGO_TARGET_DIR when using .devcontainer/devcontainer.json.
 /target-arm64/
+
+# Local build artifacts from the nested ilhae workspace must never be committed.
+/ilhae/target/
+/ilhae/test-reports/
+/check_output.json
+/ilhae/check.json
+/ilhae/err.txt
+/ilhae/errors.txt
