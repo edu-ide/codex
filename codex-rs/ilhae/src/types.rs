@@ -1684,6 +1684,8 @@ pub struct TaskCreateInput {
     pub target_url: Option<String>,
     /// Detailed instructions for the agent (optional)
     pub instructions: Option<String>,
+    /// Preferred team roles for delegation/reassignment hints (optional)
+    pub preferred_roles: Option<Vec<String>>,
     /// Whether this recurring task is enabled (default: true)
     pub enabled: Option<bool>,
 }
@@ -1714,6 +1716,8 @@ pub struct TaskUpdateInput {
     pub target_url: Option<String>,
     /// Instructions (optional)
     pub instructions: Option<String>,
+    /// Preferred team roles for delegation/reassignment hints (optional)
+    pub preferred_roles: Option<Vec<String>>,
     /// Enable/disable (optional)
     pub enabled: Option<bool>,
 }

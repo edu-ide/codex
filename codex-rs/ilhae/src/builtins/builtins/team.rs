@@ -109,14 +109,35 @@ fn team_query_tokens(query: &str) -> Vec<String> {
         .collect()
 }
 
+fn extract_preferred_roles_hint(query: &str) -> Vec<String> {
+    let lower = query.to_ascii_lowercase();
+    let marker = "[ilhae:preferred_roles=";
+    let Some(start) = lower.find(marker) else {
+        return Vec::new();
+    };
+    let rest = &query[start + marker.len()..];
+    let Some(end) = rest.find(']') else {
+        return Vec::new();
+    };
+    rest[..end]
+        .split(',')
+        .map(|role| role.trim().to_ascii_lowercase())
+        .filter(|role| !role.is_empty())
+        .collect()
+}
+
 fn specialization_score(target: &TeamRoleTarget, query: &str) -> i32 {
     let lower_query = query.to_ascii_lowercase();
     let tokens = team_query_tokens(query);
+    let preferred_roles = extract_preferred_roles_hint(query);
     let mut score = 0i32;
 
     let role = target.role.to_ascii_lowercase();
     if lower_query.contains(&role) {
         score += 8;
+    }
+    if let Some(idx) = preferred_roles.iter().position(|preferred| preferred == &role) {
+        score += 20 - idx as i32;
     }
     if lower_query.contains(&target.engine.to_ascii_lowercase()) {
         score += 3;
@@ -826,15 +847,21 @@ pub async fn setup_a2a_proxy(
         if other_agents.len() == 1 {
             (other_agents[0].clone(), query_trimmed.to_string())
         } else {
-            return Err(sacp::Error::invalid_request().data(format!(
-                "Specify agent with @mention. Available: {}",
-                team_cfg
-                    .agents
-                    .iter()
-                    .map(|a| format!("@{}", a.role.to_lowercase()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )));
+            let mut candidates = other_agents.into_iter().cloned().collect::<Vec<_>>();
+            candidates.sort_by_key(|agent| -specialization_score(agent, query_trimmed));
+            if let Some(best) = candidates.into_iter().next() {
+                (best, query_trimmed.to_string())
+            } else {
+                return Err(sacp::Error::invalid_request().data(format!(
+                    "Specify agent with @mention. Available: {}",
+                    team_cfg
+                        .agents
+                        .iter()
+                        .map(|a| format!("@{}", a.role.to_lowercase()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
         }
     };
 

@@ -5,6 +5,38 @@ macro_rules! register_task_tools {
             EmptyInput, IdInput, TaskAddHistoryInput, TaskCreateInput, TaskUpdateInput,
         };
 
+        fn append_preferred_roles_hint(
+            instructions: Option<&str>,
+            preferred_roles: Option<&Vec<String>>,
+        ) -> Option<String> {
+            let preferred = preferred_roles
+                .map(|roles| {
+                    roles.iter()
+                        .map(|role| role.trim().to_ascii_lowercase())
+                        .filter(|role| !role.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if preferred.is_empty() {
+                return instructions.map(|value| value.to_string());
+            }
+            let marker = format!("[ilhae:preferred_roles={}]", preferred.join(","));
+            let mut merged = instructions.unwrap_or("").trim().to_string();
+            if !merged.is_empty() {
+                merged.push_str("\n\n");
+            }
+            merged.push_str(&marker);
+            Some(merged)
+        }
+
+        fn first_preferred_role(preferred_roles: Option<&Vec<String>>) -> Option<String> {
+            preferred_roles.and_then(|roles| {
+                roles.iter()
+                    .map(|role| role.trim().to_ascii_lowercase())
+                    .find(|role| !role.is_empty())
+            })
+        }
+
         $builder
             // ─── Task ─────
             .tool_fn(
@@ -30,6 +62,9 @@ macro_rules! register_task_tools {
                     let bts = $bt_settings.clone();
                     async move |input: TaskCreateInput, _cx| {
                         $crate::check_tool_enabled!(bts, "task_create");
+                        let preferred_agent = first_preferred_role(input.preferred_roles.as_ref());
+                        let instructions =
+                            append_preferred_roles_hint(input.instructions.as_deref(), input.preferred_roles.as_ref());
                         match brain.schedule_create(
                             &input.title,
                             input.description.as_deref(),
@@ -39,19 +74,42 @@ macro_rules! register_task_tools {
                             input.prompt.as_deref(),
                             input.cron_expr.as_deref(),
                             input.target_url.as_deref(),
-                            input.instructions.as_deref(),
+                            instructions.as_deref(),
                             input.enabled,
                         ) {
                             Ok(t) => {
-                                let days_str = if t.days.is_empty() {
+                                let task = if preferred_agent.is_some() || instructions.is_some() {
+                                    brain.schedule_update_full(
+                                        &t.id,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        instructions.as_deref(),
+                                        None,
+                                        preferred_agent.as_deref(),
+                                        None,
+                                        None,
+                                        None,
+                                    ).unwrap_or(t)
+                                } else {
+                                    t
+                                };
+                                let days_str = if task.days.is_empty() {
                                     "매일".to_string()
                                 } else {
                                     let names = ["일","월","화","수","목","금","토"];
-                                    t.days.iter().map(|d| *names.get(*d as usize).unwrap_or(&"?")).collect::<Vec<_>>().join(",")
+                                    task.days.iter().map(|d| *names.get(*d as usize).unwrap_or(&"?")).collect::<Vec<_>>().join(",")
                                 };
-                                let schedule_str = t.schedule.as_deref().unwrap_or("미지정");
-                                let cron_str = t.cron_expr.as_deref().unwrap_or("없음");
-                                Ok::<String, sacp::Error>(format!("✅ Created task '{}' (id: {}, schedule: {}, days: {}, cron: {})", t.title, t.id, schedule_str, days_str, cron_str))
+                                let schedule_str = task.schedule.as_deref().unwrap_or("미지정");
+                                let cron_str = task.cron_expr.as_deref().unwrap_or("없음");
+                                Ok::<String, sacp::Error>(format!("✅ Created task '{}' (id: {}, schedule: {}, days: {}, cron: {})", task.title, task.id, schedule_str, days_str, cron_str))
                             }
                             Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
                         }
@@ -67,7 +125,10 @@ macro_rules! register_task_tools {
                     let bts = $bt_settings.clone();
                     async move |input: TaskUpdateInput, _cx| {
                         $crate::check_tool_enabled!(bts, "task_update");
-                        match brain.schedule_update(
+                        let preferred_agent = first_preferred_role(input.preferred_roles.as_ref());
+                        let instructions =
+                            append_preferred_roles_hint(input.instructions.as_deref(), input.preferred_roles.as_ref());
+                        match brain.schedule_update_full(
                             &input.id,
                             input.title.as_deref(),
                             input.description.as_deref(),
@@ -79,8 +140,12 @@ macro_rules! register_task_tools {
                             input.prompt.as_deref(),
                             input.cron_expr.as_deref(),
                             input.target_url.as_deref(),
-                            input.instructions.as_deref(),
+                            instructions.as_deref(),
                             input.enabled,
+                            preferred_agent.as_deref(),
+                            None,
+                            None,
+                            None,
                         ) {
                             Ok(t) => {
                                 let done_str = if t.done { "✅" } else { "⬜" };
@@ -180,6 +245,9 @@ macro_rules! register_task_tools {
                     let bts = $bt_settings.clone();
                     async move |input: TaskCreateInput, _cx| {
                         $crate::check_tool_enabled!(bts, "task_create");
+                        let preferred_agent = first_preferred_role(input.preferred_roles.as_ref());
+                        let instructions =
+                            append_preferred_roles_hint(input.instructions.as_deref(), input.preferred_roles.as_ref());
                         match brain.schedule_create_project(
                             &input.title,
                             input.description.as_deref(),
@@ -189,19 +257,42 @@ macro_rules! register_task_tools {
                             input.prompt.as_deref(),
                             input.cron_expr.as_deref(),
                             input.target_url.as_deref(),
-                            input.instructions.as_deref(),
+                            instructions.as_deref(),
                             input.enabled,
                         ) {
                             Ok(t) => {
-                                let days_str = if t.days.is_empty() {
+                                let task = if preferred_agent.is_some() || instructions.is_some() {
+                                    brain.schedule_update_full(
+                                        &t.id,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        instructions.as_deref(),
+                                        None,
+                                        preferred_agent.as_deref(),
+                                        None,
+                                        None,
+                                        None,
+                                    ).unwrap_or(t)
+                                } else {
+                                    t
+                                };
+                                let days_str = if task.days.is_empty() {
                                     "매일".to_string()
                                 } else {
                                     let names = ["일", "월", "화", "수", "목", "금", "토"];
-                                    t.days.iter().map(|d| *names.get(*d as usize).unwrap_or(&"?")).collect::<Vec<_>>().join(",")
+                                    task.days.iter().map(|d| *names.get(*d as usize).unwrap_or(&"?")).collect::<Vec<_>>().join(",")
                                 };
-                                let schedule_str = t.schedule.as_deref().unwrap_or("미지정");
-                                let cron_str = t.cron_expr.as_deref().unwrap_or("없음");
-                                Ok::<String, sacp::Error>(format!("✅ Created project '{}' (id: {}, schedule: {}, days: {}, cron: {})", t.title, t.id, schedule_str, days_str, cron_str))
+                                let schedule_str = task.schedule.as_deref().unwrap_or("미지정");
+                                let cron_str = task.cron_expr.as_deref().unwrap_or("없음");
+                                Ok::<String, sacp::Error>(format!("✅ Created project '{}' (id: {}, schedule: {}, days: {}, cron: {})", task.title, task.id, schedule_str, days_str, cron_str))
                             }
                             Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
                         }
@@ -217,7 +308,10 @@ macro_rules! register_task_tools {
                     let bts = $bt_settings.clone();
                     async move |input: TaskUpdateInput, _cx| {
                         $crate::check_tool_enabled!(bts, "task_update");
-                        match brain.schedule_update(
+                        let preferred_agent = first_preferred_role(input.preferred_roles.as_ref());
+                        let instructions =
+                            append_preferred_roles_hint(input.instructions.as_deref(), input.preferred_roles.as_ref());
+                        match brain.schedule_update_full(
                             &input.id,
                             input.title.as_deref(),
                             input.description.as_deref(),
@@ -229,8 +323,12 @@ macro_rules! register_task_tools {
                             input.prompt.as_deref(),
                             input.cron_expr.as_deref(),
                             input.target_url.as_deref(),
-                            input.instructions.as_deref(),
+                            instructions.as_deref(),
                             input.enabled,
+                            preferred_agent.as_deref(),
+                            None,
+                            None,
+                            None,
                         ) {
                             Ok(t) => {
                                 let done_str = if t.done { "✅" } else { "⬜" };

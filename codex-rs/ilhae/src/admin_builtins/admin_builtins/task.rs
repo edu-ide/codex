@@ -22,6 +22,38 @@ use crate::{
 #[macro_export]
 macro_rules! register_admin_task_handlers {
     ($builder:expr, $state:expr) => {{
+        fn append_preferred_roles_hint(
+            instructions: Option<&str>,
+            preferred_roles: Option<&Vec<String>>,
+        ) -> Option<String> {
+            let preferred = preferred_roles
+                .map(|roles| {
+                    roles.iter()
+                        .map(|role| role.trim().to_ascii_lowercase())
+                        .filter(|role| !role.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if preferred.is_empty() {
+                return instructions.map(|value| value.to_string());
+            }
+            let marker = format!("[ilhae:preferred_roles={}]", preferred.join(","));
+            let mut merged = instructions.unwrap_or("").trim().to_string();
+            if !merged.is_empty() {
+                merged.push_str("\n\n");
+            }
+            merged.push_str(&marker);
+            Some(merged)
+        }
+
+        fn first_preferred_role(preferred_roles: Option<&Vec<String>>) -> Option<String> {
+            preferred_roles.and_then(|roles| {
+                roles.iter()
+                    .map(|role| role.trim().to_ascii_lowercase())
+                    .find(|role| !role.is_empty())
+            })
+        }
+
         let s = $state.clone();
         $builder
             .on_receive_request_from(Client, {
@@ -53,6 +85,9 @@ macro_rules! register_admin_task_handlers {
                 async move |req: crate::IlhaeAppTaskCreateRequest, responder: Responder<crate::IlhaeAppTaskCreateResponse>, _cx: ConnectionTo<Conductor>| {
                     info!("ilhae/app/task/create RPC title={}", req.task.title);
                     let task = req.task;
+                    let preferred_agent = first_preferred_role(task.preferred_roles.as_ref());
+                    let instructions =
+                        append_preferred_roles_hint(task.instructions.as_deref(), task.preferred_roles.as_ref());
                     match brain.schedule_create(
                         &task.title,
                         task.description.as_deref(),
@@ -62,12 +97,37 @@ macro_rules! register_admin_task_handlers {
                         task.prompt.as_deref(),
                         task.cron_expr.as_deref(),
                         task.target_url.as_deref(),
-                        task.instructions.as_deref(),
+                        instructions.as_deref(),
                         task.enabled,
                     ) {
-                        Ok(task) => responder.respond(crate::IlhaeAppTaskCreateResponse {
-                            task: serde_json::to_value(task).ok(),
-                        }),
+                        Ok(task) => {
+                            let task = if preferred_agent.is_some() || instructions.is_some() {
+                                brain.schedule_update_full(
+                                    &task.id,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    instructions.as_deref(),
+                                    None,
+                                    preferred_agent.as_deref(),
+                                    None,
+                                    None,
+                                    None,
+                                ).unwrap_or(task)
+                            } else {
+                                task
+                            };
+                            responder.respond(crate::IlhaeAppTaskCreateResponse {
+                                task: serde_json::to_value(task).ok(),
+                            })
+                        }
                         Err(e) => responder.respond_with_error(sacp::util::internal_error(e)),
                     }
                 }
@@ -77,7 +137,10 @@ macro_rules! register_admin_task_handlers {
                 async move |req: crate::IlhaeAppTaskUpdateRequest, responder: Responder<crate::IlhaeAppTaskUpdateResponse>, _cx: ConnectionTo<Conductor>| {
                     info!("ilhae/app/task/update RPC id={}", req.task.id);
                     let task = req.task;
-                    match brain.schedule_update(
+                    let preferred_agent = first_preferred_role(task.preferred_roles.as_ref());
+                    let instructions =
+                        append_preferred_roles_hint(task.instructions.as_deref(), task.preferred_roles.as_ref());
+                    match brain.schedule_update_full(
                         &task.id,
                         task.title.as_deref(),
                         task.description.as_deref(),
@@ -89,8 +152,12 @@ macro_rules! register_admin_task_handlers {
                         task.prompt.as_deref(),
                         task.cron_expr.as_deref(),
                         task.target_url.as_deref(),
-                        task.instructions.as_deref(),
+                        instructions.as_deref(),
                         task.enabled,
+                        preferred_agent.as_deref(),
+                        None,
+                        None,
+                        None,
                     ) {
                         Ok(task) => responder.respond(crate::IlhaeAppTaskUpdateResponse {
                             task: serde_json::to_value(task).ok(),
