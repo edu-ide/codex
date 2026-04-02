@@ -155,7 +155,7 @@ impl Default for AgentCapabilitiesOverride {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentSettings {
-    /// Agent command to spawn (e.g. "gemini --experimental-acp", "claude --acp")
+    /// Agent command to spawn (e.g. "ilhae", "gemini --experimental-acp", "claude --acp")
     pub command: String,
     /// Active ilhae product profile projected from ~/.ilhae/config.toml
     #[serde(default)]
@@ -200,6 +200,9 @@ pub struct AgentSettings {
     /// Self-improvement loop enablement projected from profile.
     #[serde(default)]
     pub self_improvement_enabled: bool,
+    /// Self-improvement execution preset projected from profile.
+    #[serde(default = "default_self_improvement_preset")]
+    pub self_improvement_preset: String,
     /// Runtime memory scope projected from profile.
     #[serde(default)]
     pub memory_scope: Option<String>,
@@ -252,6 +255,10 @@ pub fn default_team_max_retries() -> u32 {
 
 pub fn default_team_pause_on_error() -> bool {
     true
+}
+
+pub fn default_self_improvement_preset() -> String {
+    "safe_summarize".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -381,7 +388,7 @@ impl Default for AsrSettings {
 impl Default for AgentSettings {
     fn default() -> Self {
         Self {
-            command: "gemini-ilhae --experimental-acp".to_string(),
+            command: "ilhae".to_string(),
             active_profile: None,
             a2a_endpoint: String::new(),
             team_mode: false,
@@ -396,6 +403,7 @@ impl Default for AgentSettings {
             auto_pause_on_error: default_auto_pause_on_error(),
             kairos_enabled: false,
             self_improvement_enabled: false,
+            self_improvement_preset: default_self_improvement_preset(),
             memory_scope: None,
             task_scope: None,
             mock_mode: false,

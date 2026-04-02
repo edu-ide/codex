@@ -57,6 +57,39 @@ ADVISOR MODE IS ENABLED.
 </system_directive>
 "#;
 
+const SELF_IMPROVEMENT_MODE_REVIEW_ONLY_INSTRUCTION: &str = r#"
+<system_directive priority="medium">
+SELF-IMPROVEMENT MODE IS ENABLED.
+- Preset: review_only.
+- Do not auto-apply memory changes.
+- Prefer identifying reusable knowledge, surfacing candidates, and asking for review before promotion or extraction.
+- Use dream analysis to decide what should be reviewed, summarized, promoted, or ignored.
+</system_directive>
+"#;
+
+const SELF_IMPROVEMENT_MODE_SAFE_SUMMARIZE_INSTRUCTION: &str = r#"
+<system_directive priority="medium">
+SELF-IMPROVEMENT MODE IS ENABLED.
+- Preset: safe_summarize.
+- Prefer capturing durable knowledge when the interaction yields reusable facts, preferences, or stable procedures.
+- Use dream analysis deliberately and allow safe summarization of clearly repetitive memory groups.
+- Do not auto-promote or auto-extract unless the action is explicitly requested.
+- Keep the working conversation concise and externalize reusable learnings into the brain layer when justified.
+</system_directive>
+"#;
+
+const SELF_IMPROVEMENT_MODE_SAFE_APPLY_INSTRUCTION: &str = r#"
+<system_directive priority="medium">
+SELF-IMPROVEMENT MODE IS ENABLED.
+- Preset: safe_apply.
+- Prefer converting clearly reusable, stable outputs into durable memory artifacts.
+- Safe summarization of repetitive dream groups is allowed.
+- When a promotion or extraction target is explicit and low-risk, prefer applying it instead of leaving only a suggestion.
+- If the target or effect is ambiguous, fall back to review-first behavior instead of forcing an apply.
+- Keep the working conversation concise and externalize reusable learnings into the brain layer when justified.
+</system_directive>
+"#;
+
 const SELF_IMPROVEMENT_MODE_INSTRUCTION: &str = r#"
 <system_directive priority="medium">
 SELF-IMPROVEMENT MODE IS ENABLED.
@@ -85,6 +118,15 @@ fn advisor_instruction_for_preset(preset: &str) -> &'static str {
         "risk_first" => ADVISOR_MODE_RISK_FIRST_INSTRUCTION,
         "plan_first" => ADVISOR_MODE_PLAN_FIRST_INSTRUCTION,
         _ => ADVISOR_MODE_REVIEW_FIRST_INSTRUCTION,
+    }
+}
+
+fn self_improvement_instruction_for_preset(preset: &str) -> &'static str {
+    match preset.trim() {
+        "review_only" => SELF_IMPROVEMENT_MODE_REVIEW_ONLY_INSTRUCTION,
+        "safe_apply" => SELF_IMPROVEMENT_MODE_SAFE_APPLY_INSTRUCTION,
+        "safe_summarize" => SELF_IMPROVEMENT_MODE_SAFE_SUMMARIZE_INSTRUCTION,
+        _ => SELF_IMPROVEMENT_MODE_INSTRUCTION,
     }
 }
 
@@ -154,6 +196,14 @@ pub async fn prepare_session_prompt_context(
             advisor_instruction_for_preset(&settings_snapshot.agent.advisor_preset).to_string(),
         )));
     }
+    if settings_snapshot.agent.self_improvement_enabled {
+        prompt_blocks.push(ContentBlock::Text(TextContent::new(
+            self_improvement_instruction_for_preset(
+                &settings_snapshot.agent.self_improvement_preset,
+            )
+            .to_string(),
+        )));
+    }
     if should_inject_context {
         info!("Injecting context for session: {}", session_id);
 
@@ -176,12 +226,6 @@ pub async fn prepare_session_prompt_context(
                 lang_name, lang_name
             );
             prompt_blocks.push(ContentBlock::Text(TextContent::new(locale_instruction)));
-        }
-
-        if settings_snapshot.agent.self_improvement_enabled {
-            prompt_blocks.push(ContentBlock::Text(TextContent::new(
-                SELF_IMPROVEMENT_MODE_INSTRUCTION.to_string(),
-            )));
         }
 
         let vault_dir = deps.brain.vault_dir();

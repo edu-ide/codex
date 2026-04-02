@@ -806,6 +806,8 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                     applied_group_signatures.clear();
                     continue;
                 }
+                let self_improvement_preset =
+                    settings_snapshot.agent.self_improvement_preset.trim().to_ascii_lowercase();
 
                 let Ok(preview) = brain_for_self_improvement.memory_dream_preview(5) else {
                     continue;
@@ -855,56 +857,58 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                 }
 
                 let mut auto_summarized = Vec::new();
-                for group in &groups {
-                    let Some(path) = group.get("path").and_then(|value| value.as_str()) else {
-                        continue;
-                    };
-                    let normalized_path = normalize_loop_path(path);
-                    if !summarize_paths.contains(&normalized_path) {
-                        continue;
-                    }
-
-                    let ids = group
-                        .get("chunk_ids")
-                        .and_then(|value| value.as_array())
-                        .map(|items| {
-                            items
-                                .iter()
-                                .filter_map(|item| item.as_i64())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    let chunk_count = group
-                        .get("chunk_count")
-                        .and_then(|value| value.as_u64())
-                        .unwrap_or(ids.len() as u64) as usize;
-
-                    if ids.is_empty() || chunk_count < 2 {
-                        continue;
-                    }
-
-                    let signature = format!(
-                        "{}#{}",
-                        normalized_path,
-                        ids.iter()
-                            .map(|id| id.to_string())
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    );
-                    if applied_group_signatures.contains(&signature) {
-                        continue;
-                    }
-
-                    match brain_for_self_improvement.memory_dream_summarize(&ids) {
-                        Ok(_) => {
-                            applied_group_signatures.insert(signature);
-                            auto_summarized.push((normalized_path, chunk_count));
+                if self_improvement_preset != "review_only" {
+                    for group in &groups {
+                        let Some(path) = group.get("path").and_then(|value| value.as_str()) else {
+                            continue;
+                        };
+                        let normalized_path = normalize_loop_path(path);
+                        if !summarize_paths.contains(&normalized_path) {
+                            continue;
                         }
-                        Err(error) => {
-                            warn!(
-                                "[Self-Improvement] Failed to auto-summarize dream group {}: {}",
-                                path, error
-                            );
+
+                        let ids = group
+                            .get("chunk_ids")
+                            .and_then(|value| value.as_array())
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(|item| item.as_i64())
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        let chunk_count = group
+                            .get("chunk_count")
+                            .and_then(|value| value.as_u64())
+                            .unwrap_or(ids.len() as u64) as usize;
+
+                        if ids.is_empty() || chunk_count < 2 {
+                            continue;
+                        }
+
+                        let signature = format!(
+                            "{}#{}",
+                            normalized_path,
+                            ids.iter()
+                                .map(|id| id.to_string())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        );
+                        if applied_group_signatures.contains(&signature) {
+                            continue;
+                        }
+
+                        match brain_for_self_improvement.memory_dream_summarize(&ids) {
+                            Ok(_) => {
+                                applied_group_signatures.insert(signature);
+                                auto_summarized.push((normalized_path, chunk_count));
+                            }
+                            Err(error) => {
+                                warn!(
+                                    "[Self-Improvement] Failed to auto-summarize dream group {}: {}",
+                                    path, error
+                                );
+                            }
                         }
                     }
                 }

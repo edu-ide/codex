@@ -6,7 +6,7 @@ use crate::settings_store::SettingsStore;
 use crate::settings_types::{
     default_advisor_preset, default_approval_preset, default_auto_max_turns,
     default_auto_pause_on_error, default_auto_timebox_minutes, default_team_max_retries,
-    default_team_merge_policy, default_team_pause_on_error,
+    default_self_improvement_preset, default_team_merge_policy, default_team_pause_on_error,
 };
 
 /// Resolve the ilhae data directory (~⁄ilhae), using the generic name.
@@ -103,6 +103,8 @@ pub struct IlhaeProfileAgentConfig {
     pub auto_pause_on_error: bool,
     pub kairos: bool,
     pub self_improvement: bool,
+    #[serde(default = "default_self_improvement_preset")]
+    pub self_improvement_preset: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -178,6 +180,7 @@ pub fn profile_to_dto(id: &str, profile: &IlhaeProfileConfig) -> crate::IlhaeApp
             auto_pause_on_error: profile.agent.auto_pause_on_error,
             kairos: profile.agent.kairos,
             self_improvement: profile.agent.self_improvement,
+            self_improvement_preset: profile.agent.self_improvement_preset.clone(),
         },
         permissions: crate::IlhaeAppProfilePermissionsDto {
             approval_preset: profile.permissions.approval_preset.clone(),
@@ -216,6 +219,11 @@ pub fn dto_to_profile(dto: &crate::IlhaeAppProfileDto) -> IlhaeProfileConfig {
             auto_pause_on_error: dto.agent.auto_pause_on_error,
             kairos: dto.agent.kairos,
             self_improvement: dto.agent.self_improvement,
+            self_improvement_preset: if dto.agent.self_improvement_preset.trim().is_empty() {
+                default_self_improvement_preset()
+            } else {
+                dto.agent.self_improvement_preset.clone()
+            },
         },
         permissions: IlhaeProfilePermissionsConfig {
             approval_preset: if dto.permissions.approval_preset.trim().is_empty() {
@@ -363,6 +371,14 @@ pub fn apply_ilhae_profile_projection(
     settings.set_value(
         "agent.self_improvement_enabled",
         serde_json::json!(profile.agent.self_improvement),
+    )?;
+    settings.set_value(
+        "agent.self_improvement_preset",
+        serde_json::json!(if profile.agent.self_improvement_preset.trim().is_empty() {
+            default_self_improvement_preset()
+        } else {
+            profile.agent.self_improvement_preset.clone()
+        }),
     )?;
     settings.set_value("agent.memory_scope", serde_json::json!(profile.memory.scope))?;
     settings.set_value("agent.task_scope", serde_json::json!(profile.task.scope))?;

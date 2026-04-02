@@ -95,10 +95,18 @@ pub async fn set_autonomous_phase(
     note: Option<String>,
     queued_directive: Option<String>,
 ) {
+    let previous = state.sessions.autonomous_sessions.get(session_id);
+    let mut snapshot = AutonomousSessionState::new(phase, loop_iteration, note, queued_directive);
+    if let Some(previous) = previous {
+        snapshot.goal = previous.goal.clone();
+        snapshot.last_observation = previous.last_observation.clone();
+        snapshot.stalled_turns = previous.stalled_turns;
+        snapshot.stop_reason = previous.stop_reason.clone();
+    }
     set_autonomous_snapshot(
         state,
         session_id,
-        AutonomousSessionState::new(phase, loop_iteration, note, queued_directive),
+        snapshot,
     )
     .await;
 }

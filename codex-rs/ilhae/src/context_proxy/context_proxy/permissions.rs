@@ -12,12 +12,28 @@ use tracing::{debug, info, warn};
 use crate::SharedState;
 use crate::approval_manager::{ApprovalOption, ApprovalRequest};
 use crate::context_proxy::autonomy::state::{
-    AutonomousPhase, set_autonomous_phase, transition_autonomous_phase,
+    AutonomousPhase, current_autonomous_iteration, set_autonomous_phase,
+    transition_autonomous_phase,
 };
 use crate::relay_server::{self, RelayEvent};
 use crate::send_synthetic_tool_call;
 
 const DESKTOP_CANCEL_SENTINEL_OPTION_ID: &str = "__ilhae_cancelled_by_desktop__";
+
+fn is_auto_safe_self_improvement_tool(tool_title: &str, cfg: &crate::settings_types::Settings) -> bool {
+    if !cfg.agent.self_improvement_enabled
+        || !cfg
+            .agent
+            .self_improvement_preset
+            .eq_ignore_ascii_case("safe_apply")
+    {
+        return false;
+    }
+    matches!(
+        tool_title.trim(),
+        "memory_promote" | "memory_extract"
+    )
+}
 
 pub fn bind_routes<H>(
     builder: sacp::Builder<sacp::Proxy, H>,
@@ -123,6 +139,19 @@ pub async fn handle_permission_request(
                 RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(id)),
             ));
         }
+    }
+
+    if is_auto_safe_self_improvement_tool(&tool_title, &cfg)
+        && let Some(id) = req.options.first().map(|opt| opt.option_id.clone())
+    {
+        info!(
+            "[SelfImprovementPolicy] Auto-approving safe apply tool: {}",
+            tool_title
+        );
+        send_synthetic_tool_call(&req.session_id, &req.tool_call, &cx);
+        return responder.respond(RequestPermissionResponse::new(
+            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(id)),
+        ));
     }
 
     if !tool_title.is_empty()
@@ -297,11 +326,14 @@ pub async fn handle_permission_request(
         };
 
         if track_autonomous_state {
+            let loop_iteration = current_autonomous_iteration(&state, &acp_session_id_str)
+                .await
+                .max(1);
             set_autonomous_phase(
                 &state,
                 &acp_session_id_str,
                 AutonomousPhase::WaitingForApproval,
-                0,
+                loop_iteration,
                 Some(tool_title.to_string()),
                 None,
             )

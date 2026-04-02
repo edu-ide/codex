@@ -16,7 +16,7 @@ use crate::adapters::{
 };
 use crate::context_proxy;
 use crate::helpers::{
-    ILHAE_NATIVE_TRANSPORT_ENV, LEGACY_CODEX_AGENT_ID, LEGACY_CODEX_TRANSPORT_ENV,
+    ILHAE_NATIVE_TRANSPORT_ENV, LEGACY_CODEX_TRANSPORT_ENV, infer_agent_id_from_command,
     is_ilhae_native_command, is_ilhae_native_engine_name,
 };
 use crate::ports::{AgentTransportPreference, AgentTransportRequest};
@@ -79,13 +79,13 @@ pub async fn build_agent_transport(
             .map(|(engine, _)| engine)
             .unwrap_or_else(|| {
                 if is_ilhae_native_command(&settings_snapshot.agent.command) {
-                    LEGACY_CODEX_AGENT_ID.to_string()
+                    infer_agent_id_from_command(&settings_snapshot.agent.command)
                 } else {
                     "gemini".to_string()
                 }
             })
     } else if is_ilhae_native_command(&settings_snapshot.agent.command) {
-        LEGACY_CODEX_AGENT_ID.to_string()
+        infer_agent_id_from_command(&settings_snapshot.agent.command)
     } else {
         "gemini".to_string()
     };

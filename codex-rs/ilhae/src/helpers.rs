@@ -51,7 +51,7 @@ pub fn is_ilhae_native_command(command: &str) -> bool {
 pub fn infer_agent_id_from_command(command: &str) -> String {
     let lower = command.to_ascii_lowercase();
     if lower.contains("codex-ilhae") {
-        return "codex-ilhae-llama-nemotron".to_string();
+        return ILHAE_AGENT_ID.to_string();
     }
     if lower.contains(" ilhae") || lower.starts_with("ilhae") {
         return ILHAE_AGENT_ID.to_string();
@@ -82,7 +82,7 @@ pub fn resolve_engine_command(engine_id: &str, explicit_command: Option<&str>) -
     match engine_id.trim().to_ascii_lowercase().as_str() {
         "ilhae" => Some("ilhae".to_string()),
         "codex" => Some("codex".to_string()),
-        "codex-ilhae" | "codex-ilhae-llama-nemotron" => Some("codex-ilhae".to_string()),
+        "codex-ilhae" | "codex-ilhae-llama-nemotron" => Some("ilhae".to_string()),
         "gemini" => Some("gemini-ilhae --experimental-acp".to_string()),
         "claude" => Some("claude-code-acp serve".to_string()),
         _ => None,
@@ -362,6 +362,7 @@ pub async fn notify_engine_state(
                 auto_pause_on_error: settings.agent.auto_pause_on_error,
                 kairos_enabled: settings.agent.kairos_enabled,
                 self_improvement_enabled: settings.agent.self_improvement_enabled,
+                self_improvement_preset: settings.agent.self_improvement_preset.clone(),
                 active_profile: settings.agent.active_profile.clone(),
                 memory_scope: settings.agent.memory_scope.clone(),
                 task_scope: settings.agent.task_scope.clone(),
@@ -718,7 +719,7 @@ mod tests {
         assert_eq!(infer_agent_id_from_command("npx codex --help"), "codex");
         assert_eq!(
             infer_agent_id_from_command("codex-ilhae-llama-nemotron"),
-            "codex-ilhae-llama-nemotron"
+            "ilhae"
         );
     }
 

@@ -68,6 +68,8 @@ pub struct IlhaeEngineStatePayload {
     pub advisor_mode: bool,
     pub kairos_enabled: bool,
     pub self_improvement_enabled: bool,
+    #[serde(default)]
+    pub self_improvement_preset: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -388,6 +390,8 @@ pub struct IlhaeAppProfileAgentDto {
     pub kairos: bool,
     #[serde(rename = "selfImprovement")]
     pub self_improvement: bool,
+    #[serde(rename = "selfImprovementPreset", default)]
+    pub self_improvement_preset: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -565,6 +569,8 @@ pub struct IlhaeEngineStateNotification {
     pub auto_pause_on_error: bool,
     pub kairos_enabled: bool,
     pub self_improvement_enabled: bool,
+    #[serde(default)]
+    pub self_improvement_preset: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

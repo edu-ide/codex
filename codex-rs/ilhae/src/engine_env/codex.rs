@@ -18,6 +18,10 @@ impl EngineEnv for CodexEnv {
     }
 
     fn apply(&self, cmd: &mut tokio::process::Command) {
+        if self.engine_name.starts_with("codex-ilhae") {
+            return;
+        }
+
         // 1. If OPENAI_API_KEY is already set, use it directly
         if std::env::var("OPENAI_API_KEY")
             .map(|v| !v.is_empty())
@@ -43,8 +47,7 @@ impl EngineEnv for CodexEnv {
 
     fn build_spawn_command(&self, port: u16, role: &str) -> tokio::process::Command {
         let codex_bin = if self.engine_name.starts_with("codex-ilhae") {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            format!("{}/bin/{}", home, self.engine_name)
+            resolve_native_codex_wrapper()
         } else {
             crate::context_proxy::resolve_codex_a2a_bin()
         };
@@ -76,8 +79,12 @@ fn resolve_codex_cli_bin(engine_name: &str) -> String {
         }
     }
 
+    if engine_name.eq_ignore_ascii_case("ilhae") {
+        return "ilhae".to_string();
+    }
+
     if engine_name.starts_with("codex-ilhae") {
-        return engine_name.to_string();
+        return "ilhae".to_string();
     }
 
     if let Some(home) = dirs::home_dir() {
@@ -98,7 +105,29 @@ fn resolve_codex_cli_profile() -> Option<String> {
         }
     }
 
-    Some("nemotron-dgx".to_string())
+    Some("nemotron-local".to_string())
+}
+
+fn resolve_native_codex_wrapper() -> String {
+    if let Ok(from_env) = std::env::var("ILHAE_NATIVE_CODEX_WRAPPER") {
+        let trimmed = from_env.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        let ilhae_wrapper = home.join("bin").join("ilhae");
+        if ilhae_wrapper.exists() {
+            return ilhae_wrapper.to_string_lossy().to_string();
+        }
+        let wrapper = home.join("bin").join("codex-ilhae-llama-nemotron");
+        if wrapper.exists() {
+            return wrapper.to_string_lossy().to_string();
+        }
+    }
+
+    "ilhae".to_string()
 }
 
 /// Read OAuth access_token from existing Codex CLI credentials.

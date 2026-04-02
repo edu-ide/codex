@@ -46,7 +46,7 @@ pub trait EngineEnv {
 /// Resolve engine name to its env configurator.
 pub fn resolve_engine_env(engine: &str) -> Box<dyn EngineEnv + Send + Sync> {
     match engine {
-        "codex" | "codex-ilhae" | "codex-ilhae-llama-nemotron" => Box::new(codex::CodexEnv {
+        "ilhae" | "codex" | "codex-ilhae" | "codex-ilhae-llama-nemotron" => Box::new(codex::CodexEnv {
             engine_name: engine.to_string(),
         }),
         _ => Box::new(gemini::GeminiEnv), // default
