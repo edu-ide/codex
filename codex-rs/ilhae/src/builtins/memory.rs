@@ -2,8 +2,11 @@
 macro_rules! register_memory_tools {
     ($builder:expr, $brain_service:expr, $bt_settings:expr) => {{
         use $crate::{
-            MemoryReadInput, MemoryWriteInput, MemoryToolSearchInput, MemoryToolStoreInput,
-            MemoryToolForgetInput, MemoryToolListInput, MemoryToolStatsInput, MemoryToolPinInput,
+            MemoryReadInput, MemoryWriteInput, MemoryToolDreamAnalyzeInput,
+            MemoryToolDreamApplyInput, MemoryToolDreamPreviewInput, MemoryToolExtractInput,
+            MemoryToolForgetInput, MemoryToolListInput, MemoryToolPinInput,
+            MemoryToolPromoteInput, MemoryToolSearchInput, MemoryToolStatsInput,
+            MemoryToolStoreInput,
         };
 
         $builder
@@ -151,6 +154,154 @@ macro_rules! register_memory_tools {
                         match brain.memory_chunk_set_pinned(input.chunk_id, input.pinned) {
                             Ok(true) => Ok::<String, sacp::Error>(format!("✅ Chunk {} {}", input.chunk_id, if input.pinned { "pinned" } else { "unpinned" })),
                             Ok(false) => Ok::<String, sacp::Error>(format!("⚠️ Chunk {} not found", input.chunk_id)),
+                            Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
+                        }
+                    }
+                },
+                sacp::tool_fn!(),
+            )
+            .tool_fn(
+                "memory_promote",
+                "Promote a session artifact into a durable knowledge item. Requires self-improvement mode.",
+                {
+                    let brain = $brain_service.clone();
+                    let bts = $bt_settings.clone();
+                    async move |input: MemoryToolPromoteInput, _cx| {
+                        $crate::check_tool_enabled!(bts, "memory_promote");
+                        if !bts.get().agent.self_improvement_enabled {
+                            return Err(sacp::Error::invalid_request().data(
+                                "Self-improvement is disabled. Enable it in the active ilhae profile.".to_string(),
+                            ));
+                        }
+                        match brain.memory_promote(
+                            &input.session_id,
+                            &input.artifact_type,
+                            &input.ki_id,
+                            &input.title,
+                            input.tags,
+                        ) {
+                            Ok(result) => Ok::<String, sacp::Error>(
+                                serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+                            ),
+                            Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
+                        }
+                    }
+                },
+                sacp::tool_fn!(),
+            )
+            .tool_fn(
+                "memory_extract",
+                "Extract a knowledge item into a graph/vault note. Requires self-improvement mode.",
+                {
+                    let brain = $brain_service.clone();
+                    let bts = $bt_settings.clone();
+                    async move |input: MemoryToolExtractInput, _cx| {
+                        $crate::check_tool_enabled!(bts, "memory_extract");
+                        if !bts.get().agent.self_improvement_enabled {
+                            return Err(sacp::Error::invalid_request().data(
+                                "Self-improvement is disabled. Enable it in the active ilhae profile.".to_string(),
+                            ));
+                        }
+                        match brain.memory_extract(
+                            &input.ki_id,
+                            input.namespace.as_deref(),
+                            input.vault_path.as_deref(),
+                        ) {
+                            Ok(result) => Ok::<String, sacp::Error>(
+                                serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+                            ),
+                            Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
+                        }
+                    }
+                },
+                sacp::tool_fn!(),
+            )
+            .tool_fn(
+                "memory_dream_preview",
+                "Preview pending dream groups that are ready for summarization. Requires self-improvement mode.",
+                {
+                    let brain = $brain_service.clone();
+                    let bts = $bt_settings.clone();
+                    async move |input: MemoryToolDreamPreviewInput, _cx| {
+                        $crate::check_tool_enabled!(bts, "memory_dream_preview");
+                        if !bts.get().agent.self_improvement_enabled {
+                            return Err(sacp::Error::invalid_request().data(
+                                "Self-improvement is disabled. Enable it in the active ilhae profile.".to_string(),
+                            ));
+                        }
+                        match brain.memory_dream_preview(input.limit) {
+                            Ok(result) => Ok::<String, sacp::Error>(
+                                serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+                            ),
+                            Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
+                        }
+                    }
+                },
+                sacp::tool_fn!(),
+            )
+            .tool_fn(
+                "memory_dream_analyze",
+                "Analyze pending dream groups within a directory scope. Requires self-improvement mode.",
+                {
+                    let brain = $brain_service.clone();
+                    let bts = $bt_settings.clone();
+                    async move |input: MemoryToolDreamAnalyzeInput, _cx| {
+                        $crate::check_tool_enabled!(bts, "memory_dream_analyze");
+                        if !bts.get().agent.self_improvement_enabled {
+                            return Err(sacp::Error::invalid_request().data(
+                                "Self-improvement is disabled. Enable it in the active ilhae profile.".to_string(),
+                            ));
+                        }
+                        match brain.memory_dream_analyze(std::path::Path::new(&input.dir), input.limit) {
+                            Ok(result) => Ok::<String, sacp::Error>(
+                                serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+                            ),
+                            Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
+                        }
+                    }
+                },
+                sacp::tool_fn!(),
+            )
+            .tool_fn(
+                "memory_dream_summarize",
+                "Mark dream chunk groups as summarized after consolidation. Requires self-improvement mode.",
+                {
+                    let brain = $brain_service.clone();
+                    let bts = $bt_settings.clone();
+                    async move |input: MemoryToolDreamApplyInput, _cx| {
+                        $crate::check_tool_enabled!(bts, "memory_dream_summarize");
+                        if !bts.get().agent.self_improvement_enabled {
+                            return Err(sacp::Error::invalid_request().data(
+                                "Self-improvement is disabled. Enable it in the active ilhae profile.".to_string(),
+                            ));
+                        }
+                        match brain.memory_dream_summarize(&input.ids) {
+                            Ok(result) => Ok::<String, sacp::Error>(
+                                serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+                            ),
+                            Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
+                        }
+                    }
+                },
+                sacp::tool_fn!(),
+            )
+            .tool_fn(
+                "memory_dream_ignore",
+                "Mark dream chunk groups as ignored. Requires self-improvement mode.",
+                {
+                    let brain = $brain_service.clone();
+                    let bts = $bt_settings.clone();
+                    async move |input: MemoryToolDreamApplyInput, _cx| {
+                        $crate::check_tool_enabled!(bts, "memory_dream_ignore");
+                        if !bts.get().agent.self_improvement_enabled {
+                            return Err(sacp::Error::invalid_request().data(
+                                "Self-improvement is disabled. Enable it in the active ilhae profile.".to_string(),
+                            ));
+                        }
+                        match brain.memory_dream_ignore(&input.ids) {
+                            Ok(result) => Ok::<String, sacp::Error>(
+                                serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+                            ),
                             Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
                         }
                     }

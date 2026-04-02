@@ -12,6 +12,25 @@ use crate::{
     session_persistence_service::SessionRegistryService, settings_store::SettingsStore,
 };
 
+const ADVISOR_MODE_INSTRUCTION: &str = r#"
+<system_directive priority="high">
+ADVISOR MODE IS ENABLED.
+- Default to analysis, review, risk discovery, and plan-first guidance.
+- Do not rush into mutating actions unless the user explicitly asks for execution.
+- Prefer surfacing trade-offs, assumptions, and safer alternatives before acting.
+- When execution is requested, keep the advice concise and then proceed.
+</system_directive>
+"#;
+
+const SELF_IMPROVEMENT_MODE_INSTRUCTION: &str = r#"
+<system_directive priority="medium">
+SELF-IMPROVEMENT MODE IS ENABLED.
+- Prefer capturing durable knowledge when the interaction yields reusable facts, preferences, or stable procedures.
+- Use memory promotion, extraction, and dream analysis deliberately instead of duplicating raw notes.
+- Keep the working conversation concise and externalize reusable learnings into the brain layer when justified.
+</system_directive>
+"#;
+
 pub struct PreparedSessionPromptContext {
     pub current_agent_id: String,
     pub session_info: Option<SessionInfo>,
@@ -45,7 +64,8 @@ pub async fn prepare_session_prompt_context(
     is_subagent: bool,
 ) -> anyhow::Result<PreparedSessionPromptContext> {
     let settings = deps.settings_store.clone();
-    let current_agent_id = infer_agent_id_from_command(&settings.get().agent.command);
+    let settings_snapshot = settings.get();
+    let current_agent_id = infer_agent_id_from_command(&settings_snapshot.agent.command);
 
     if let Some(active_session_id) = &deps.active_session_id {
         let db_sid = deps
@@ -108,6 +128,17 @@ pub async fn prepare_session_prompt_context(
                 lang_name, lang_name
             );
             prompt_blocks.push(ContentBlock::Text(TextContent::new(locale_instruction)));
+        }
+
+        if settings_snapshot.agent.advisor_mode {
+            prompt_blocks.push(ContentBlock::Text(TextContent::new(
+                ADVISOR_MODE_INSTRUCTION.to_string(),
+            )));
+        }
+        if settings_snapshot.agent.self_improvement_enabled {
+            prompt_blocks.push(ContentBlock::Text(TextContent::new(
+                SELF_IMPROVEMENT_MODE_INSTRUCTION.to_string(),
+            )));
         }
 
         let vault_dir = deps.brain.vault_dir();

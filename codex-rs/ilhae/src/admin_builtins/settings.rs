@@ -116,6 +116,74 @@ macro_rules! register_admin_settings_handlers {
                     })
                 }
             }, sacp::on_receive_request!())
+            .on_receive_request_from(sacp::Client, {
+                async move |_req: crate::IlhaeAppProfileListRequest, responder: Responder<crate::IlhaeAppProfileListResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/profile/list RPC");
+                    let (active_profile, profiles) = crate::config::list_ilhae_profiles();
+                    responder.respond(crate::IlhaeAppProfileListResponse {
+                        active_profile,
+                        profiles,
+                    })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(sacp::Client, {
+                async move |req: crate::IlhaeAppProfileGetRequest, responder: Responder<crate::IlhaeAppProfileGetResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/profile/get RPC");
+                    let (active_profile, profile) = crate::config::get_ilhae_profile(req.profile_id.as_deref());
+                    responder.respond(crate::IlhaeAppProfileGetResponse {
+                        active_profile,
+                        profile,
+                    })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(sacp::Client, {
+                let settings = s.infra.settings_store.clone();
+                let cx_cache = s.infra.relay_conductor_cx.clone();
+                async move |req: crate::IlhaeAppProfileSetRequest, responder: Responder<crate::IlhaeAppProfileSetResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/profile/set RPC profile={}", req.profile_id);
+                    let profile = match crate::config::set_active_ilhae_profile(&req.profile_id) {
+                        Ok(profile) => profile,
+                        Err(e) => {
+                            return responder.respond_with_error(sacp::Error::new(-32602, e));
+                        }
+                    };
+                    if let Err(e) = crate::config::apply_ilhae_profile_projection(&settings, &profile) {
+                        return responder.respond_with_error(sacp::util::internal_error(e));
+                    }
+                    crate::notify_engine_state(&cx_cache, &settings).await;
+                    responder.respond(crate::IlhaeAppProfileSetResponse {
+                        ok: true,
+                        active_profile: profile.id.clone(),
+                        profile: Some(profile),
+                    })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(sacp::Client, {
+                let settings = s.infra.settings_store.clone();
+                let cx_cache = s.infra.relay_conductor_cx.clone();
+                async move |req: crate::IlhaeAppProfileUpsertRequest, responder: Responder<crate::IlhaeAppProfileUpsertResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/profile/upsert RPC profile={}", req.profile.id);
+                    let (active_profile, profile) = match crate::config::upsert_ilhae_profile(req.profile, req.activate) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            return responder.respond_with_error(sacp::Error::new(-32602, e));
+                        }
+                    };
+
+                    if active_profile.as_deref() == Some(profile.id.as_str()) {
+                        if let Err(e) = crate::config::apply_ilhae_profile_projection(&settings, &profile) {
+                            return responder.respond_with_error(sacp::util::internal_error(e));
+                        }
+                        crate::notify_engine_state(&cx_cache, &settings).await;
+                    }
+
+                    responder.respond(crate::IlhaeAppProfileUpsertResponse {
+                        ok: true,
+                        active_profile,
+                        profile: Some(profile),
+                    })
+                }
+            }, sacp::on_receive_request!())
             // ═══ Settings Write ═══
             .on_receive_request_from(sacp::Client, {
                 let settings = s.infra.settings_store.clone();

@@ -10,10 +10,12 @@ use crate::register_browser_tools;
 #[allow(unused_imports)]
 use crate::{
     ArtifactEditInput, ArtifactGetInput, ArtifactListInput, ArtifactSaveInput, EmptyInput, IdInput,
-    MemoryReadInput, MemoryToolForgetInput, MemoryToolListInput, MemoryToolPinInput,
-    MemoryToolSearchInput, MemoryToolStatsInput, MemoryToolStoreInput, MemoryWriteInput,
-    SessionIdInput, SessionRenameInput, TaskAddHistoryInput, TaskCreateInput, TaskUpdateInput,
-    TeamDelegateInput, TeamProposeInput, UiNotifyInput, tool_to_plugin_id,
+    MemoryReadInput, MemoryToolDreamAnalyzeInput, MemoryToolDreamApplyInput,
+    MemoryToolDreamPreviewInput, MemoryToolExtractInput, MemoryToolForgetInput,
+    MemoryToolListInput, MemoryToolPinInput, MemoryToolPromoteInput, MemoryToolSearchInput,
+    MemoryToolStatsInput, MemoryToolStoreInput, MemoryWriteInput, SessionIdInput,
+    SessionRenameInput, TaskAddHistoryInput, TaskCreateInput, TaskUpdateInput, TeamDelegateInput,
+    TeamProposeInput, UiNotifyInput, tool_to_plugin_id,
 };
 
 // ─── ToolsProxy state ──────────────────────────────────────────────────

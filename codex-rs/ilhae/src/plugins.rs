@@ -50,6 +50,12 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDef] = &[
             ("memory_list", "메모리 청크 목록 조회"),
             ("memory_stats", "메모리 통계 정보"),
             ("memory_pin", "메모리 청크 고정/해제 (프롬프트 주입)"),
+            ("memory_promote", "세션 아티팩트를 지식 항목으로 승격"),
+            ("memory_extract", "지식 항목을 볼트 노트로 추출"),
+            ("memory_dream_preview", "드림 대기 그룹 미리보기"),
+            ("memory_dream_analyze", "디렉터리 범위 드림 분석"),
+            ("memory_dream_summarize", "드림 그룹을 요약 완료로 표시"),
+            ("memory_dream_ignore", "드림 그룹을 무시 상태로 표시"),
         ],
     },
     BuiltinPluginDef {

@@ -12,6 +12,178 @@ macro_rules! register_admin_settings_handlers {
                     responder.respond(ReadSettingsResponse { settings: all })
                 }
             }, sacp::on_receive_request!())
+            // ═══ Engine Capabilities Read ═══
+            .on_receive_request_from(sacp::Client, {
+                let settings = s.infra.settings_store.clone();
+                async move |req: GetEngineCapabilitiesRequest, responder: Responder<GetEngineCapabilitiesResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/engine/get_capabilities RPC");
+                    let settings_snapshot = settings.get();
+                    let current_engine = crate::helpers::infer_agent_id_from_command(&settings_snapshot.agent.command);
+                    let target_engine = req.engine_id.unwrap_or_else(|| current_engine.clone());
+                    responder.respond(GetEngineCapabilitiesResponse {
+                        current_engine,
+                        profile: crate::capabilities::engine_capability_profile_json(&target_engine),
+                        matrix: crate::capabilities::engine_capability_matrix_json(),
+                    })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(sacp::Client, {
+                let settings = s.infra.settings_store.clone();
+                async move |req: crate::IlhaeAppEngineGetRequest, responder: Responder<crate::IlhaeAppEngineGetResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/engine/get RPC");
+                    let settings_snapshot = settings.get();
+                    let current_engine = crate::helpers::infer_agent_id_from_command(&settings_snapshot.agent.command);
+                    let target_engine = req.engine_id.unwrap_or_else(|| current_engine.clone());
+                    let resolved_engine = crate::engine_env::resolve_engine_env(&target_engine);
+                    let endpoint = if settings_snapshot.agent.team_mode {
+                        let ep = settings_snapshot.agent.a2a_endpoint.trim();
+                        if ep.is_empty() {
+                            format!("http://127.0.0.1:{}", crate::port_config::team_base_port())
+                        } else {
+                            ep.to_string()
+                        }
+                    } else {
+                        let ep = settings_snapshot.agent.a2a_endpoint.trim();
+                        if ep.is_empty() {
+                            format!("http://127.0.0.1:{}", resolved_engine.default_port())
+                        } else {
+                            ep.to_string()
+                        }
+                    };
+                    responder.respond(crate::IlhaeAppEngineGetResponse {
+                        current_engine,
+                        command: settings_snapshot.agent.command.clone(),
+                        team_mode: settings_snapshot.agent.team_mode,
+                        endpoint,
+                        enabled_engines: settings_snapshot.agent.enabled_engines.clone(),
+                        profile: crate::capabilities::engine_capability_profile_json(&target_engine),
+                        matrix: crate::capabilities::engine_capability_matrix_json(),
+                    })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(sacp::Client, {
+                let settings = s.infra.settings_store.clone();
+                let cx_cache = s.infra.relay_conductor_cx.clone();
+                async move |req: crate::IlhaeAppEngineSetRequest, responder: Responder<crate::IlhaeAppEngineSetResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/engine/set RPC engine={}", req.engine_id);
+                    let Some(command) = crate::helpers::resolve_engine_command(&req.engine_id, req.command.as_deref()) else {
+                        return responder.respond_with_error(sacp::Error::new(
+                            -32602,
+                            "unknown engine id; provide explicit command".to_string(),
+                        ));
+                    };
+
+                    if let Err(e) = settings.set_value("agent.command", serde_json::Value::String(command.clone())) {
+                        return responder.respond_with_error(sacp::util::internal_error(e));
+                    }
+
+                    let mut enabled_engines = settings.get().agent.enabled_engines;
+                    if !enabled_engines.iter().any(|engine| engine == &req.engine_id) {
+                        enabled_engines.push(req.engine_id.clone());
+                        let _ = settings.set_value("agent.enabled_engines", serde_json::json!(enabled_engines));
+                    }
+
+                    crate::notify_engine_state(&cx_cache, &settings).await;
+
+                    let updated = settings.get();
+                    let current_engine = crate::helpers::infer_agent_id_from_command(&updated.agent.command);
+                    let resolved_engine = crate::engine_env::resolve_engine_env(&current_engine);
+                    let endpoint = if updated.agent.team_mode {
+                        let ep = updated.agent.a2a_endpoint.trim();
+                        if ep.is_empty() {
+                            format!("http://127.0.0.1:{}", crate::port_config::team_base_port())
+                        } else {
+                            ep.to_string()
+                        }
+                    } else {
+                        let ep = updated.agent.a2a_endpoint.trim();
+                        if ep.is_empty() {
+                            format!("http://127.0.0.1:{}", resolved_engine.default_port())
+                        } else {
+                            ep.to_string()
+                        }
+                    };
+
+                    responder.respond(crate::IlhaeAppEngineSetResponse {
+                        ok: true,
+                        current_engine: current_engine.clone(),
+                        command: updated.agent.command.clone(),
+                        team_mode: updated.agent.team_mode,
+                        endpoint,
+                        enabled_engines: updated.agent.enabled_engines.clone(),
+                        profile: crate::capabilities::engine_capability_profile_json(&current_engine),
+                        matrix: crate::capabilities::engine_capability_matrix_json(),
+                    })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(sacp::Client, {
+                async move |_req: crate::IlhaeAppProfileListRequest, responder: Responder<crate::IlhaeAppProfileListResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/profile/list RPC");
+                    let (active_profile, profiles) = crate::config::list_ilhae_profiles();
+                    responder.respond(crate::IlhaeAppProfileListResponse {
+                        active_profile,
+                        profiles,
+                    })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(sacp::Client, {
+                async move |req: crate::IlhaeAppProfileGetRequest, responder: Responder<crate::IlhaeAppProfileGetResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/profile/get RPC");
+                    let (active_profile, profile) = crate::config::get_ilhae_profile(req.profile_id.as_deref());
+                    responder.respond(crate::IlhaeAppProfileGetResponse {
+                        active_profile,
+                        profile,
+                    })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(sacp::Client, {
+                let settings = s.infra.settings_store.clone();
+                let cx_cache = s.infra.relay_conductor_cx.clone();
+                async move |req: crate::IlhaeAppProfileSetRequest, responder: Responder<crate::IlhaeAppProfileSetResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/profile/set RPC profile={}", req.profile_id);
+                    let profile = match crate::config::set_active_ilhae_profile(&req.profile_id) {
+                        Ok(profile) => profile,
+                        Err(e) => {
+                            return responder.respond_with_error(sacp::Error::new(-32602, e));
+                        }
+                    };
+                    if let Err(e) = crate::config::apply_ilhae_profile_projection(&settings, &profile) {
+                        return responder.respond_with_error(sacp::util::internal_error(e));
+                    }
+                    crate::notify_engine_state(&cx_cache, &settings).await;
+                    responder.respond(crate::IlhaeAppProfileSetResponse {
+                        ok: true,
+                        active_profile: profile.id.clone(),
+                        profile: Some(profile),
+                    })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(sacp::Client, {
+                let settings = s.infra.settings_store.clone();
+                let cx_cache = s.infra.relay_conductor_cx.clone();
+                async move |req: crate::IlhaeAppProfileUpsertRequest, responder: Responder<crate::IlhaeAppProfileUpsertResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/profile/upsert RPC profile={}", req.profile.id);
+                    let (active_profile, profile) = match crate::config::upsert_ilhae_profile(req.profile, req.activate) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            return responder.respond_with_error(sacp::Error::new(-32602, e));
+                        }
+                    };
+
+                    if active_profile.as_deref() == Some(profile.id.as_str()) {
+                        if let Err(e) = crate::config::apply_ilhae_profile_projection(&settings, &profile) {
+                            return responder.respond_with_error(sacp::util::internal_error(e));
+                        }
+                        crate::notify_engine_state(&cx_cache, &settings).await;
+                    }
+
+                    responder.respond(crate::IlhaeAppProfileUpsertResponse {
+                        ok: true,
+                        active_profile,
+                        profile: Some(profile),
+                    })
+                }
+            }, sacp::on_receive_request!())
             // ═══ Settings Write ═══
             .on_receive_request_from(sacp::Client, {
                 let settings = s.infra.settings_store.clone();

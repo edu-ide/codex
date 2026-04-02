@@ -26,6 +26,110 @@ macro_rules! register_admin_task_handlers {
         $builder
             .on_receive_request_from(Client, {
                 let brain = s.infra.brain.clone();
+                async move |_req: crate::IlhaeAppTaskListRequest, responder: Responder<crate::IlhaeAppTaskListResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/task/list RPC");
+                    let tasks = brain
+                        .schedule_list()
+                        .into_iter()
+                        .filter_map(|task| serde_json::to_value(task).ok())
+                        .collect();
+                    responder.respond(crate::IlhaeAppTaskListResponse { tasks })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let brain = s.infra.brain.clone();
+                async move |req: crate::IlhaeAppTaskGetRequest, responder: Responder<crate::IlhaeAppTaskGetResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/task/get RPC id={}", req.task_id);
+                    let task = brain
+                        .schedule_list()
+                        .into_iter()
+                        .find(|task| task.id == req.task_id)
+                        .and_then(|task| serde_json::to_value(task).ok());
+                    responder.respond(crate::IlhaeAppTaskGetResponse { task })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let brain = s.infra.brain.clone();
+                async move |req: crate::IlhaeAppTaskCreateRequest, responder: Responder<crate::IlhaeAppTaskCreateResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/task/create RPC title={}", req.task.title);
+                    let task = req.task;
+                    match brain.schedule_create(
+                        &task.title,
+                        task.description.as_deref(),
+                        task.schedule.as_deref(),
+                        task.category.as_deref(),
+                        task.days.unwrap_or_default(),
+                        task.prompt.as_deref(),
+                        task.cron_expr.as_deref(),
+                        task.target_url.as_deref(),
+                        task.instructions.as_deref(),
+                        task.enabled,
+                    ) {
+                        Ok(task) => responder.respond(crate::IlhaeAppTaskCreateResponse {
+                            task: serde_json::to_value(task).ok(),
+                        }),
+                        Err(e) => responder.respond_with_error(sacp::util::internal_error(e)),
+                    }
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let brain = s.infra.brain.clone();
+                async move |req: crate::IlhaeAppTaskUpdateRequest, responder: Responder<crate::IlhaeAppTaskUpdateResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/task/update RPC id={}", req.task.id);
+                    let task = req.task;
+                    match brain.schedule_update(
+                        &task.id,
+                        task.title.as_deref(),
+                        task.description.as_deref(),
+                        task.done,
+                        task.status.as_deref(),
+                        task.schedule.as_deref(),
+                        task.category.as_deref(),
+                        task.days,
+                        task.prompt.as_deref(),
+                        task.cron_expr.as_deref(),
+                        task.target_url.as_deref(),
+                        task.instructions.as_deref(),
+                        task.enabled,
+                    ) {
+                        Ok(task) => responder.respond(crate::IlhaeAppTaskUpdateResponse {
+                            task: serde_json::to_value(task).ok(),
+                        }),
+                        Err(e) => responder.respond_with_error(sacp::util::internal_error(e)),
+                    }
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let brain = s.infra.brain.clone();
+                async move |req: crate::IlhaeAppTaskDeleteRequest, responder: Responder<crate::IlhaeAppTaskDeleteResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/task/delete RPC id={}", req.task_id);
+                    match brain.schedule_delete(&req.task_id) {
+                        Ok(()) => responder.respond(crate::IlhaeAppTaskDeleteResponse { ok: true }),
+                        Err(e) => responder.respond_with_error(sacp::util::internal_error(e)),
+                    }
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let brain = s.infra.brain.clone();
+                let settings = s.infra.settings_store.clone();
+                async move |req: crate::IlhaeAppTaskRunRequest, responder: Responder<crate::IlhaeAppTaskRunResponse>, _cx: ConnectionTo<Conductor>| {
+                    info!("ilhae/app/task/run RPC");
+                    if !settings.get().agent.kairos_enabled {
+                        return responder.respond_with_error(sacp::Error::new(
+                            -32602,
+                            "kairos is disabled in the active ilhae profile".to_string(),
+                        ));
+                    }
+                    let triggered = brain
+                        .schedule_run_with_scope(None, req.task_id.as_deref())
+                        .into_iter()
+                        .filter_map(|task| serde_json::to_value(task).ok())
+                        .collect();
+                    responder.respond(crate::IlhaeAppTaskRunResponse { triggered })
+                }
+            }, sacp::on_receive_request!())
+            .on_receive_request_from(Client, {
+                let brain = s.infra.brain.clone();
                 async move |_req: ListTasksRequest, responder: Responder<ListTasksResponse>, _cx: ConnectionTo<Conductor>| {
                     info!("ilhae/list_schedules RPC");
                     let mut schedules = brain.schedule_list();

@@ -82,6 +82,19 @@ fn extract_user_text_from_inputs(items: &[UserInput]) -> String {
         .join("\n")
 }
 
+fn normalize_task_scope(task_scope: Option<&str>) -> Option<String> {
+    let trimmed = task_scope.unwrap_or("").trim();
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("default")
+        || trimmed.eq_ignore_ascii_case("all")
+        || trimmed == "*"
+    {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 pub async fn prepare_session_turn_inputs(
     global_session_id: &str,
     current_agent_id: &str,
@@ -674,10 +687,157 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
         });
     }
 
-    // ── Cron loop ────────────────────────────────────────────────────────
-    // NOTE: Cron notifications will need a separate mechanism since we no longer
-    // have direct client_cx. For now, cron is disabled in P1 — to be re-enabled
-    // when we add a shared notification channel.
+    // ── Kairos proactive scheduling loop ────────────────────────────────
+    {
+        let brain_for_kairos = brain_service.clone();
+        let settings_for_kairos = settings_store.clone();
+        let notif_store_for_kairos = notification_store.clone();
+        let relay_tx_for_kairos = relay_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+
+                let settings_snapshot = settings_for_kairos.get();
+                if !settings_snapshot.agent.kairos_enabled {
+                    continue;
+                }
+
+                let task_scope = normalize_task_scope(settings_snapshot.agent.task_scope.as_deref());
+                let triggered = brain_for_kairos
+                    .schedule_run_with_scope(task_scope.as_deref(), None);
+
+                if triggered.is_empty() {
+                    continue;
+                }
+
+                let preview = triggered
+                    .iter()
+                    .take(3)
+                    .map(|task| task.title.clone())
+                    .collect::<Vec<_>>();
+                let message = if triggered.len() == 1 {
+                    format!("[Kairos] Triggered scheduled task: {}", preview[0])
+                } else {
+                    let suffix = if triggered.len() > preview.len() {
+                        format!(" 외 {}개", triggered.len() - preview.len())
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "[Kairos] Triggered {} scheduled tasks: {}{}",
+                        triggered.len(),
+                        preview.join(", "),
+                        suffix
+                    )
+                };
+
+                info!("{}", message);
+                if let Err(e) = notif_store_for_kairos.add(&message, "info", "kairos") {
+                    warn!("[Kairos] Failed to persist notification: {}", e);
+                }
+                broadcast_event(
+                    &relay_tx_for_kairos,
+                    RelayEvent::UiNotification {
+                        message,
+                        level: "info".to_string(),
+                    },
+                );
+            }
+        });
+    }
+
+    // ── Self-improvement review loop ────────────────────────────────────
+    {
+        let brain_for_self_improvement = brain_service.clone();
+        let settings_for_self_improvement = settings_store.clone();
+        let notif_store_for_self_improvement = notification_store.clone();
+        let relay_tx_for_self_improvement = relay_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            let mut last_reported_groups: usize = 0;
+            loop {
+                interval.tick().await;
+
+                let settings_snapshot = settings_for_self_improvement.get();
+                if !settings_snapshot.agent.self_improvement_enabled {
+                    last_reported_groups = 0;
+                    continue;
+                }
+
+                let Ok(preview) = brain_for_self_improvement.memory_dream_preview(5) else {
+                    continue;
+                };
+                let group_count = preview
+                    .get("group_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0) as usize;
+
+                if group_count == 0 {
+                    last_reported_groups = 0;
+                    continue;
+                }
+                if group_count == last_reported_groups {
+                    continue;
+                }
+                last_reported_groups = group_count;
+
+                let top_paths = preview
+                    .get("groups")
+                    .and_then(|value| value.as_array())
+                    .map(|groups| {
+                        groups
+                            .iter()
+                            .take(3)
+                            .filter_map(|group| {
+                                group
+                                    .get("path")
+                                    .and_then(|value| value.as_str())
+                                    .map(|path| {
+                                        std::path::Path::new(path)
+                                            .file_name()
+                                            .and_then(|name| name.to_str())
+                                            .unwrap_or(path)
+                                            .to_string()
+                                    })
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                let suffix = if top_paths.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", top_paths.join(", "))
+                };
+                let message = format!(
+                    "[Self-Improvement] {} dream groups are ready for review{}",
+                    group_count, suffix
+                );
+
+                info!("{}", message);
+                if let Err(e) = notif_store_for_self_improvement.add(
+                    &message,
+                    "info",
+                    "self-improvement",
+                ) {
+                    warn!(
+                        "[Self-Improvement] Failed to persist notification: {}",
+                        e
+                    );
+                }
+                broadcast_event(
+                    &relay_tx_for_self_improvement,
+                    RelayEvent::UiNotification {
+                        message,
+                        level: "info".to_string(),
+                    },
+                );
+            }
+        });
+    }
 
     // ── Build shared state BEFORE agent transport ─────────────────────
     // SharedState does not depend on the AI agent connection, only on

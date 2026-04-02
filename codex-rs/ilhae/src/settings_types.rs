@@ -157,6 +157,9 @@ impl Default for AgentCapabilitiesOverride {
 pub struct AgentSettings {
     /// Agent command to spawn (e.g. "gemini --experimental-acp", "claude --acp")
     pub command: String,
+    /// Active ilhae product profile projected from ~/.ilhae/config.toml
+    #[serde(default)]
+    pub active_profile: Option<String>,
     /// Optional A2A endpoint URL. When non-empty, uses A2A transport instead of stdio.
     #[serde(default)]
     pub a2a_endpoint: String,
@@ -167,6 +170,21 @@ pub struct AgentSettings {
     /// When true, proxy can auto-continue A2A turns that end with input-required.
     #[serde(default)]
     pub autonomous_mode: bool,
+    /// Advisor/reviewer mode flag projected from profile.
+    #[serde(default)]
+    pub advisor_mode: bool,
+    /// Kairos proactive scheduling enablement projected from profile.
+    #[serde(default)]
+    pub kairos_enabled: bool,
+    /// Self-improvement loop enablement projected from profile.
+    #[serde(default)]
+    pub self_improvement_enabled: bool,
+    /// Runtime memory scope projected from profile.
+    #[serde(default)]
+    pub memory_scope: Option<String>,
+    /// Runtime task scope projected from profile.
+    #[serde(default)]
+    pub task_scope: Option<String>,
     /// Desktop-only: enable internal MockAgent instead of real A2A engines.
     /// The desktop app sets this on first run to make headless E2E easier.
     /// Can also be overridden by ILHAE_MOCK env var.
@@ -315,9 +333,15 @@ impl Default for AgentSettings {
     fn default() -> Self {
         Self {
             command: "gemini-ilhae --experimental-acp".to_string(),
+            active_profile: None,
             a2a_endpoint: String::new(),
             team_mode: false,
             autonomous_mode: false,
+            advisor_mode: false,
+            kairos_enabled: false,
+            self_improvement_enabled: false,
+            memory_scope: None,
+            task_scope: None,
             mock_mode: false,
             enabled_engines: vec!["gemini".to_string()],
             team_agent_disabled_capabilities: std::collections::HashMap::new(),

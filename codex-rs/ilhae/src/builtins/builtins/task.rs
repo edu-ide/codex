@@ -140,6 +140,11 @@ macro_rules! register_task_tools {
                     let bts = $bt_settings.clone();
                     async move |_input: EmptyInput, _cx| {
                         $crate::check_tool_enabled!(bts, "task_run");
+                        if !bts.get().agent.kairos_enabled {
+                            return Err(sacp::Error::invalid_request().data(
+                                "Kairos is disabled. Enable it in the active ilhae profile to run scheduled tasks.".to_string(),
+                            ));
+                        }
                         let triggered = brain.schedule_run();
                         if triggered.is_empty() {
                             Ok::<String, sacp::Error>("No schedules are currently due.".to_string())
@@ -285,6 +290,11 @@ macro_rules! register_task_tools {
                     let bts = $bt_settings.clone();
                     async move |_input: EmptyInput, _cx| {
                         $crate::check_tool_enabled!(bts, "task_run");
+                        if !bts.get().agent.kairos_enabled {
+                            return Err(sacp::Error::invalid_request().data(
+                                "Kairos is disabled. Enable it in the active ilhae profile to run scheduled tasks.".to_string(),
+                            ));
+                        }
                         let triggered = brain.schedule_run_projects();
                         if triggered.is_empty() {
                             Ok::<String, sacp::Error>("No project schedules are currently due.".to_string())

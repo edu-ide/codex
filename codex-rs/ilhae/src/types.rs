@@ -46,6 +46,16 @@ pub const REQ_APP_TURN_START: &str = "ilhae/app/turn/start";
 pub const REQ_APP_TURN_INTERRUPT: &str = "ilhae/app/turn/interrupt";
 pub const REQ_APP_ENGINE_GET: &str = "ilhae/app/engine/get";
 pub const REQ_APP_ENGINE_SET: &str = "ilhae/app/engine/set";
+pub const REQ_APP_PROFILE_LIST: &str = "ilhae/app/profile/list";
+pub const REQ_APP_PROFILE_GET: &str = "ilhae/app/profile/get";
+pub const REQ_APP_PROFILE_SET: &str = "ilhae/app/profile/set";
+pub const REQ_APP_PROFILE_UPSERT: &str = "ilhae/app/profile/upsert";
+pub const REQ_APP_TASK_LIST: &str = "ilhae/app/task/list";
+pub const REQ_APP_TASK_GET: &str = "ilhae/app/task/get";
+pub const REQ_APP_TASK_CREATE: &str = "ilhae/app/task/create";
+pub const REQ_APP_TASK_UPDATE: &str = "ilhae/app/task/update";
+pub const REQ_APP_TASK_DELETE: &str = "ilhae/app/task/delete";
+pub const REQ_APP_TASK_RUN: &str = "ilhae/app/task/run";
 
 // ─── Canonical client-facing DTOs for ilhae app-server v1 ───────────────
 
@@ -54,6 +64,17 @@ pub struct IlhaeEngineStatePayload {
     pub engine: String,
     pub endpoint: String,
     pub team_mode: bool,
+    pub auto_mode: bool,
+    pub advisor_mode: bool,
+    pub kairos_enabled: bool,
+    pub self_improvement_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_scope: Option<String>,
+    pub approval_preset: String,
     pub command: String,
     pub capabilities: serde_json::Value,
     pub capability_matrix: serde_json::Value,
@@ -338,11 +359,191 @@ pub struct IlhaeAppEngineSetResponse {
     pub matrix: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default)]
+pub struct IlhaeAppProfileAgentDto {
+    #[serde(rename = "engineId", default, skip_serializing_if = "Option::is_none")]
+    pub engine_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(rename = "teamMode")]
+    pub team_mode: bool,
+    #[serde(rename = "autoMode")]
+    pub auto_mode: bool,
+    pub advisor: bool,
+    pub kairos: bool,
+    #[serde(rename = "selfImprovement")]
+    pub self_improvement: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default)]
+pub struct IlhaeAppProfilePermissionsDto {
+    #[serde(rename = "approvalPreset")]
+    pub approval_preset: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default)]
+pub struct IlhaeAppProfileScopeDto {
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default)]
+pub struct IlhaeAppProfileDto {
+    pub id: String,
+    pub agent: IlhaeAppProfileAgentDto,
+    pub permissions: IlhaeAppProfilePermissionsDto,
+    pub memory: IlhaeAppProfileScopeDto,
+    pub task: IlhaeAppProfileScopeDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/profile/list", response = IlhaeAppProfileListResponse)]
+pub struct IlhaeAppProfileListRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppProfileListResponse {
+    #[serde(rename = "activeProfile", default, skip_serializing_if = "Option::is_none")]
+    pub active_profile: Option<String>,
+    pub profiles: Vec<IlhaeAppProfileDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/profile/get", response = IlhaeAppProfileGetResponse)]
+pub struct IlhaeAppProfileGetRequest {
+    #[serde(rename = "profileId", default)]
+    pub profile_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppProfileGetResponse {
+    #[serde(rename = "activeProfile", default, skip_serializing_if = "Option::is_none")]
+    pub active_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<IlhaeAppProfileDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/profile/set", response = IlhaeAppProfileSetResponse)]
+pub struct IlhaeAppProfileSetRequest {
+    #[serde(rename = "profileId")]
+    pub profile_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppProfileSetResponse {
+    pub ok: bool,
+    #[serde(rename = "activeProfile")]
+    pub active_profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<IlhaeAppProfileDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/profile/upsert", response = IlhaeAppProfileUpsertResponse)]
+pub struct IlhaeAppProfileUpsertRequest {
+    pub profile: IlhaeAppProfileDto,
+    #[serde(default)]
+    pub activate: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppProfileUpsertResponse {
+    pub ok: bool,
+    #[serde(rename = "activeProfile", default, skip_serializing_if = "Option::is_none")]
+    pub active_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<IlhaeAppProfileDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task/list", response = IlhaeAppTaskListResponse)]
+pub struct IlhaeAppTaskListRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTaskListResponse {
+    pub tasks: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task/get", response = IlhaeAppTaskGetResponse)]
+pub struct IlhaeAppTaskGetRequest {
+    #[serde(rename = "taskId")]
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTaskGetResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task/create", response = IlhaeAppTaskCreateResponse)]
+pub struct IlhaeAppTaskCreateRequest {
+    pub task: TaskCreateInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTaskCreateResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task/update", response = IlhaeAppTaskUpdateResponse)]
+pub struct IlhaeAppTaskUpdateRequest {
+    pub task: TaskUpdateInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTaskUpdateResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task/delete", response = IlhaeAppTaskDeleteResponse)]
+pub struct IlhaeAppTaskDeleteRequest {
+    #[serde(rename = "taskId")]
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTaskDeleteResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task/run", response = IlhaeAppTaskRunResponse)]
+pub struct IlhaeAppTaskRunRequest {
+    #[serde(rename = "taskId", default)]
+    pub task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTaskRunResponse {
+    pub triggered: Vec<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IlhaeEngineStateNotification {
     pub engine: String,
     pub endpoint: String,
     pub team_mode: bool,
+    pub auto_mode: bool,
+    pub advisor_mode: bool,
+    pub kairos_enabled: bool,
+    pub self_improvement_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_scope: Option<String>,
+    pub approval_preset: String,
     pub command: String,
     pub capabilities: serde_json::Value,
     pub capability_matrix: serde_json::Value,
@@ -1299,6 +1500,55 @@ pub struct MemoryToolPinInput {
     pub chunk_id: i64,
     /// Whether to pin (true) or unpin (false).
     pub pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolPromoteInput {
+    /// Source session id containing the artifact to promote.
+    pub session_id: String,
+    /// Artifact type, e.g. task, plan, walkthrough.
+    pub artifact_type: String,
+    /// Target knowledge item id.
+    pub ki_id: String,
+    /// Target knowledge item title.
+    pub title: String,
+    /// Optional tags for the promoted KI.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolExtractInput {
+    /// Existing knowledge item id.
+    pub ki_id: String,
+    /// Optional namespace for the KI.
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Optional vault path/name override.
+    #[serde(default)]
+    pub vault_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolDreamPreviewInput {
+    /// Maximum number of pending groups to inspect.
+    #[serde(default = "default_five")]
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolDreamAnalyzeInput {
+    /// Directory scope to analyze.
+    pub dir: String,
+    /// Maximum number of important groups to inspect.
+    #[serde(default = "default_five")]
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolDreamApplyInput {
+    /// Memory chunk ids to update.
+    pub ids: Vec<i64>,
 }
 
 // 💬 Session
