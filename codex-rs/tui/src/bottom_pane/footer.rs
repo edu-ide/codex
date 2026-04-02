@@ -1020,7 +1020,7 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
             condition: DisplayCondition::Always,
         }],
         prefix: "",
-        label: " for commands",
+        label: " for /status and runtime controls",
     },
     ShortcutDescriptor {
         id: ShortcutId::ShellCommands,
@@ -1818,5 +1818,36 @@ mod tests {
             .key;
 
         assert_eq!(actual_key, expected_key);
+    }
+
+    #[test]
+    fn commands_shortcut_mentions_status_and_runtime_controls() {
+        let descriptor = SHORTCUTS
+            .iter()
+            .find(|descriptor| descriptor.id == ShortcutId::Commands)
+            .expect("commands shortcut");
+
+        let rendered = descriptor
+            .overlay_entry(ShortcutsState {
+                use_shift_enter_hint: false,
+                esc_backtrack_hint: false,
+                is_wsl: false,
+                collaboration_modes_enabled: false,
+            })
+            .expect("commands overlay entry");
+        let text = rendered
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(
+            text.contains("/status"),
+            "expected commands shortcut to mention /status, got: {text}"
+        );
+        assert!(
+            text.contains("runtime"),
+            "expected commands shortcut to mention runtime controls, got: {text}"
+        );
     }
 }

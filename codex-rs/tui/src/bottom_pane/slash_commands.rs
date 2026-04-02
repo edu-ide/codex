@@ -14,6 +14,17 @@ use crate::slash_command::built_in_slash_commands;
 /// Hide alias commands in popup/listing views so each unique action appears once.
 pub(crate) const ALIAS_COMMANDS: &[SlashCommand] = &[SlashCommand::Quit, SlashCommand::Approvals];
 
+/// Runtime-mode slash commands that act as selectors or toggles.
+#[cfg(test)]
+pub(crate) const RUNTIME_MODE_COMMANDS: &[SlashCommand] = &[
+    SlashCommand::Profile,
+    SlashCommand::Advisor,
+    SlashCommand::Auto,
+    SlashCommand::Team,
+    SlashCommand::Kairos,
+    SlashCommand::Improve,
+];
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct BuiltinCommandFlags {
     pub(crate) collaboration_modes_enabled: bool,
@@ -196,6 +207,30 @@ mod tests {
     fn help_command_is_available() {
         let cmd = find_builtin_command("help", all_enabled_flags());
         assert_eq!(cmd, Some(SlashCommand::Help));
+    }
+
+    #[test]
+    fn runtime_mode_commands_resolve_for_dispatch() {
+        for command in RUNTIME_MODE_COMMANDS {
+            assert_eq!(
+                find_builtin_command(command.command(), all_enabled_flags()),
+                Some(*command)
+            );
+        }
+    }
+
+    #[test]
+    fn popup_commands_include_runtime_mode_commands() {
+        let popup_commands = builtins_for_popup(all_enabled_flags());
+        let command_names: Vec<&str> = popup_commands.iter().map(|(name, _)| *name).collect();
+
+        for command in RUNTIME_MODE_COMMANDS {
+            let name = command.command();
+            assert!(
+                command_names.contains(&name),
+                "expected popup list to include /{name}, got {command_names:?}"
+            );
+        }
     }
 
     #[test]

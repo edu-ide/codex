@@ -8,11 +8,11 @@ use crate::app_event::RealtimeAudioDeviceKind;
 #[cfg(target_os = "windows")]
 use crate::app_event::WindowsSandboxEnableMode;
 use crate::app_event_sender::AppEventSender;
+use crate::app_server_approval_conversions::network_approval_context_to_core;
+use crate::app_server_session::AppServerStartedThread;
 use crate::app_server_session::ConversationRuntime;
 use crate::app_server_session::ConversationTurnRequest;
 use crate::app_server_session::SelectedConversationRuntime as AppServerSession;
-use crate::app_server_approval_conversions::network_approval_context_to_core;
-use crate::app_server_session::AppServerStartedThread;
 use crate::app_server_session::ThreadSessionState;
 use crate::app_server_session::app_server_rate_limit_snapshots_to_core;
 use crate::bottom_pane::ApprovalRequest;
@@ -99,11 +99,13 @@ use codex_core::models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONF
 #[cfg(target_os = "windows")]
 use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_features::Feature;
+use codex_ilhae::BootstrappedIlhaeRuntime;
 use codex_ilhae::capabilities::EngineCapabilityProfile;
 use codex_ilhae::capabilities::engine_capability_profile;
-use codex_ilhae::helpers::ILHAE_AGENT_ID;
 use codex_ilhae::current_native_backend_capability_profile;
+use codex_ilhae::helpers::ILHAE_AGENT_ID;
 use codex_ilhae::native_runtime_context;
+use codex_ilhae::notify_engine_state;
 use codex_ilhae::types::NOTIF_APP_SESSION_EVENT;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
@@ -1071,6 +1073,91 @@ impl App {
         ));
     }
 
+    fn report_ilhae_runtime_control_unsupported(&mut self, command: &str) {
+        let backend = if self.remote_app_server_url.is_some() {
+            "remote runtime"
+        } else {
+            "current backend"
+        };
+        self.chat_widget.add_error_message(format!(
+            "`/{command}` is only supported in the native embedded ilhae runtime; the {backend} cannot mutate runtime state."
+        ));
+    }
+
+    fn native_ilhae_runtime_for_control(
+        &mut self,
+        command: &str,
+    ) -> Option<BootstrappedIlhaeRuntime> {
+        let runtime = native_runtime_context();
+        if runtime.is_none() {
+            self.report_ilhae_runtime_control_unsupported(command);
+        }
+        runtime
+    }
+
+    async fn finish_ilhae_runtime_mutation(&mut self, runtime: &BootstrappedIlhaeRuntime) {
+        notify_engine_state(&runtime.cx_cache, &runtime.settings_store).await;
+        self.sync_backend_capabilities();
+        self.refresh_status_line();
+    }
+
+    async fn mutate_native_ilhae_runtime<F>(&mut self, command: &'static str, mutator: F)
+    where
+        F: FnOnce(&BootstrappedIlhaeRuntime) -> Result<(), String>,
+    {
+        let Some(runtime) = self.native_ilhae_runtime_for_control(command) else {
+            return;
+        };
+
+        if let Err(err) = mutator(&runtime) {
+            self.chat_widget
+                .add_error_message(format!("Failed to apply `/{command}`: {err}"));
+            return;
+        }
+
+        self.finish_ilhae_runtime_mutation(&runtime).await;
+    }
+
+    async fn mutate_native_ilhae_active_profile<F>(&mut self, command: &'static str, mutator: F)
+    where
+        F: FnOnce(&mut codex_ilhae::IlhaeAppProfileDto) -> Result<(), String>,
+    {
+        let Some(runtime) = self.native_ilhae_runtime_for_control(command) else {
+            return;
+        };
+
+        let (active_profile_id, profile) = codex_ilhae::config::get_ilhae_profile(None);
+        let mut profile = profile.unwrap_or_else(|| codex_ilhae::IlhaeAppProfileDto {
+            id: active_profile_id.unwrap_or_else(|| "default".to_string()),
+            ..Default::default()
+        });
+
+        if let Err(err) = mutator(&mut profile) {
+            self.chat_widget
+                .add_error_message(format!("Failed to prepare `/{command}`: {err}"));
+            return;
+        }
+
+        let persisted = match codex_ilhae::config::upsert_ilhae_profile(profile, true) {
+            Ok((_, profile)) => profile,
+            Err(err) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to apply `/{command}`: {err}"));
+                return;
+            }
+        };
+
+        if let Err(err) =
+            codex_ilhae::config::apply_ilhae_profile_projection(&runtime.settings_store, &persisted)
+        {
+            self.chat_widget
+                .add_error_message(format!("Failed to project `/{command}`: {err}"));
+            return;
+        }
+
+        self.finish_ilhae_runtime_mutation(&runtime).await;
+    }
+
     pub fn chatwidget_init_for_forked_or_resumed_thread(
         &self,
         tui: &mut tui::Tui,
@@ -1909,8 +1996,9 @@ impl App {
     /// low-severity path.
     fn fetch_mcp_inventory(&mut self, app_server: &AppServerSession) {
         let Some(request_handle) = app_server.request_handle() else {
-            self.chat_widget
-                .add_error_message("MCP inventory is unavailable for the current backend.".to_string());
+            self.chat_widget.add_error_message(
+                "MCP inventory is unavailable for the current backend.".to_string(),
+            );
             return;
         };
         let app_event_tx = self.app_event_tx.clone();
@@ -1940,8 +2028,9 @@ impl App {
 
     fn fetch_plugins_list(&mut self, app_server: &AppServerSession, cwd: PathBuf) {
         let Some(request_handle) = app_server.request_handle() else {
-            self.chat_widget
-                .add_error_message("Plugin listing is unavailable for the current backend.".to_string());
+            self.chat_widget.add_error_message(
+                "Plugin listing is unavailable for the current backend.".to_string(),
+            );
             return;
         };
         let app_event_tx = self.app_event_tx.clone();
@@ -1960,8 +2049,9 @@ impl App {
         params: PluginReadParams,
     ) {
         let Some(request_handle) = app_server.request_handle() else {
-            self.chat_widget
-                .add_error_message("Plugin detail is unavailable for the current backend.".to_string());
+            self.chat_widget.add_error_message(
+                "Plugin detail is unavailable for the current backend.".to_string(),
+            );
             return;
         };
         let app_event_tx = self.app_event_tx.clone();
@@ -1982,8 +2072,9 @@ impl App {
         plugin_display_name: String,
     ) {
         let Some(request_handle) = app_server.request_handle() else {
-            self.chat_widget
-                .add_error_message("Plugin install is unavailable for the current backend.".to_string());
+            self.chat_widget.add_error_message(
+                "Plugin install is unavailable for the current backend.".to_string(),
+            );
             return;
         };
         let app_event_tx = self.app_event_tx.clone();
@@ -2012,8 +2103,9 @@ impl App {
         plugin_display_name: String,
     ) {
         let Some(request_handle) = app_server.request_handle() else {
-            self.chat_widget
-                .add_error_message("Plugin uninstall is unavailable for the current backend.".to_string());
+            self.chat_widget.add_error_message(
+                "Plugin uninstall is unavailable for the current backend.".to_string(),
+            );
             return;
         };
         let app_event_tx = self.app_event_tx.clone();
@@ -2767,7 +2859,9 @@ impl App {
                             Err(TrySendError::Full(event)) => {
                                 tokio::spawn(async move {
                                     if let Err(err) = sender.send(event).await {
-                                        tracing::warn!("thread {thread_id} event channel closed: {err}");
+                                        tracing::warn!(
+                                            "thread {thread_id} event channel closed: {err}"
+                                        );
                                     }
                                 });
                             }
@@ -4382,28 +4476,27 @@ impl App {
                 } else {
                     codex_protocol::protocol::ReviewDecision::Abort
                 };
-                match app_server.resolve_acp_permission_request(&id, option_id).await {
-                Ok(()) => {
-                    self.note_thread_outbound_op(
-                        thread_id,
-                        &AppCommand::exec_approval(
-                            id.clone(),
-                            None,
-                            replay_decision,
-                        ),
-                    )
-                    .await;
-                    self.pending_app_server_requests
-                        .resolve_notification(&RequestId::String(id));
-                    self.refresh_pending_thread_approvals().await;
-                }
-                Err(err) => {
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to resolve ACP permission request for thread {thread_id}: {err}"
-                    ));
+                match app_server
+                    .resolve_acp_permission_request(&id, option_id)
+                    .await
+                {
+                    Ok(()) => {
+                        self.note_thread_outbound_op(
+                            thread_id,
+                            &AppCommand::exec_approval(id.clone(), None, replay_decision),
+                        )
+                        .await;
+                        self.pending_app_server_requests
+                            .resolve_notification(&RequestId::String(id));
+                        self.refresh_pending_thread_approvals().await;
+                    }
+                    Err(err) => {
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to resolve ACP permission request for thread {thread_id}: {err}"
+                        ));
+                    }
                 }
             }
-            },
             AppEvent::ThreadHistoryEntryResponse { thread_id, event } => {
                 self.enqueue_thread_history_entry_response(thread_id, event)
                     .await?;
@@ -4591,6 +4684,66 @@ impl App {
             AppEvent::RefreshBackendCapabilities => {
                 self.sync_backend_capabilities();
                 self.refresh_status_line();
+            }
+            AppEvent::SetIlhaeRuntimeProfile { profile_id } => {
+                self.mutate_native_ilhae_runtime("profile", move |runtime| {
+                    let profile = codex_ilhae::config::set_active_ilhae_profile(&profile_id)?;
+                    codex_ilhae::config::apply_ilhae_profile_projection(
+                        &runtime.settings_store,
+                        &profile,
+                    )
+                })
+                .await;
+            }
+            AppEvent::SetIlhaeAdvisorMode { enabled, preset } => {
+                self.mutate_native_ilhae_active_profile("advisor", move |profile| {
+                    let next_enabled = enabled.unwrap_or(!profile.agent.advisor);
+                    profile.agent.advisor = next_enabled;
+
+                    let next_preset = preset
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned)
+                        .or_else(|| {
+                            (next_enabled && profile.agent.advisor_preset.trim().is_empty())
+                                .then(codex_ilhae::settings_types::default_advisor_preset)
+                        });
+                    if let Some(next_preset) = next_preset {
+                        profile.agent.advisor_preset = next_preset;
+                    }
+                    Ok(())
+                })
+                .await;
+            }
+            AppEvent::SetIlhaeAutoMode { enabled } => {
+                self.mutate_native_ilhae_active_profile("auto", move |profile| {
+                    profile.agent.auto_mode = enabled.unwrap_or(!profile.agent.auto_mode);
+                    Ok(())
+                })
+                .await;
+            }
+            AppEvent::SetIlhaeTeamMode { enabled } => {
+                self.mutate_native_ilhae_active_profile("team", move |profile| {
+                    profile.agent.team_mode = enabled.unwrap_or(!profile.agent.team_mode);
+                    Ok(())
+                })
+                .await;
+            }
+            AppEvent::SetIlhaeKairosMode { enabled } => {
+                self.mutate_native_ilhae_active_profile("kairos", move |profile| {
+                    profile.agent.kairos = enabled.unwrap_or(!profile.agent.kairos);
+                    Ok(())
+                })
+                .await;
+            }
+            AppEvent::SetIlhaeImproveMode { enabled } => {
+                self.mutate_native_ilhae_active_profile("improve", move |profile| {
+                    profile.agent.self_improvement =
+                        enabled.unwrap_or(!profile.agent.self_improvement);
+                    Ok(())
+                })
+                .await;
             }
             AppEvent::UpdateCollaborationMode(mask) => {
                 self.chat_widget.set_collaboration_mask(mask);
@@ -9272,6 +9425,7 @@ guardian_approval = true
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
+            backend_capabilities: engine_capability_profile(ILHAE_AGENT_ID),
         }
     }
 
@@ -9326,10 +9480,38 @@ guardian_approval = true
                 primary_session_configured: None,
                 pending_primary_events: VecDeque::new(),
                 pending_app_server_requests: PendingAppServerRequests::default(),
+                backend_capabilities: engine_capability_profile(ILHAE_AGENT_ID),
             },
             rx,
             op_rx,
         )
+    }
+
+    #[tokio::test]
+    async fn native_runtime_controls_report_remote_runtime_as_unsupported() {
+        let mut app = make_test_app().await;
+        app.remote_app_server_url = Some("ws://example.test".to_string());
+
+        app.mutate_native_ilhae_runtime("profile", |_| Ok(())).await;
+
+        let rendered = render_chat_widget_text(&app.chat_widget, /*width*/ 100);
+        assert!(
+            rendered.contains("`/profile` is only supported in the native embedded ilhae runtime")
+        );
+        assert!(rendered.contains("remote runtime"));
+    }
+
+    #[tokio::test]
+    async fn native_runtime_controls_report_current_backend_when_no_remote_runtime_exists() {
+        let mut app = make_test_app().await;
+
+        app.mutate_native_ilhae_runtime("auto", |_| Ok(())).await;
+
+        let rendered = render_chat_widget_text(&app.chat_widget, /*width*/ 100);
+        assert!(
+            rendered.contains("`/auto` is only supported in the native embedded ilhae runtime")
+        );
+        assert!(rendered.contains("current backend"));
     }
 
     fn test_thread_session(thread_id: ThreadId, cwd: PathBuf) -> ThreadSessionState {
@@ -9759,6 +9941,29 @@ guardian_approval = true
                     .iter()
                     .map(|span| span.content.as_ref())
                     .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn render_chat_widget_text(chat: &ChatWidget, width: u16) -> String {
+        let height = chat.desired_height(width).max(1);
+        let area = ratatui::layout::Rect::new(0, 0, width, height);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        chat.render(area, &mut buf);
+
+        (0..area.height)
+            .map(|row| {
+                let mut line = String::new();
+                for col in 0..area.width {
+                    let symbol = buf[(area.x + col, area.y + row)].symbol();
+                    if symbol.is_empty() {
+                        line.push(' ');
+                    } else {
+                        line.push_str(symbol);
+                    }
+                }
+                line.trim_end().to_string()
             })
             .collect::<Vec<_>>()
             .join("\n")

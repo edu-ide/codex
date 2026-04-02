@@ -15,6 +15,12 @@ pub enum SlashCommand {
     // more frequently used commands should be listed first.
     Model,
     Fast,
+    Profile,
+    Advisor,
+    Auto,
+    Team,
+    Kairos,
+    Improve,
     Approvals,
     Permissions,
     #[strum(serialize = "setup-default-sandbox")]
@@ -99,6 +105,12 @@ impl SlashCommand {
             SlashCommand::MemoryUpdate => "DO NOT USE",
             SlashCommand::Model => "choose what model and reasoning effort to use",
             SlashCommand::Fast => "toggle Fast mode to enable fastest inference at 2X plan usage",
+            SlashCommand::Profile => "choose the active profile",
+            SlashCommand::Advisor => "cycle the advisor preset",
+            SlashCommand::Auto => "toggle autonomous mode",
+            SlashCommand::Team => "toggle team mode",
+            SlashCommand::Kairos => "toggle kairos scheduling",
+            SlashCommand::Improve => "toggle self-improvement mode",
             SlashCommand::Personality => "choose a communication style for Codex",
             SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
             SlashCommand::Settings => "configure realtime microphone/speaker",
@@ -136,12 +148,18 @@ impl SlashCommand {
             is_visible: self.is_visible_internal(),
             available_during_task: self.available_during_task(),
             category: match self {
-                SlashCommand::Model | SlashCommand::Fast | SlashCommand::Personality => {
-                    CommandCategory::System
-                }
-                SlashCommand::Mcp | SlashCommand::Apps | SlashCommand::Plugins => {
-                    CommandCategory::Mcp
-                }
+            SlashCommand::Model | SlashCommand::Fast | SlashCommand::Personality => {
+                CommandCategory::System
+            }
+            SlashCommand::Profile
+            | SlashCommand::Advisor
+            | SlashCommand::Auto
+            | SlashCommand::Team
+            | SlashCommand::Kairos
+            | SlashCommand::Improve => CommandCategory::System,
+            SlashCommand::Mcp | SlashCommand::Apps | SlashCommand::Plugins => {
+                CommandCategory::Mcp
+            }
                 SlashCommand::Review | SlashCommand::Plan => CommandCategory::Experimental,
                 _ => CommandCategory::System,
             },
@@ -181,6 +199,12 @@ impl SlashCommand {
             // | SlashCommand::Undo
             | SlashCommand::Model
             | SlashCommand::Fast
+            | SlashCommand::Profile
+            | SlashCommand::Advisor
+            | SlashCommand::Auto
+            | SlashCommand::Team
+            | SlashCommand::Kairos
+            | SlashCommand::Improve
             | SlashCommand::Personality
             | SlashCommand::Approvals
             | SlashCommand::Permissions
@@ -258,5 +282,39 @@ mod tests {
     #[test]
     fn clean_alias_parses_to_stop_command() {
         assert_eq!(SlashCommand::from_str("clean"), Ok(SlashCommand::Stop));
+    }
+
+    #[test]
+    fn runtime_mode_commands_are_system_commands() {
+        use codex_protocol::commands::CommandCategory;
+
+        for command in [
+            SlashCommand::Profile,
+            SlashCommand::Advisor,
+            SlashCommand::Auto,
+            SlashCommand::Team,
+            SlashCommand::Kairos,
+            SlashCommand::Improve,
+        ] {
+            let meta = command.to_meta();
+            assert_eq!(meta.category, CommandCategory::System);
+            assert!(!meta.available_during_task);
+        }
+    }
+
+    #[test]
+    fn runtime_mode_descriptions_match_trigger_semantics() {
+        let cases = [
+            (SlashCommand::Profile, "choose the active profile"),
+            (SlashCommand::Advisor, "cycle the advisor preset"),
+            (SlashCommand::Auto, "toggle autonomous mode"),
+            (SlashCommand::Team, "toggle team mode"),
+            (SlashCommand::Kairos, "toggle kairos scheduling"),
+            (SlashCommand::Improve, "toggle self-improvement mode"),
+        ];
+
+        for (command, expected) in cases {
+            assert_eq!(command.description(), expected);
+        }
     }
 }

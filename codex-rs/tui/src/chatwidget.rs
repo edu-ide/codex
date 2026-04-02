@@ -111,7 +111,6 @@ use codex_ilhae::native_runtime_context;
 #[cfg(test)]
 use codex_git_utils::CommitLogEntry;
 use codex_git_utils::current_branch_name;
-use codex_git_utils::get_git_repo_root;
 use codex_git_utils::local_git_branches;
 use codex_git_utils::recent_commits;
 use codex_otel::RuntimeMetricsSummary;
@@ -5077,6 +5076,28 @@ impl ChatWidget {
             SlashCommand::Model => {
                 self.open_model_popup();
             }
+            SlashCommand::Profile => {
+                self.open_ilhae_profile_popup();
+            }
+            SlashCommand::Advisor => {
+                self.cycle_ilhae_advisor_preset();
+            }
+            SlashCommand::Auto => {
+                self.app_event_tx
+                    .send(AppEvent::SetIlhaeAutoMode { enabled: None });
+            }
+            SlashCommand::Team => {
+                self.app_event_tx
+                    .send(AppEvent::SetIlhaeTeamMode { enabled: None });
+            }
+            SlashCommand::Kairos => {
+                self.app_event_tx
+                    .send(AppEvent::SetIlhaeKairosMode { enabled: None });
+            }
+            SlashCommand::Improve => {
+                self.app_event_tx
+                    .send(AppEvent::SetIlhaeImproveMode { enabled: None });
+            }
             SlashCommand::Fast => {
                 let next_tier = if matches!(self.config.service_tier, Some(ServiceTier::Fast)) {
                     None
@@ -7791,6 +7812,94 @@ impl ChatWidget {
             footer_hint: Some(standard_popup_hint_line()),
             items,
             ..Default::default()
+        });
+    }
+
+    fn open_ilhae_profile_popup(&mut self) {
+        let Some(_) = codex_ilhae::native_runtime_context() else {
+            self.add_error_message(
+                "`/profile` is only supported in the native embedded ilhae runtime.".to_string(),
+            );
+            return;
+        };
+
+        let (active_profile, profiles) = codex_ilhae::config::list_ilhae_profiles();
+        let active_profile = active_profile.unwrap_or_else(|| "default".to_string());
+        let initial_selected_idx = profiles
+            .iter()
+            .position(|profile| profile.id == active_profile);
+        let items: Vec<SelectionItem> = profiles
+            .into_iter()
+            .map(|profile| {
+                let profile_id = profile.id.clone();
+                let mut summary_parts = Vec::new();
+                if let Some(engine_id) = profile.agent.engine_id.as_deref() {
+                    if !engine_id.trim().is_empty() {
+                        summary_parts.push(engine_id.to_string());
+                    }
+                }
+                if profile.agent.advisor {
+                    summary_parts.push(format!(
+                        "advisor:{}",
+                        profile.agent.advisor_preset.trim()
+                    ));
+                }
+                if profile.agent.auto_mode {
+                    summary_parts.push("auto".to_string());
+                }
+                if profile.agent.team_mode {
+                    summary_parts.push("team".to_string());
+                }
+                if profile.agent.kairos {
+                    summary_parts.push("kairos".to_string());
+                }
+                if profile.agent.self_improvement {
+                    summary_parts.push("improve".to_string());
+                }
+                let description = (!summary_parts.is_empty()).then(|| summary_parts.join("  "));
+                let actions: Vec<SelectionAction> =
+                    vec![Box::new(move |tx| tx.send(AppEvent::SetIlhaeRuntimeProfile {
+                        profile_id: profile_id.clone(),
+                    }))];
+                SelectionItem {
+                    name: profile.id.clone(),
+                    description,
+                    is_current: profile.id == active_profile,
+                    actions,
+                    dismiss_on_select: true,
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        let mut header = ColumnRenderable::new();
+        header.push(Line::from("Select Runtime Profile".bold()));
+        header.push(Line::from(
+            "Choose which ilhae profile should drive advisor, auto, team, kairos, and improve.",
+        )
+        .dim());
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            header: Box::new(header),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            initial_selected_idx,
+            ..Default::default()
+        });
+    }
+
+    fn cycle_ilhae_advisor_preset(&mut self) {
+        let current = codex_ilhae::native_runtime_context()
+            .map(|runtime| runtime.settings_store.get().agent.advisor_preset)
+            .unwrap_or_else(codex_ilhae::settings_types::default_advisor_preset);
+        let next = match current.trim() {
+            "review_first" => "risk_first",
+            "risk_first" => "plan_first",
+            _ => "review_first",
+        };
+        self.app_event_tx.send(AppEvent::SetIlhaeAdvisorMode {
+            enabled: Some(true),
+            preset: Some(next.to_string()),
         });
     }
 

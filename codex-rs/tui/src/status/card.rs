@@ -8,6 +8,7 @@ use chrono::Local;
 use codex_core::WireApi;
 use codex_core::config::Config;
 use codex_ilhae::native_runtime_context;
+use codex_git_utils::{get_git_repo_root, resolve_root_git_project_for_trust};
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -20,6 +21,7 @@ use codex_utils_sandbox_summary::summarize_sandbox_policy;
 use ratatui::prelude::*;
 use ratatui::style::Stylize;
 use std::collections::BTreeSet;
+use std::path::Path;
 use std::path::PathBuf;
 use url::Url;
 
@@ -78,6 +80,13 @@ struct StatusExecutionLoopData {
 }
 
 #[derive(Debug, Clone)]
+struct StatusWorkflowSurfaceData {
+    tmux: String,
+    worktree: String,
+    remote: String,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct StatusHistoryHandle {
     rate_limit_state: Arc<RwLock<StatusRateLimitState>>,
 }
@@ -111,6 +120,7 @@ struct StatusHistoryCell {
     permissions: String,
     agents_summary: String,
     collaboration_mode: Option<String>,
+    workflow_surface: StatusWorkflowSurfaceData,
     execution_loop: Option<StatusExecutionLoopData>,
     model_provider: Option<String>,
     account: Option<StatusAccountDisplay>,
@@ -265,68 +275,97 @@ impl StatusHistoryCell {
         let settings = runtime.settings_store.get();
         let agent = &settings.agent;
 
-        let advisor_mode = if agent.advisor_mode {
-            format!(
-                "enabled ({})",
-                Self::advisor_preset_label(&agent.advisor_preset)
-            )
-        } else {
-            "disabled".to_string()
-        };
+        let advisor_mode = format_runtime_mode_value(
+            agent.advisor_mode,
+            agent.advisor_mode.then(|| Self::advisor_preset_label(&agent.advisor_preset).to_string()),
+            "/advisor",
+        );
 
-        let auto_mode = if agent.autonomous_mode {
-            format!(
-                "{} turns, {}m, {}",
-                agent.auto_max_turns.max(1),
-                agent.auto_timebox_minutes.max(1),
-                Self::pause_policy_label(agent.auto_pause_on_error)
-            )
-        } else {
-            "disabled".to_string()
-        };
+        let auto_mode = format_runtime_mode_value(
+            agent.autonomous_mode,
+            agent.autonomous_mode.then(|| {
+                format!(
+                    "{} turns, {}m, {}",
+                    agent.auto_max_turns.max(1),
+                    agent.auto_timebox_minutes.max(1),
+                    Self::pause_policy_label(agent.auto_pause_on_error)
+                )
+            }),
+            "/auto",
+        );
 
-        let team_mode = if agent.team_mode {
-            format!(
-                "{}, retries {}, {}",
-                Self::team_merge_policy_label(&agent.team_merge_policy),
-                agent.team_max_retries.max(1),
-                Self::pause_policy_label(agent.team_pause_on_error)
-            )
-        } else {
-            "disabled".to_string()
-        };
+        let team_mode = format_runtime_mode_value(
+            agent.team_mode,
+            agent.team_mode.then(|| {
+                format!(
+                    "{}, retries {}, {}",
+                    Self::team_merge_policy_label(&agent.team_merge_policy),
+                    agent.team_max_retries.max(1),
+                    Self::pause_policy_label(agent.team_pause_on_error)
+                )
+            }),
+            "/team",
+        );
 
-        let kairos = if agent.kairos_enabled {
-            match agent.task_scope.as_deref().filter(|scope| !scope.trim().is_empty()) {
-                Some(scope) => format!("enabled ({scope})"),
-                None => "enabled".to_string(),
-            }
-        } else {
-            "disabled".to_string()
-        };
+        let kairos = format_scoped_runtime_mode_value(
+            agent.kairos_enabled,
+            agent.task_scope
+                .as_deref()
+                .filter(|scope| !scope.trim().is_empty())
+                .map(ToString::to_string),
+            "/kairos",
+        );
 
-        let self_improvement =
-            if agent.self_improvement_enabled {
-                match agent
-                    .memory_scope
-                    .as_deref()
-                    .filter(|scope| !scope.trim().is_empty())
-                {
-                    Some(scope) => format!("enabled ({scope})"),
-                    None => "enabled".to_string(),
-                }
-            } else {
-                "disabled".to_string()
-            };
+        let self_improvement = format_scoped_runtime_mode_value(
+            agent.self_improvement_enabled,
+            agent.memory_scope
+                .as_deref()
+                .filter(|scope| !scope.trim().is_empty())
+                .map(ToString::to_string),
+            "/improve",
+        );
 
         Some(StatusExecutionLoopData {
-            profile: agent.active_profile.clone().unwrap_or_else(|| "default".to_string()),
+            profile: format_runtime_profile_value(
+                agent.active_profile.as_deref().unwrap_or("default"),
+            ),
             advisor_mode,
             auto_mode,
             team_mode,
             kairos,
             self_improvement,
         })
+    }
+
+    fn workflow_surface_data(cwd: &Path) -> StatusWorkflowSurfaceData {
+        StatusWorkflowSurfaceData {
+            tmux: if std::env::var_os("TMUX").is_some() {
+                "on".to_string()
+            } else {
+                "off".to_string()
+            },
+            worktree: Self::workflow_surface_worktree_status(cwd).to_string(),
+            remote: if native_runtime_context().is_some() {
+                "native".to_string()
+            } else {
+                "remote".to_string()
+            },
+        }
+    }
+
+    fn workflow_surface_worktree_status(cwd: &Path) -> &'static str {
+        let Some(repo_root) = get_git_repo_root(cwd) else {
+            return "none";
+        };
+        let Some(trust_root) = resolve_root_git_project_for_trust(cwd) else {
+            return "repo";
+        };
+
+        if repo_root == trust_root {
+            "repo"
+        } else {
+            "linked"
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -409,6 +448,7 @@ impl StatusHistoryCell {
         };
         let agents_summary = compose_agents_summary(config);
         let execution_loop = Self::execution_loop_data();
+        let workflow_surface = Self::workflow_surface_data(&config.cwd);
         let model_provider = format_model_provider(config);
         let account = compose_account_display(account_display);
         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
@@ -448,6 +488,7 @@ impl StatusHistoryCell {
                 permissions,
                 agents_summary,
                 collaboration_mode: collaboration_mode.map(ToString::to_string),
+                workflow_surface,
                 execution_loop,
                 model_provider,
                 account,
@@ -690,6 +731,9 @@ impl HistoryCell for StatusHistoryCell {
         if self.collaboration_mode.is_some() {
             push_label(&mut labels, &mut seen, "Collaboration mode");
         }
+        push_label(&mut labels, &mut seen, "TMUX");
+        push_label(&mut labels, &mut seen, "Worktree");
+        push_label(&mut labels, &mut seen, "Remote");
         if self.execution_loop.is_some() {
             push_label(&mut labels, &mut seen, "Runtime profile");
             push_label(&mut labels, &mut seen, "Advisor");
@@ -752,6 +796,18 @@ impl HistoryCell for StatusHistoryCell {
         if let Some(collab_mode) = self.collaboration_mode.as_ref() {
             lines.push(formatter.line("Collaboration mode", vec![Span::from(collab_mode.clone())]));
         }
+        lines.push(formatter.line(
+            "TMUX",
+            vec![Span::from(self.workflow_surface.tmux.clone())],
+        ));
+        lines.push(formatter.line(
+            "Worktree",
+            vec![Span::from(self.workflow_surface.worktree.clone())],
+        ));
+        lines.push(formatter.line(
+            "Remote",
+            vec![Span::from(self.workflow_surface.remote.clone())],
+        ));
         if let Some(execution_loop) = self.execution_loop.as_ref() {
             lines.push(formatter.line(
                 "Runtime profile",
@@ -844,4 +900,84 @@ fn sanitize_base_url(raw: &str) -> Option<String> {
     url.set_query(None);
     url.set_fragment(None);
     Some(url.to_string().trim_end_matches('/').to_string()).filter(|value| !value.is_empty())
+}
+
+fn format_runtime_profile_value(profile: &str) -> String {
+    format!("{profile} (use /profile)")
+}
+
+fn format_runtime_mode_value(enabled: bool, detail: Option<String>, command: &str) -> String {
+    if !enabled {
+        return format!("disabled (use {command})");
+    }
+
+    match detail {
+        Some(detail) => format!("enabled ({detail}; use {command})"),
+        None => format!("enabled (use {command})"),
+    }
+}
+
+fn format_scoped_runtime_mode_value(
+    enabled: bool,
+    scope: Option<String>,
+    command: &str,
+) -> String {
+    if !enabled {
+        return format!("disabled (use {command})");
+    }
+
+    match scope {
+        Some(scope) => format!("enabled (scope: {scope}; use {command})"),
+        None => format!("enabled (use {command})"),
+    }
+}
+
+#[cfg(test)]
+fn format_workflow_surface_value(tmux: &str, worktree: &str, remote: &str) -> String {
+    format!("wf:tmux:{tmux} worktree:{worktree} remote:{remote}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_control_hints_are_spelled_out_in_status_values() {
+        assert_eq!(
+            format_runtime_profile_value("default"),
+            "default (use /profile)"
+        );
+        assert_eq!(
+            format_runtime_mode_value(
+                /*enabled*/ true,
+                Some("risk-first".to_string()),
+                "/advisor"
+            ),
+            "enabled (risk-first; use /advisor)"
+        );
+        assert_eq!(
+            format_runtime_mode_value(/*enabled*/ false, None, "/auto"),
+            "disabled (use /auto)"
+        );
+        assert_eq!(
+            format_scoped_runtime_mode_value(
+                /*enabled*/ true,
+                Some("repo".to_string()),
+                "/kairos"
+            ),
+            "enabled (scope: repo; use /kairos)"
+        );
+        assert_eq!(
+            format_scoped_runtime_mode_value(/*enabled*/ false, None, "/improve"),
+            "disabled (use /improve)"
+        );
+    }
+
+    #[test]
+    fn workflow_surface_summary_is_structured() {
+        assert_eq!(
+            format_workflow_surface_value("on", "linked", "native"),
+            "wf:tmux:on worktree:linked remote:native"
+        );
+    }
 }

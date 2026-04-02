@@ -295,6 +295,37 @@ pub(crate) enum AppEvent {
     /// Recompute backend capabilities after a runtime settings change.
     RefreshBackendCapabilities,
 
+    /// Activate an ilhae runtime profile in the native embedded runtime.
+    SetIlhaeRuntimeProfile {
+        profile_id: String,
+    },
+
+    /// Toggle or explicitly set advisor mode in the native embedded runtime.
+    SetIlhaeAdvisorMode {
+        enabled: Option<bool>,
+        preset: Option<String>,
+    },
+
+    /// Toggle or explicitly set autonomous mode in the native embedded runtime.
+    SetIlhaeAutoMode {
+        enabled: Option<bool>,
+    },
+
+    /// Toggle or explicitly set team mode in the native embedded runtime.
+    SetIlhaeTeamMode {
+        enabled: Option<bool>,
+    },
+
+    /// Toggle or explicitly set Kairos in the native embedded runtime.
+    SetIlhaeKairosMode {
+        enabled: Option<bool>,
+    },
+
+    /// Toggle or explicitly set self-improvement in the native embedded runtime.
+    SetIlhaeImproveMode {
+        enabled: Option<bool>,
+    },
+
     /// Update the active collaboration mask in the running app and widget.
     UpdateCollaborationMode(CollaborationModeMask),
 

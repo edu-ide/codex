@@ -4,6 +4,7 @@
 //! behavior easier to review without paging through the rest of `chatwidget.rs`.
 
 use super::*;
+use codex_git_utils::{get_git_repo_root, resolve_root_git_project_for_trust};
 
 /// Items shown in the terminal title when the user has not configured a
 /// custom selection. Intentionally minimal: spinner + project name.
@@ -86,7 +87,10 @@ impl ChatWidget {
     }
 
     fn execution_loop_status_text(&self) -> Option<String> {
-        let runtime = native_runtime_context()?;
+        let workflow_surface = self.workflow_surface_status_text();
+        let Some(runtime) = native_runtime_context() else {
+            return Some(workflow_surface);
+        };
         let settings = runtime.settings_store.get();
         let agent = &settings.agent;
 
@@ -95,6 +99,7 @@ impl ChatWidget {
             "p:{}",
             agent.active_profile.as_deref().unwrap_or("default")
         ));
+        parts.push(workflow_surface);
 
         if agent.advisor_mode {
             parts.push(format!(
@@ -134,6 +139,37 @@ impl ChatWidget {
         }
 
         Some(parts.join(" "))
+    }
+
+    fn workflow_surface_status_text(&self) -> String {
+        let tmux = if std::env::var_os("TMUX").is_some() {
+            "on"
+        } else {
+            "off"
+        };
+        let worktree = Self::workflow_surface_worktree_status(self.status_line_cwd());
+        let remote = if native_runtime_context().is_some() {
+            "native"
+        } else {
+            "remote"
+        };
+
+        format!("wf:tmux:{tmux} worktree:{worktree} remote:{remote}")
+    }
+
+    fn workflow_surface_worktree_status(cwd: &Path) -> &'static str {
+        let Some(repo_root) = get_git_repo_root(cwd) else {
+            return "none";
+        };
+        let Some(trust_root) = resolve_root_git_project_for_trust(cwd) else {
+            return "repo";
+        };
+
+        if repo_root == trust_root {
+            "repo"
+        } else {
+            "linked"
+        }
     }
 
     fn status_surface_selections(&self) -> StatusSurfaceSelections {
