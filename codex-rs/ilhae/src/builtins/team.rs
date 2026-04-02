@@ -20,6 +20,38 @@ pub fn a2a_retry_delay(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_millis(ms)
 }
 
+pub fn current_team_merge_policy(state: &Arc<crate::SharedState>) -> String {
+    let policy = state.infra.settings_store.get().agent.team_merge_policy;
+    let trimmed = policy.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        "append_all".to_string()
+    } else {
+        trimmed
+    }
+}
+
+pub fn current_team_max_retries(state: &Arc<crate::SharedState>) -> u32 {
+    state.infra.settings_store.get().agent.team_max_retries.max(1)
+}
+
+pub fn current_team_pause_on_error(state: &Arc<crate::SharedState>) -> bool {
+    state.infra.settings_store.get().agent.team_pause_on_error
+}
+
+pub fn should_emit_team_response(state: &Arc<crate::SharedState>, role: &str) -> bool {
+    match current_team_merge_policy(state).as_str() {
+        "leader_only" => load_team_runtime_config(&state.infra.ilhae_dir)
+            .and_then(|cfg| {
+                cfg.agents
+                    .into_iter()
+                    .find(|agent| agent.role.eq_ignore_ascii_case(role))
+            })
+            .map(|agent| agent.is_main)
+            .unwrap_or_else(|| role.eq_ignore_ascii_case("leader")),
+        _ => true,
+    }
+}
+
 #[macro_export]
 macro_rules! with_team_server {
     ($builder:expr, $state:expr) => {{
@@ -44,13 +76,16 @@ macro_rules! with_team_server {
                             }
                             let cx = cx.connection_to();
                             let active_session_id = $crate::builtins::team::current_active_session_id(&state).await;
+                            let max_retries = $crate::builtins::team::current_team_max_retries(&state);
+                            let pause_on_error = $crate::builtins::team::current_team_pause_on_error(&state);
+                            let emit_responses = $crate::builtins::team::should_emit_team_response(&state, &role_lower);
 
                             let mut last_err = String::new();
-                            for attempt in 0..$crate::builtins::team::A2A_MAX_RETRY {
+                            for attempt in 0..max_retries {
                                 if attempt > 0 {
                                     let delay = $crate::builtins::team::a2a_retry_delay(attempt);
-                                    tracing::warn!("[Team-Tools] {} delegate retry {}/{} in {:?}", role_lower, attempt, $crate::builtins::team::A2A_MAX_RETRY, delay);
-                                    let retry_msg = format!("[System] {} 에이전트 재시도 중... ({}/{})", role_lower, attempt, $crate::builtins::team::A2A_MAX_RETRY);
+                                    tracing::warn!("[Team-Tools] {} delegate retry {}/{} in {:?}", role_lower, attempt, max_retries, delay);
+                                    let retry_msg = format!("[System] {} 에이전트 재시도 중... ({}/{})", role_lower, attempt, max_retries);
                                     let patch = serde_json::json!({
                                         "agentId": role_lower,
                                         "content": retry_msg,
@@ -81,16 +116,18 @@ macro_rules! with_team_server {
                                                     let text = a2a_rs::proxy::extract_text_from_stream_event(&event);
                                                     if !text.is_empty() {
                                                         accumulated_text = text;
-                                                        let patch = serde_json::json!({
-                                                            "agentId": role_lower,
-                                                            "content": accumulated_text,
-                                                            "thinking": "",
-                                                            "toolCalls": [],
-                                                            "contentBlocks": [{"type": "text", "text": &accumulated_text}],
-                                                            "final": false,
-                                                        });
-                                                        if let Ok(notif) = sacp::UntypedMessage::new("ilhae/assistant_turn_patch", patch) {
-                                                            let _ = cx.send_notification_to(sacp::Client, notif.clone());
+                                                        if emit_responses {
+                                                            let patch = serde_json::json!({
+                                                                "agentId": role_lower,
+                                                                "content": accumulated_text,
+                                                                "thinking": "",
+                                                                "toolCalls": [],
+                                                                "contentBlocks": [{"type": "text", "text": &accumulated_text}],
+                                                                "final": false,
+                                                            });
+                                                            if let Ok(notif) = sacp::UntypedMessage::new("ilhae/assistant_turn_patch", patch) {
+                                                                let _ = cx.send_notification_to(sacp::Client, notif.clone());
+                                                            }
                                                         }
                                                     }
                                                     event_count += 1;
@@ -123,8 +160,10 @@ macro_rules! with_team_server {
                                                 "contentBlocks": [{"type": "text", "text": &accumulated_text}],
                                                 "final": true,
                                             });
-                                            if let Ok(notif) = sacp::UntypedMessage::new("ilhae/assistant_turn_patch", patch) {
-                                                let _ = cx.send_notification_to(sacp::Client, notif);
+                                            if emit_responses {
+                                                if let Ok(notif) = sacp::UntypedMessage::new("ilhae/assistant_turn_patch", patch) {
+                                                    let _ = cx.send_notification_to(sacp::Client, notif);
+                                                }
                                             }
                                         }
 
@@ -142,9 +181,16 @@ macro_rules! with_team_server {
                                 }
                             }
 
-                            Err(sacp::Error::internal_error().data(format!(
-                                "A2A delegation to {} failed after {} retries: {}", role_lower, $crate::builtins::team::A2A_MAX_RETRY, last_err
-                            )))
+                            if pause_on_error {
+                                Err(sacp::Error::internal_error().data(format!(
+                                    "A2A delegation to {} failed after {} retries: {}", role_lower, max_retries, last_err
+                                )))
+                            } else {
+                                Ok::<String, sacp::Error>(format!(
+                                    "[{}] delegation failed after {} retries, continuing: {}",
+                                    role_lower, max_retries, last_err
+                                ))
+                            }
                         }
                     },
                     sacp::tool_fn!(),
@@ -455,13 +501,15 @@ pub async fn run_background_delegate(
 ) -> Result<String, sacp::Error> {
     let cx = cx.connection_to();
     let active_session_id = current_active_session_id(&state).await;
+    let max_retries = current_team_max_retries(&state);
+    let pause_on_error = current_team_pause_on_error(&state);
     let mut last_err = String::new();
-    for attempt in 0..A2A_MAX_RETRY {
+    for attempt in 0..max_retries {
         if attempt > 0 {
             let delay = a2a_retry_delay(attempt);
             warn!(
                 "[Team-Tools] {} background retry {}/{} in {:?}",
-                role_lower, attempt, A2A_MAX_RETRY, delay
+                role_lower, attempt, max_retries, delay
             );
             tokio::time::sleep(delay).await;
         }
@@ -474,6 +522,7 @@ pub async fn run_background_delegate(
                 let role_bg = role_lower.clone();
                 let state_bg = state.clone();
                 let active_sid_bg = active_session_id.clone();
+                let max_retries_bg = max_retries;
 
                 if let Some(session_id) = active_session_id.as_deref() {
                     emit_team_delegation_start(
@@ -500,16 +549,16 @@ pub async fn run_background_delegate(
 
                 tokio::spawn(async move {
                     let mut sub_last_err = String::new();
-                    for sub_attempt in 0..A2A_MAX_RETRY {
+                    for sub_attempt in 0..max_retries_bg {
                         if sub_attempt > 0 {
                             let delay = a2a_retry_delay(sub_attempt);
                             warn!(
                                 "[Team-Tools] {} subscribe retry {}/{}",
-                                role_bg, sub_attempt, A2A_MAX_RETRY
+                                role_bg, sub_attempt, max_retries_bg
                             );
                             let retry_alert = format!(
                                 "[System] Task {} from {} subscriber retrying ({}/{})...",
-                                tid, role_bg, sub_attempt, A2A_MAX_RETRY
+                                tid, role_bg, sub_attempt, max_retries_bg
                             );
                             let patch = json!({
                                 "agentId": role_bg,
@@ -623,7 +672,7 @@ pub async fn run_background_delegate(
                     }
                     let fail_alert = format!(
                         "[System Alert] Task {} from {} failed after {} retries: {}",
-                        tid, role_bg, A2A_MAX_RETRY, sub_last_err
+                        tid, role_bg, max_retries_bg, sub_last_err
                     );
                     let patch = json!({
                         "agentId": role_bg,
@@ -659,10 +708,17 @@ pub async fn run_background_delegate(
         }
     }
 
-    Err(sacp::Error::internal_error().data(format!(
-        "A2A background delegation to {} failed after {} retries: {}",
-        role_lower, A2A_MAX_RETRY, last_err
-    )))
+    if pause_on_error {
+        Err(sacp::Error::internal_error().data(format!(
+            "A2A background delegation to {} failed after {} retries: {}",
+            role_lower, max_retries, last_err
+        )))
+    } else {
+        Ok(format!(
+            "[{}] background delegation failed after {} retries, continuing: {}",
+            role_lower, max_retries, last_err
+        ))
+    }
 }
 
 pub async fn current_active_session_id(state: &Arc<crate::SharedState>) -> Option<String> {
@@ -754,34 +810,37 @@ pub async fn emit_team_assistant_response(
     if text.trim().is_empty() {
         return;
     }
+    let emit_response = should_emit_team_response(state, role);
     let turn_id = format!("team-response-{}", Uuid::new_v4());
-    if let Ok(notif) = UntypedMessage::new(
-        crate::types::NOTIF_APP_SESSION_EVENT,
-        crate::types::IlhaeAppSessionEventNotification {
-            engine: role.to_string(),
-            event: crate::types::IlhaeAppSessionEventDto::MessageDelta {
-                thread_id: session_id.to_string(),
-                turn_id: turn_id.clone(),
-                item_id: format!("{turn_id}:{role}"),
-                channel: "assistant".to_string(),
-                delta: text.to_string(),
+    if emit_response {
+        if let Ok(notif) = UntypedMessage::new(
+            crate::types::NOTIF_APP_SESSION_EVENT,
+            crate::types::IlhaeAppSessionEventNotification {
+                engine: role.to_string(),
+                event: crate::types::IlhaeAppSessionEventDto::MessageDelta {
+                    thread_id: session_id.to_string(),
+                    turn_id: turn_id.clone(),
+                    item_id: format!("{turn_id}:{role}"),
+                    channel: "assistant".to_string(),
+                    delta: text.to_string(),
+                },
             },
-        },
-    ) {
-        let _ = cx.send_notification_to(Client, notif);
-    }
-    if let Ok(notif) = UntypedMessage::new(
-        crate::types::NOTIF_APP_SESSION_EVENT,
-        crate::types::IlhaeAppSessionEventNotification {
-            engine: role.to_string(),
-            event: crate::types::IlhaeAppSessionEventDto::TurnCompleted {
-                thread_id: session_id.to_string(),
-                turn_id,
-                status: "completed".to_string(),
+        ) {
+            let _ = cx.send_notification_to(Client, notif);
+        }
+        if let Ok(notif) = UntypedMessage::new(
+            crate::types::NOTIF_APP_SESSION_EVENT,
+            crate::types::IlhaeAppSessionEventNotification {
+                engine: role.to_string(),
+                event: crate::types::IlhaeAppSessionEventDto::TurnCompleted {
+                    thread_id: session_id.to_string(),
+                    turn_id,
+                    status: "completed".to_string(),
+                },
             },
-        },
-    ) {
-        let _ = cx.send_notification_to(Client, notif);
+        ) {
+            let _ = cx.send_notification_to(Client, notif);
+        }
     }
     persist_events(
         &state.infra.brain,

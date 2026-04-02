@@ -166,6 +166,15 @@ pub struct AgentSettings {
     /// Team mode on/off flag from UI.
     #[serde(default)]
     pub team_mode: bool,
+    /// Team response merge policy projected from profile.
+    #[serde(default = "default_team_merge_policy")]
+    pub team_merge_policy: String,
+    /// Team delegation retry budget projected from profile.
+    #[serde(default = "default_team_max_retries")]
+    pub team_max_retries: u32,
+    /// Whether team execution pauses immediately when a delegation fails.
+    #[serde(default = "default_team_pause_on_error")]
+    pub team_pause_on_error: bool,
     /// Autonomous mode on/off flag from UI.
     /// When true, proxy can auto-continue A2A turns that end with input-required.
     #[serde(default)]
@@ -230,6 +239,18 @@ pub fn default_auto_timebox_minutes() -> u32 {
 }
 
 pub fn default_auto_pause_on_error() -> bool {
+    true
+}
+
+pub fn default_team_merge_policy() -> String {
+    "append_all".to_string()
+}
+
+pub fn default_team_max_retries() -> u32 {
+    3
+}
+
+pub fn default_team_pause_on_error() -> bool {
     true
 }
 
@@ -364,6 +385,9 @@ impl Default for AgentSettings {
             active_profile: None,
             a2a_endpoint: String::new(),
             team_mode: false,
+            team_merge_policy: default_team_merge_policy(),
+            team_max_retries: default_team_max_retries(),
+            team_pause_on_error: default_team_pause_on_error(),
             autonomous_mode: false,
             advisor_mode: false,
             advisor_preset: default_advisor_preset(),

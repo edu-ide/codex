@@ -5,7 +5,8 @@ use tracing::{info, warn};
 use crate::settings_store::SettingsStore;
 use crate::settings_types::{
     default_advisor_preset, default_approval_preset, default_auto_max_turns,
-    default_auto_pause_on_error, default_auto_timebox_minutes,
+    default_auto_pause_on_error, default_auto_timebox_minutes, default_team_max_retries,
+    default_team_merge_policy, default_team_pause_on_error,
 };
 
 /// Resolve the ilhae data directory (~⁄ilhae), using the generic name.
@@ -84,6 +85,12 @@ pub struct IlhaeProfileAgentConfig {
     pub engine_id: Option<String>,
     pub command: Option<String>,
     pub team_mode: bool,
+    #[serde(default = "default_team_merge_policy")]
+    pub team_merge_policy: String,
+    #[serde(default = "default_team_max_retries")]
+    pub team_max_retries: u32,
+    #[serde(default = "default_team_pause_on_error")]
+    pub team_pause_on_error: bool,
     pub auto_mode: bool,
     pub advisor: bool,
     #[serde(default = "default_advisor_preset")]
@@ -160,6 +167,9 @@ pub fn profile_to_dto(id: &str, profile: &IlhaeProfileConfig) -> crate::IlhaeApp
             engine_id: profile.agent.engine_id.clone(),
             command: profile.agent.command.clone(),
             team_mode: profile.agent.team_mode,
+            team_merge_policy: profile.agent.team_merge_policy.clone(),
+            team_max_retries: profile.agent.team_max_retries,
+            team_pause_on_error: profile.agent.team_pause_on_error,
             auto_mode: profile.agent.auto_mode,
             advisor: profile.agent.advisor,
             advisor_preset: profile.agent.advisor_preset.clone(),
@@ -187,6 +197,13 @@ pub fn dto_to_profile(dto: &crate::IlhaeAppProfileDto) -> IlhaeProfileConfig {
             engine_id: dto.agent.engine_id.clone(),
             command: dto.agent.command.clone(),
             team_mode: dto.agent.team_mode,
+            team_merge_policy: if dto.agent.team_merge_policy.trim().is_empty() {
+                default_team_merge_policy()
+            } else {
+                dto.agent.team_merge_policy.clone()
+            },
+            team_max_retries: dto.agent.team_max_retries.max(1),
+            team_pause_on_error: dto.agent.team_pause_on_error,
             auto_mode: dto.agent.auto_mode,
             advisor: dto.agent.advisor,
             advisor_preset: if dto.agent.advisor_preset.trim().is_empty() {
@@ -304,6 +321,22 @@ pub fn apply_ilhae_profile_projection(
     settings.set_value("agent.active_profile", serde_json::json!(profile.id))?;
     settings.set_value("agent.command", serde_json::json!(command))?;
     settings.set_value("agent.team_mode", serde_json::json!(profile.agent.team_mode))?;
+    settings.set_value(
+        "agent.team_merge_policy",
+        serde_json::json!(if profile.agent.team_merge_policy.trim().is_empty() {
+            default_team_merge_policy()
+        } else {
+            profile.agent.team_merge_policy.clone()
+        }),
+    )?;
+    settings.set_value(
+        "agent.team_max_retries",
+        serde_json::json!(profile.agent.team_max_retries.max(1)),
+    )?;
+    settings.set_value(
+        "agent.team_pause_on_error",
+        serde_json::json!(profile.agent.team_pause_on_error),
+    )?;
     settings.set_value("agent.autonomous_mode", serde_json::json!(profile.agent.auto_mode))?;
     settings.set_value("agent.advisor_mode", serde_json::json!(profile.agent.advisor))?;
     settings.set_value(

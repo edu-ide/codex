@@ -368,6 +368,12 @@ pub struct IlhaeAppProfileAgentDto {
     pub command: Option<String>,
     #[serde(rename = "teamMode")]
     pub team_mode: bool,
+    #[serde(rename = "teamMergePolicy", default)]
+    pub team_merge_policy: String,
+    #[serde(rename = "teamMaxRetries", default)]
+    pub team_max_retries: u32,
+    #[serde(rename = "teamPauseOnError", default)]
+    pub team_pause_on_error: bool,
     #[serde(rename = "autoMode")]
     pub auto_mode: bool,
     pub advisor: bool,
@@ -541,6 +547,12 @@ pub struct IlhaeEngineStateNotification {
     pub engine: String,
     pub endpoint: String,
     pub team_mode: bool,
+    #[serde(default)]
+    pub team_merge_policy: String,
+    #[serde(default)]
+    pub team_max_retries: u32,
+    #[serde(default)]
+    pub team_pause_on_error: bool,
     pub auto_mode: bool,
     pub advisor_mode: bool,
     #[serde(default)]
