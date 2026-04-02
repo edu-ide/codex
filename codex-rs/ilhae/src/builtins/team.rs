@@ -60,7 +60,102 @@ pub fn current_main_team_role(state: &Arc<crate::SharedState>) -> String {
         .unwrap_or_else(|| "leader".to_string())
 }
 
-fn summarize_worker_response_for_leader(role: &str, text: &str) -> String {
+fn find_team_role_target(
+    state: &Arc<crate::SharedState>,
+    role: &str,
+) -> Option<TeamRoleTarget> {
+    load_team_runtime_config(&state.infra.ilhae_dir).and_then(|cfg| {
+        cfg.agents
+            .into_iter()
+            .find(|agent| agent.role.eq_ignore_ascii_case(role))
+    })
+}
+
+fn team_role_profile_label(target: &TeamRoleTarget) -> String {
+    let mut parts = Vec::new();
+    if !target.skills.is_empty() {
+        parts.push(format!(
+            "skills:{}",
+            target.skills.iter().take(3).cloned().collect::<Vec<_>>().join("+")
+        ));
+    }
+    if !target.mcp_servers.is_empty() {
+        parts.push(format!(
+            "mcp:{}",
+            target
+                .mcp_servers
+                .iter()
+                .take(2)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("+")
+        ));
+    }
+    if !target.engine.trim().is_empty() {
+        parts.push(format!("engine:{}", target.engine.trim()));
+    }
+    if parts.is_empty() {
+        target.role.clone()
+    } else {
+        format!("{} ({})", target.role, parts.join(", "))
+    }
+}
+
+fn team_query_tokens(query: &str) -> Vec<String> {
+    query
+        .split(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '-')
+        .map(|token| token.trim().to_ascii_lowercase())
+        .filter(|token| token.len() >= 3)
+        .collect()
+}
+
+fn specialization_score(target: &TeamRoleTarget, query: &str) -> i32 {
+    let lower_query = query.to_ascii_lowercase();
+    let tokens = team_query_tokens(query);
+    let mut score = 0i32;
+
+    let role = target.role.to_ascii_lowercase();
+    if lower_query.contains(&role) {
+        score += 8;
+    }
+    if lower_query.contains(&target.engine.to_ascii_lowercase()) {
+        score += 3;
+    }
+
+    for skill in &target.skills {
+        let skill_lower = skill.to_ascii_lowercase();
+        if lower_query.contains(&skill_lower) {
+            score += 6;
+        }
+        for token in &tokens {
+            if skill_lower.contains(token) || token.contains(&skill_lower) {
+                score += 2;
+            }
+        }
+    }
+
+    for mcp in &target.mcp_servers {
+        let mcp_lower = mcp.to_ascii_lowercase();
+        if lower_query.contains(&mcp_lower) {
+            score += 4;
+        }
+    }
+
+    let prompt_lower = target.system_prompt.to_ascii_lowercase();
+    for token in &tokens {
+        if prompt_lower.contains(token) {
+            score += 1;
+        }
+    }
+
+    score
+}
+
+fn summarize_worker_response_for_leader(
+    state: &Arc<crate::SharedState>,
+    role: &str,
+    text: &str,
+) -> String {
     let normalized = text.trim().replace("\r\n", "\n");
     let mut bullets = normalized
         .lines()
@@ -81,8 +176,12 @@ fn summarize_worker_response_for_leader(role: &str, text: &str) -> String {
         bullets.push(format!("- {}", compact.trim()));
     }
 
+    let profile = find_team_role_target(state, role)
+        .map(|target| team_role_profile_label(&target))
+        .unwrap_or_else(|| role.to_string());
+
     format!(
-        "Leader summary from {role}:\n{}\n- Full worker output is preserved in the team timeline and audit log.",
+        "Leader arbitration summary from {profile}:\n{}\n- Full worker output is preserved in the team timeline and audit log.",
         bullets.join("\n")
     )
 }
@@ -99,7 +198,7 @@ fn client_facing_team_response(
     match current_team_merge_policy(state).as_str() {
         "leader_only" if !should_emit_team_response(state, role) => Some((
             current_main_team_role(state),
-            summarize_worker_response_for_leader(role, trimmed),
+            summarize_worker_response_for_leader(state, role, trimmed),
         )),
         _ => Some((role.to_string(), trimmed.to_string())),
     }
@@ -123,6 +222,7 @@ pub(crate) async fn is_team_role_healthy(state: &crate::SharedState, role_lower:
 pub(crate) async fn select_fallback_targets(
     state: &crate::SharedState,
     failed_role: &str,
+    query: &str,
 ) -> Vec<TeamRoleTarget> {
     let Some(team_cfg) = load_team_runtime_config(&state.infra.ilhae_dir) else {
         return Vec::new();
@@ -160,6 +260,9 @@ pub(crate) async fn select_fallback_targets(
         }
     }
 
+    healthy_non_leaders.sort_by_key(|agent| -specialization_score(agent, query));
+    degraded_non_leaders.sort_by_key(|agent| -specialization_score(agent, query));
+
     let mut ordered = Vec::new();
     ordered.extend(healthy_non_leaders);
     ordered.extend(degraded_non_leaders);
@@ -180,7 +283,7 @@ pub(crate) async fn try_sync_fallback_chain(
     query: &str,
     started_at: Instant,
 ) -> Result<Option<String>, sacp::Error> {
-    let fallback_targets = select_fallback_targets(state, failed_role).await;
+    let fallback_targets = select_fallback_targets(state, failed_role, query).await;
     if fallback_targets.is_empty() {
         return Ok(None);
     }
@@ -270,7 +373,7 @@ pub(crate) async fn try_background_fallback_chain(
     query: &str,
     started_at: Instant,
 ) -> Result<Option<String>, sacp::Error> {
-    let fallback_targets = select_fallback_targets(state, failed_role).await;
+    let fallback_targets = select_fallback_targets(state, failed_role, query).await;
     if fallback_targets.is_empty() {
         return Ok(None);
     }
