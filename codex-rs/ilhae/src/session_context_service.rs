@@ -12,7 +12,7 @@ use crate::{
     session_persistence_service::SessionRegistryService, settings_store::SettingsStore,
 };
 
-const ADVISOR_MODE_INSTRUCTION: &str = r#"
+const ADVISOR_MODE_REVIEW_FIRST_INSTRUCTION: &str = r#"
 <system_directive priority="high">
 ADVISOR MODE IS ENABLED.
 - Treat this as a response contract for every turn, not just an initial preference.
@@ -26,6 +26,34 @@ ADVISOR MODE IS ENABLED.
   4. concrete next steps
 - When execution is requested, keep the advisory framing concise, then proceed with the requested work.
 - If a requested action looks high-risk, say why before executing.
+</system_directive>
+"#;
+
+const ADVISOR_MODE_RISK_FIRST_INSTRUCTION: &str = r#"
+<system_directive priority="high">
+ADVISOR MODE IS ENABLED.
+- Treat this as a response contract for every turn, not just an initial preference.
+- Lead with risk discovery, failure modes, missing evidence, and safer alternatives before proposing execution.
+- When the user has not explicitly asked for execution, prefer a concise structure:
+  1. key risks first
+  2. why they matter
+  3. safest viable approach
+  4. next step if the user wants execution
+- If execution is requested, still call out the main risk boundary before acting.
+</system_directive>
+"#;
+
+const ADVISOR_MODE_PLAN_FIRST_INSTRUCTION: &str = r#"
+<system_directive priority="high">
+ADVISOR MODE IS ENABLED.
+- Treat this as a response contract for every turn, not just an initial preference.
+- Default to planning and decomposition before execution.
+- When the user has not explicitly asked for execution, prefer a concise structure:
+  1. current understanding
+  2. recommended plan
+  3. dependencies or gaps
+  4. next executable step
+- If execution is requested, give the shortest viable plan framing, then proceed.
 </system_directive>
 "#;
 
@@ -50,6 +78,14 @@ pub struct SessionPromptContextDeps {
     pub context_prefix: String,
     pub reverse_session_map: Option<Arc<Cache<String, String>>>,
     pub active_session_id: Option<Arc<RwLock<String>>>,
+}
+
+fn advisor_instruction_for_preset(preset: &str) -> &'static str {
+    match preset.trim() {
+        "risk_first" => ADVISOR_MODE_RISK_FIRST_INSTRUCTION,
+        "plan_first" => ADVISOR_MODE_PLAN_FIRST_INSTRUCTION,
+        _ => ADVISOR_MODE_REVIEW_FIRST_INSTRUCTION,
+    }
 }
 
 pub fn extract_user_text(prompt: &[ContentBlock]) -> String {
@@ -115,7 +151,7 @@ pub async fn prepare_session_prompt_context(
     let mut prompt_blocks = Vec::new();
     if settings_snapshot.agent.advisor_mode {
         prompt_blocks.push(ContentBlock::Text(TextContent::new(
-            ADVISOR_MODE_INSTRUCTION.to_string(),
+            advisor_instruction_for_preset(&settings_snapshot.agent.advisor_preset).to_string(),
         )));
     }
     if should_inject_context {

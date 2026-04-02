@@ -371,6 +371,8 @@ pub struct IlhaeAppProfileAgentDto {
     #[serde(rename = "autoMode")]
     pub auto_mode: bool,
     pub advisor: bool,
+    #[serde(rename = "advisorPreset", default)]
+    pub advisor_preset: String,
     pub kairos: bool,
     #[serde(rename = "selfImprovement")]
     pub self_improvement: bool,
@@ -535,6 +537,8 @@ pub struct IlhaeEngineStateNotification {
     pub team_mode: bool,
     pub auto_mode: bool,
     pub advisor_mode: bool,
+    #[serde(default)]
+    pub advisor_preset: String,
     pub kairos_enabled: bool,
     pub self_improvement_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

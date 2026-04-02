@@ -173,6 +173,9 @@ pub struct AgentSettings {
     /// Advisor/reviewer mode flag projected from profile.
     #[serde(default)]
     pub advisor_mode: bool,
+    /// Advisor response preset projected from profile.
+    #[serde(default = "default_advisor_preset")]
+    pub advisor_preset: String,
     /// Kairos proactive scheduling enablement projected from profile.
     #[serde(default)]
     pub kairos_enabled: bool,
@@ -203,6 +206,10 @@ pub struct AgentSettings {
 
 pub fn default_enabled_engines() -> Vec<String> {
     vec!["gemini".to_string()]
+}
+
+pub fn default_advisor_preset() -> String {
+    "review_first".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,6 +345,7 @@ impl Default for AgentSettings {
             team_mode: false,
             autonomous_mode: false,
             advisor_mode: false,
+            advisor_preset: default_advisor_preset(),
             kairos_enabled: false,
             self_improvement_enabled: false,
             memory_scope: None,

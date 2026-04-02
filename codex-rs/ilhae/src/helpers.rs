@@ -353,6 +353,7 @@ pub async fn notify_engine_state(
                 team_mode,
                 auto_mode: settings.agent.autonomous_mode,
                 advisor_mode: settings.agent.advisor_mode,
+                advisor_preset: settings.agent.advisor_preset.clone(),
                 kairos_enabled: settings.agent.kairos_enabled,
                 self_improvement_enabled: settings.agent.self_improvement_enabled,
                 active_profile: settings.agent.active_profile.clone(),

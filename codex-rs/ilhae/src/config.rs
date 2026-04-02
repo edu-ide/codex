@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 use crate::settings_store::SettingsStore;
-use crate::settings_types::default_approval_preset;
+use crate::settings_types::{default_advisor_preset, default_approval_preset};
 
 /// Resolve the ilhae data directory (~⁄ilhae), using the generic name.
 pub fn resolve_ilhae_data_dir() -> PathBuf {
@@ -83,6 +83,8 @@ pub struct IlhaeProfileAgentConfig {
     pub team_mode: bool,
     pub auto_mode: bool,
     pub advisor: bool,
+    #[serde(default = "default_advisor_preset")]
+    pub advisor_preset: String,
     pub kairos: bool,
     pub self_improvement: bool,
 }
@@ -151,6 +153,7 @@ pub fn profile_to_dto(id: &str, profile: &IlhaeProfileConfig) -> crate::IlhaeApp
             team_mode: profile.agent.team_mode,
             auto_mode: profile.agent.auto_mode,
             advisor: profile.agent.advisor,
+            advisor_preset: profile.agent.advisor_preset.clone(),
             kairos: profile.agent.kairos,
             self_improvement: profile.agent.self_improvement,
         },
@@ -174,6 +177,11 @@ pub fn dto_to_profile(dto: &crate::IlhaeAppProfileDto) -> IlhaeProfileConfig {
             team_mode: dto.agent.team_mode,
             auto_mode: dto.agent.auto_mode,
             advisor: dto.agent.advisor,
+            advisor_preset: if dto.agent.advisor_preset.trim().is_empty() {
+                default_advisor_preset()
+            } else {
+                dto.agent.advisor_preset.clone()
+            },
             kairos: dto.agent.kairos,
             self_improvement: dto.agent.self_improvement,
         },
@@ -283,6 +291,14 @@ pub fn apply_ilhae_profile_projection(
     settings.set_value("agent.team_mode", serde_json::json!(profile.agent.team_mode))?;
     settings.set_value("agent.autonomous_mode", serde_json::json!(profile.agent.auto_mode))?;
     settings.set_value("agent.advisor_mode", serde_json::json!(profile.agent.advisor))?;
+    settings.set_value(
+        "agent.advisor_preset",
+        serde_json::json!(if profile.agent.advisor_preset.trim().is_empty() {
+            default_advisor_preset()
+        } else {
+            profile.agent.advisor_preset.clone()
+        }),
+    )?;
     settings.set_value("agent.kairos_enabled", serde_json::json!(profile.agent.kairos))?;
     settings.set_value(
         "agent.self_improvement_enabled",
