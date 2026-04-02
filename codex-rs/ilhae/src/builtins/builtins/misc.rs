@@ -21,6 +21,7 @@ macro_rules! register_misc_tools {
                         broadcast_event(&relay, RelayEvent::UiNotification {
                             message: input.message.clone(),
                             level: input.level.clone(),
+                            source: Some("agent".to_string()),
                         });
                         Ok::<String, sacp::Error>(format!("✅ Notification sent: [{}] {}", input.level, input.message))
                     }

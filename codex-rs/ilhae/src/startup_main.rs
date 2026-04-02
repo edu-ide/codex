@@ -742,6 +742,7 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                     RelayEvent::UiNotification {
                         message,
                         level: "info".to_string(),
+                        source: Some("kairos".to_string()),
                     },
                 );
             }
@@ -833,6 +834,7 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                     RelayEvent::UiNotification {
                         message,
                         level: "info".to_string(),
+                        source: Some("self-improvement".to_string()),
                     },
                 );
             }

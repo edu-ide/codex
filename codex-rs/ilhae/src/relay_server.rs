@@ -56,7 +56,12 @@ pub enum RelayEvent {
     },
     /// UI notification from agent via ui_notify tool.
     #[serde(rename = "ui_notification")]
-    UiNotification { message: String, level: String },
+    UiNotification {
+        message: String,
+        level: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
     /// Permission request forwarded to Telegram for user approval.
     #[serde(rename = "permission_request")]
     PermissionRequest {

@@ -572,7 +572,7 @@ async fn handle_relay_event(bot: &Bot, state: &Arc<TelegramBotState>, event: Rel
                 }
             }
         }
-        RelayEvent::UiNotification { message, level } => {
+        RelayEvent::UiNotification { message, level, .. } => {
             // Forward UI notifications to all allowed chats
             let icon = match level.as_str() {
                 "error" => "🔴",
