@@ -94,6 +94,7 @@ brain-rs = { path = "../../../brain-rs" }
 a2a-rs = { path = "../../../a2a-rs", default-features = false, features = ["client", "server"] }
 a2a-acp-adapter = { path = "../../../a2a-acp-adapter" }
 codex-acp = { path = "../../../codex-acp" }
+dsrs = { package = "dspy-rs", path = "../../../DSRs/crates/dspy-rs" }
 shell-words = "1"
 walkdir = "2.5.0"
 sysinfo = "0.38.4"
