@@ -72,8 +72,11 @@ pub async fn build_agent_transport(
 
     let settings_snapshot = settings_store.get();
 
-    let is_team = settings_snapshot.agent.team_mode;
-    let engine_name = if is_team {
+    let team_mode = settings_snapshot.agent.team_mode;
+    let team_backend = crate::config::normalize_team_backend(&settings_snapshot.agent.team_backend);
+    let use_remote_team_transport =
+        team_mode && crate::config::team_backend_uses_remote_transport(&team_backend);
+    let engine_name = if use_remote_team_transport {
         let ilhae_dir = crate::config::resolve_ilhae_data_dir();
         resolve_team_main_target(&ilhae_dir)
             .map(|(engine, _)| engine)
@@ -94,7 +97,7 @@ pub async fn build_agent_transport(
 
     // SSoT: Solo mode always uses engine-based ports.
     // a2a_endpoint is only used in team mode (points to leader).
-    let a2a_endpoint = if is_team {
+    let a2a_endpoint = if use_remote_team_transport {
         let ep = settings_snapshot.agent.a2a_endpoint.trim();
         if ep.is_empty() {
             let ilhae_dir = crate::config::resolve_ilhae_data_dir();
@@ -125,7 +128,7 @@ pub async fn build_agent_transport(
             &AgentTransportRequest {
                 engine_name: engine_name.clone(),
                 endpoint: a2a_endpoint.clone(),
-                is_team,
+                is_team: use_remote_team_transport,
                 preference,
             },
         )

@@ -48,6 +48,7 @@ use crate::read_session_model;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::Renderable;
 use crate::resume_picker::SessionSelection;
+use crate::slash_command::built_in_slash_commands;
 #[cfg(test)]
 use crate::test_support::PathBufExt;
 use crate::tui;
@@ -2441,6 +2442,14 @@ impl App {
                     })
                     .await?;
                 self.handle_skills_list_response(response);
+                Ok(true)
+            }
+            AppCommandView::ListCommands => {
+                let commands = built_in_slash_commands()
+                    .into_iter()
+                    .map(|(_, command)| command.to_meta())
+                    .collect();
+                self.chat_widget.set_commands(commands);
                 Ok(true)
             }
             AppCommandView::Compact => {

@@ -41,6 +41,8 @@ use codex_exec::event_processor_with_jsonl_output::CodexStatus;
 use codex_exec::event_processor_with_jsonl_output::CollectedThreadEvents;
 use codex_exec::event_processor_with_jsonl_output::EventProcessorWithJsonOutput;
 use codex_exec::exec_events::AgentMessageItem;
+use codex_exec::exec_events::AutonomyDecisionAction;
+use codex_exec::exec_events::AutonomyDecisionEvent;
 use codex_exec::exec_events::CollabAgentState;
 use codex_exec::exec_events::CollabAgentStatus;
 use codex_exec::exec_events::CollabTool;
@@ -150,10 +152,26 @@ fn turn_started_emits_turn_started_event() {
     assert_eq!(
         collected,
         CollectedThreadEvents {
-            events: vec![ThreadEvent::TurnStarted(TurnStartedEvent {})],
+            events: vec![ThreadEvent::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".to_string(),
+            })],
             status: CodexStatus::Running,
         }
     );
+}
+
+#[test]
+fn autonomy_decision_emits_thread_event() {
+    let mut processor = EventProcessorWithJsonOutput::new(/*last_message_path*/ None);
+
+    let status = processor.process_autonomy_decision(
+        "turn-1".to_string(),
+        AutonomyDecisionAction::Continue,
+        "progressed",
+        0,
+    );
+
+    assert_eq!(status, CodexStatus::Running);
 }
 
 #[test]
@@ -1091,6 +1109,7 @@ fn plan_update_emits_started_then_updated_then_completed() {
                     },
                 }),
                 ThreadEvent::TurnCompleted(TurnCompletedEvent {
+                    turn_id: "turn-1".to_string(),
                     usage: Usage::default(),
                 }),
             ],
@@ -1208,6 +1227,7 @@ fn token_usage_update_is_emitted_on_turn_completion() {
         completed,
         CollectedThreadEvents {
             events: vec![ThreadEvent::TurnCompleted(TurnCompletedEvent {
+                turn_id: "turn-1".to_string(),
                 usage: Usage {
                     input_tokens: 10,
                     cached_input_tokens: 3,
@@ -1244,6 +1264,7 @@ fn turn_completion_recovers_final_message_from_turn_items() {
         completed,
         CollectedThreadEvents {
             events: vec![ThreadEvent::TurnCompleted(TurnCompletedEvent {
+                turn_id: "turn-1".to_string(),
                 usage: Usage::default(),
             })],
             status: CodexStatus::InitiateShutdown,
@@ -1330,6 +1351,7 @@ fn turn_completion_reconciles_started_items_from_turn_items() {
                     },
                 }),
                 ThreadEvent::TurnCompleted(TurnCompletedEvent {
+                    turn_id: "turn-1".to_string(),
                     usage: Usage::default(),
                 }),
             ],
@@ -1375,6 +1397,7 @@ fn turn_completion_overwrites_stale_final_message_from_turn_items() {
         completed,
         CollectedThreadEvents {
             events: vec![ThreadEvent::TurnCompleted(TurnCompletedEvent {
+                turn_id: "turn-1".to_string(),
                 usage: Usage::default(),
             })],
             status: CodexStatus::InitiateShutdown,
@@ -1415,6 +1438,7 @@ fn turn_completion_preserves_streamed_final_message_when_turn_items_are_empty() 
         completed,
         CollectedThreadEvents {
             events: vec![ThreadEvent::TurnCompleted(TurnCompletedEvent {
+                turn_id: "turn-1".to_string(),
                 usage: Usage::default(),
             })],
             status: CodexStatus::InitiateShutdown,
@@ -1486,6 +1510,7 @@ fn turn_completion_falls_back_to_final_plan_text() {
         completed,
         CollectedThreadEvents {
             events: vec![ThreadEvent::TurnCompleted(TurnCompletedEvent {
+                turn_id: "turn-1".to_string(),
                 usage: Usage::default(),
             })],
             status: CodexStatus::InitiateShutdown,

@@ -1,4 +1,5 @@
 pub mod artifact;
+pub mod kb;
 pub mod memory;
 pub mod notification;
 pub mod plugin;

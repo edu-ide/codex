@@ -152,6 +152,20 @@ impl Default for AgentCapabilitiesOverride {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct KnowledgeRuntimeStatus {
+    pub last_result: String,
+    pub last_driver: Option<String>,
+    pub last_workspace_id: Option<String>,
+    pub last_workspace_name: Option<String>,
+    pub last_issue_count: usize,
+    pub last_report_path: Option<String>,
+    pub last_error: Option<String>,
+    pub last_run_reason: Option<String>,
+    pub last_success_at: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentSettings {
@@ -166,6 +180,9 @@ pub struct AgentSettings {
     /// Team mode on/off flag from UI.
     #[serde(default)]
     pub team_mode: bool,
+    /// Team execution backend: local | remote | hybrid.
+    #[serde(default = "default_team_backend")]
+    pub team_backend: String,
     /// Team response merge policy projected from profile.
     #[serde(default = "default_team_merge_policy")]
     pub team_merge_policy: String,
@@ -197,12 +214,42 @@ pub struct AgentSettings {
     /// Kairos proactive scheduling enablement projected from profile.
     #[serde(default)]
     pub kairos_enabled: bool,
+    /// Knowledge auto-loop mode projected from profile. One of: off|worker|kairos|both.
+    #[serde(default = "default_knowledge_mode")]
+    pub knowledge_mode: String,
+    /// Knowledge workspace id projected from profile.
+    #[serde(default)]
+    pub knowledge_workspace_id: Option<String>,
+    /// Worker-loop polling interval in seconds projected from profile.
+    #[serde(default = "default_knowledge_poll_interval_secs")]
+    pub knowledge_poll_interval_secs: u64,
+    /// Periodic execution interval in seconds projected from profile.
+    #[serde(default = "default_knowledge_periodic_interval_secs")]
+    pub knowledge_periodic_interval_secs: u64,
+    /// file_back target bucket projected from profile.
+    #[serde(default = "default_knowledge_report_target")]
+    pub knowledge_report_target: String,
+    /// file_back relative path projected from profile.
+    #[serde(default = "default_knowledge_report_relative_path")]
+    pub knowledge_report_relative_path: String,
+    /// Runtime status snapshot for the knowledge auto-loop.
+    #[serde(default)]
+    pub knowledge_runtime: KnowledgeRuntimeStatus,
+    /// Hygiene auto-loop mode. One of: off|worker|kairos|both.
+    #[serde(default = "default_hygiene_mode")]
+    pub hygiene_mode: String,
+    /// Runtime status snapshot for the hygiene auto-loop.
+    #[serde(default)]
+    pub hygiene_runtime: HygieneRuntimeStatus,
     /// Self-improvement loop enablement projected from profile.
     #[serde(default)]
     pub self_improvement_enabled: bool,
     /// Self-improvement execution preset projected from profile.
     #[serde(default = "default_self_improvement_preset")]
     pub self_improvement_preset: String,
+    /// Runtime status snapshot for offline self-improvement optimization.
+    #[serde(default)]
+    pub self_improvement_runtime: SelfImprovementRuntimeStatus,
     /// Runtime memory scope projected from profile.
     #[serde(default)]
     pub memory_scope: Option<String>,
@@ -245,6 +292,30 @@ pub fn default_auto_pause_on_error() -> bool {
     true
 }
 
+pub fn default_knowledge_mode() -> String {
+    "off".to_string()
+}
+
+pub fn default_knowledge_poll_interval_secs() -> u64 {
+    60
+}
+
+pub fn default_knowledge_periodic_interval_secs() -> u64 {
+    1800
+}
+
+pub fn default_knowledge_report_target() -> String {
+    "index".to_string()
+}
+
+pub fn default_knowledge_report_relative_path() -> String {
+    "knowledge_loop_health.md".to_string()
+}
+
+pub fn default_hygiene_mode() -> String {
+    "both".to_string()
+}
+
 pub fn default_team_merge_policy() -> String {
     "append_all".to_string()
 }
@@ -259,6 +330,78 @@ pub fn default_team_pause_on_error() -> bool {
 
 pub fn default_self_improvement_preset() -> String {
     "safe_summarize".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct HygieneRuntimeStatus {
+    pub last_result: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_driver: Option<String>,
+    #[serde(default)]
+    pub duplicate_tasks_folded: usize,
+    #[serde(default)]
+    pub legacy_commands_normalized: usize,
+    #[serde(default)]
+    pub knowledge_reports_written: usize,
+    #[serde(default)]
+    pub memory_reports_written: usize,
+    #[serde(default)]
+    pub orphaned_source_pages: usize,
+    #[serde(default)]
+    pub orphaned_concept_pages: usize,
+    #[serde(default)]
+    pub stale_output_candidates: usize,
+    #[serde(default)]
+    pub duplicate_knowledge_items: usize,
+    #[serde(default)]
+    pub dream_duplicate_candidates: usize,
+    #[serde(default)]
+    pub dream_rare_candidates: usize,
+    #[serde(default)]
+    pub ignored_dream_candidates: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_success_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct SelfImprovementRuntimeStatus {
+    pub last_result: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_optimizer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_success_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_instructions: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_generated_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_instructions: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<u64>,
+}
+
+pub fn default_team_backend() -> String {
+    "local".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -392,6 +535,7 @@ impl Default for AgentSettings {
             active_profile: None,
             a2a_endpoint: String::new(),
             team_mode: false,
+            team_backend: default_team_backend(),
             team_merge_policy: default_team_merge_policy(),
             team_max_retries: default_team_max_retries(),
             team_pause_on_error: default_team_pause_on_error(),
@@ -402,8 +546,18 @@ impl Default for AgentSettings {
             auto_timebox_minutes: default_auto_timebox_minutes(),
             auto_pause_on_error: default_auto_pause_on_error(),
             kairos_enabled: false,
+            knowledge_mode: default_knowledge_mode(),
+            knowledge_workspace_id: None,
+            knowledge_poll_interval_secs: default_knowledge_poll_interval_secs(),
+            knowledge_periodic_interval_secs: default_knowledge_periodic_interval_secs(),
+            knowledge_report_target: default_knowledge_report_target(),
+            knowledge_report_relative_path: default_knowledge_report_relative_path(),
+            knowledge_runtime: KnowledgeRuntimeStatus::default(),
+            hygiene_mode: default_hygiene_mode(),
+            hygiene_runtime: HygieneRuntimeStatus::default(),
             self_improvement_enabled: false,
             self_improvement_preset: default_self_improvement_preset(),
+            self_improvement_runtime: SelfImprovementRuntimeStatus::default(),
             memory_scope: None,
             task_scope: None,
             mock_mode: false,

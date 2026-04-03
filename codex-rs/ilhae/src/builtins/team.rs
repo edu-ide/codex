@@ -32,7 +32,13 @@ pub fn current_team_merge_policy(state: &Arc<crate::SharedState>) -> String {
 }
 
 pub fn current_team_max_retries(state: &Arc<crate::SharedState>) -> u32 {
-    state.infra.settings_store.get().agent.team_max_retries.max(1)
+    state
+        .infra
+        .settings_store
+        .get()
+        .agent
+        .team_max_retries
+        .max(1)
 }
 
 pub fn current_team_pause_on_error(state: &Arc<crate::SharedState>) -> bool {
@@ -60,10 +66,7 @@ pub fn current_main_team_role(state: &Arc<crate::SharedState>) -> String {
         .unwrap_or_else(|| "leader".to_string())
 }
 
-fn find_team_role_target(
-    state: &Arc<crate::SharedState>,
-    role: &str,
-) -> Option<TeamRoleTarget> {
+fn find_team_role_target(state: &Arc<crate::SharedState>, role: &str) -> Option<TeamRoleTarget> {
     load_team_runtime_config(&state.infra.ilhae_dir).and_then(|cfg| {
         cfg.agents
             .into_iter()
@@ -76,7 +79,13 @@ fn team_role_profile_label(target: &TeamRoleTarget) -> String {
     if !target.skills.is_empty() {
         parts.push(format!(
             "skills:{}",
-            target.skills.iter().take(3).cloned().collect::<Vec<_>>().join("+")
+            target
+                .skills
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("+")
         ));
     }
     if !target.mcp_servers.is_empty() {
@@ -136,7 +145,10 @@ fn specialization_score(target: &TeamRoleTarget, query: &str) -> i32 {
     if lower_query.contains(&role) {
         score += 8;
     }
-    if let Some(idx) = preferred_roles.iter().position(|preferred| preferred == &role) {
+    if let Some(idx) = preferred_roles
+        .iter()
+        .position(|preferred| preferred == &role)
+    {
         score += 20 - idx as i32;
     }
     if lower_query.contains(&target.engine.to_ascii_lowercase()) {
@@ -227,10 +239,7 @@ fn recent_team_worker_responses(
     results
 }
 
-fn arbitration_header(
-    current_summary: &str,
-    related_summaries: &[(String, String)],
-) -> String {
+fn arbitration_header(current_summary: &str, related_summaries: &[(String, String)]) -> String {
     if related_summaries.is_empty() {
         return "Leader judgment: no parallel worker responses were available, so this recommendation stands on the current specialist output.".to_string();
     }
@@ -248,11 +257,7 @@ fn arbitration_header(
     }
 }
 
-async fn planning_score(
-    state: &crate::SharedState,
-    target: &TeamRoleTarget,
-    query: &str,
-) -> i32 {
+async fn planning_score(state: &crate::SharedState, target: &TeamRoleTarget, query: &str) -> i32 {
     let role_lower = target.role.to_ascii_lowercase();
     let mut score = specialization_score(target, query);
     if crate::process_supervisor::is_delegation_allowed(
@@ -534,7 +539,10 @@ pub(crate) async fn try_background_fallback_chain(
         );
         let (fallback_proxy, fallback_query, fallback_role) =
             build_proxy_for_target(state, &fallback_agent, query).await?;
-        match fallback_proxy.fire_and_forget(&fallback_query, None, None).await {
+        match fallback_proxy
+            .fire_and_forget(&fallback_query, None, None)
+            .await
+        {
             Ok(schedule_id) => {
                 record_team_delegation_outcome(state, &fallback_role, true, started_at).await;
                 return Ok(Some(format!(
@@ -572,7 +580,8 @@ pub(crate) async fn build_proxy_for_target(
     let leader_cwd = std::env::current_dir()
         .ok()
         .map(|p| p.to_string_lossy().to_string());
-    let enriched_query = crate::memory_provider::inject_context(actual_query, leader_cwd.as_deref());
+    let enriched_query =
+        crate::memory_provider::inject_context(actual_query, leader_cwd.as_deref());
 
     let active_sid = state.sessions.active_session_id.read().await.clone();
     let mcp_servers_json = if !active_sid.is_empty() {
@@ -586,13 +595,15 @@ pub(crate) async fn build_proxy_for_target(
     let mut session_ctx = a2a_rs::proxy::SessionContext::new()
         .with_admin_skills(true)
         .with_disabled_skills(vec![])
-        .with_extra_skills_dirs(vec![state
-            .infra
-            .brain
-            .vault_dir()
-            .join("skills")
-            .to_string_lossy()
-            .to_string()]);
+        .with_extra_skills_dirs(vec![
+            state
+                .infra
+                .brain
+                .vault_dir()
+                .join("skills")
+                .to_string_lossy()
+                .to_string(),
+        ]);
 
     if let Some(cwd) = leader_cwd.as_deref() {
         session_ctx = session_ctx.with_cwd(cwd);
@@ -1192,7 +1203,10 @@ pub async fn run_background_delegate(
                                         let _ = cx_bg.send_notification_to(Client, notif);
                                     }
                                 }
-                                record_team_delegation_outcome(&state_bg, &role_bg, true, started_at).await;
+                                record_team_delegation_outcome(
+                                    &state_bg, &role_bg, true, started_at,
+                                )
+                                .await;
                                 let alert = format!(
                                     "[System Alert] Task {} from {} completed:\n{}",
                                     tid,
@@ -1271,8 +1285,7 @@ pub async fn run_background_delegate(
     record_team_delegation_outcome(&state, &role_lower, false, started_at).await;
     if !pause_on_error {
         if let Some(message) =
-            try_background_fallback_chain(&state, &role_lower, &enriched_query, started_at)
-                .await?
+            try_background_fallback_chain(&state, &role_lower, &enriched_query, started_at).await?
         {
             return Ok(message);
         }

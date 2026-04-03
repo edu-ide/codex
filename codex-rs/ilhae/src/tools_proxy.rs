@@ -44,6 +44,11 @@ impl ConnectTo<Conductor> for ToolsProxy {
                 sub_handle = builder.subscription_handle();
 
                 let builder = crate::register_memory_tools!(builder, brain, bt_settings);
+                let builder = crate::register_knowledge_tools!(
+                    builder,
+                    s.infra.ilhae_dir.clone(),
+                    s.infra.settings_store.clone()
+                );
                 let builder = crate::register_session_tools!(builder, brain, bt_settings);
                 let builder = crate::register_task_tools!(builder, brain, bt_settings);
                 let builder = crate::register_artifact_tools!(builder, brain, bt_settings, active_sid);

@@ -1135,7 +1135,13 @@ async fn run_ratatui_app(
     let remote_mode = matches!(&app_server_target, AppServerTarget::Remote { .. });
     color_eyre::install()?;
 
-    tooltips::announcement::prewarm();
+    let should_prewarm_announcements = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+        .is_none_or(|name| name != "ilhae");
+    if should_prewarm_announcements {
+        tooltips::announcement::prewarm();
+    }
 
     // Forward panic reports through tracing so they appear in the UI status
     // line, but do not swallow the default/color-eyre panic handler.

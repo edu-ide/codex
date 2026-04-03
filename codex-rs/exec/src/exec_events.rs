@@ -19,6 +19,9 @@ pub enum ThreadEvent {
     /// Emitted when a turn is completed. Typically right after the assistant's response.
     #[serde(rename = "turn.completed")]
     TurnCompleted(TurnCompletedEvent),
+    /// Emitted when exec autonomous follow-up logic decides whether to continue or stop.
+    #[serde(rename = "autonomy.decision")]
+    AutonomyDecision(AutonomyDecisionEvent),
     /// Indicates that a turn failed with an error.
     #[serde(rename = "turn.failed")]
     TurnFailed(TurnFailedEvent),
@@ -43,12 +46,29 @@ pub struct ThreadStartedEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS, Default)]
-
-pub struct TurnStartedEvent {}
+pub struct TurnStartedEvent {
+    pub turn_id: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 pub struct TurnCompletedEvent {
+    pub turn_id: String,
     pub usage: Usage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AutonomyDecisionAction {
+    Continue,
+    Stop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+pub struct AutonomyDecisionEvent {
+    pub turn_id: String,
+    pub action: AutonomyDecisionAction,
+    pub reason: String,
+    pub stalled_turns: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]

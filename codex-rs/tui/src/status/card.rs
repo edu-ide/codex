@@ -77,6 +77,7 @@ struct StatusExecutionLoopData {
     team_mode: String,
     kairos: String,
     self_improvement: String,
+    knowledge: String,
 }
 
 #[derive(Debug, Clone)]
@@ -262,6 +263,15 @@ impl StatusHistoryCell {
         }
     }
 
+    fn knowledge_mode_label(mode: &str) -> &'static str {
+        match mode {
+            "worker" => "worker",
+            "kairos" => "kairos",
+            "both" => "both",
+            _ => "off",
+        }
+    }
+
     fn team_merge_policy_label(team_merge_policy: &str) -> &str {
         match team_merge_policy {
             "leader_only" => "leader-only",
@@ -325,6 +335,46 @@ impl StatusHistoryCell {
             "/improve",
         );
 
+        let knowledge = if agent.knowledge_mode == "off" {
+            "disabled".to_string()
+        } else {
+            let runtime = &agent.knowledge_runtime;
+            let result = if runtime.last_result.trim().is_empty() {
+                "idle".to_string()
+            } else {
+                runtime.last_result.clone()
+            };
+            let mut details = vec![
+                format!("mode {}", Self::knowledge_mode_label(&agent.knowledge_mode)),
+                format!("result {result}"),
+            ];
+            if let Some(driver) = runtime
+                .last_driver
+                .as_deref()
+                .filter(|driver| !driver.trim().is_empty())
+            {
+                details.push(format!("driver {driver}"));
+            }
+            if let Some(workspace_id) = runtime
+                .last_workspace_id
+                .as_deref()
+                .filter(|workspace_id| !workspace_id.trim().is_empty())
+            {
+                details.push(format!("workspace {workspace_id}"));
+            }
+            if runtime.last_issue_count > 0 {
+                details.push(format!("issues {}", runtime.last_issue_count));
+            }
+            if let Some(run_reason) = runtime
+                .last_run_reason
+                .as_deref()
+                .filter(|run_reason| !run_reason.trim().is_empty())
+            {
+                details.push(format!("trigger {run_reason}"));
+            }
+            format!("enabled ({})", details.join(", "))
+        };
+
         Some(StatusExecutionLoopData {
             profile: format_runtime_profile_value(
                 agent.active_profile.as_deref().unwrap_or("default"),
@@ -334,6 +384,7 @@ impl StatusHistoryCell {
             team_mode,
             kairos,
             self_improvement,
+            knowledge,
         })
     }
 
@@ -678,7 +729,7 @@ impl HistoryCell for StatusHistoryCell {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from(vec![
             Span::from(format!("{}>_ ", FieldFormatter::INDENT)).dim(),
-            Span::from("OpenAI Codex").bold(),
+            Span::from("Ilhae").bold(),
             Span::from(" ").dim(),
             Span::from(format!("(v{CODEX_CLI_VERSION})")).dim(),
         ]));
@@ -741,6 +792,7 @@ impl HistoryCell for StatusHistoryCell {
             push_label(&mut labels, &mut seen, "Team mode");
             push_label(&mut labels, &mut seen, "Kairos");
             push_label(&mut labels, &mut seen, "Self-improvement");
+            push_label(&mut labels, &mut seen, "Knowledge loop");
         }
         push_label(&mut labels, &mut seen, "Token usage");
         if self.token_usage.context_window.is_some() {
@@ -832,6 +884,10 @@ impl HistoryCell for StatusHistoryCell {
             lines.push(formatter.line(
                 "Self-improvement",
                 vec![Span::from(execution_loop.self_improvement.clone())],
+            ));
+            lines.push(formatter.line(
+                "Knowledge loop",
+                vec![Span::from(execution_loop.knowledge.clone())],
             ));
         }
         if let Some(session) = self.session_id.as_ref() {

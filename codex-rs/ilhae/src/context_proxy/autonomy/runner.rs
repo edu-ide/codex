@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use crate::SharedState;
+use crate::context_proxy::autonomy::should_continue_autonomous_on_stop_reason;
 use crate::context_proxy::autonomy::state::{
     AutonomousPhase, AutonomousSessionState, set_autonomous_snapshot,
 };
@@ -92,8 +93,7 @@ fn build_loop_snapshot(
     stalled_turns: u32,
     stop_reason: Option<String>,
 ) -> AutonomousSessionState {
-    let mut snapshot =
-        AutonomousSessionState::new(phase, loop_iteration, note, queued_directive);
+    let mut snapshot = AutonomousSessionState::new(phase, loop_iteration, note, queued_directive);
     if !goal.trim().is_empty() {
         snapshot.goal = Some(compact_loop_text(goal, 240));
     }
@@ -171,9 +171,7 @@ pub fn spawn_autonomous_loop(
             );
 
             let remaining_turns = max_turns.saturating_sub(turn).saturating_add(1);
-            let remaining_time_secs = timebox
-                .saturating_sub(started_at.elapsed())
-                .as_secs();
+            let remaining_time_secs = timebox.saturating_sub(started_at.elapsed()).as_secs();
             let ua_response = match super::user_agent::request_next_directive_with_context(
                 &session_id,
                 &context_so_far,
@@ -185,7 +183,8 @@ pub fn spawn_autonomous_loop(
                     remaining_time_secs,
                 },
             )
-            .await {
+            .await
+            {
                 Ok(super::user_agent::UserAgentDirective::Continue(text)) => text,
                 Ok(super::user_agent::UserAgentDirective::Complete) => {
                     info!("[AutoMode] User Agent signaled completion. Ending auto-loop.");
@@ -287,8 +286,10 @@ pub fn spawn_autonomous_loop(
                         "[AutoMode] Leader turn completed, stop_reason={:?}",
                         resp.stop_reason
                     );
-                    if resp.stop_reason != StopReason::EndTurn {
-                        info!("[AutoMode] Leader stop_reason != EndTurn. Ending auto-loop.");
+                    if !should_continue_autonomous_on_stop_reason(resp.stop_reason) {
+                        info!(
+                            "[AutoMode] Leader stop_reason is not continuation-worthy. Ending auto-loop."
+                        );
                         set_autonomous_snapshot(
                             &state,
                             &session_id,
@@ -305,6 +306,11 @@ pub fn spawn_autonomous_loop(
                         )
                         .await;
                         break;
+                    }
+                    if resp.stop_reason == StopReason::MaxTokens {
+                        info!(
+                            "[AutoMode] Leader hit MaxTokens; keeping auto-loop alive for replanning."
+                        );
                     }
                     let latest_observation = state
                         .infra
@@ -335,9 +341,7 @@ pub fn spawn_autonomous_loop(
                             build_loop_snapshot(
                                 AutonomousPhase::Completed,
                                 turn,
-                                Some(
-                                    "no material progress across consecutive turns".to_string(),
-                                ),
+                                Some("no material progress across consecutive turns".to_string()),
                                 None,
                                 &goal_summary,
                                 &context_so_far,
@@ -355,7 +359,11 @@ pub fn spawn_autonomous_loop(
                         build_loop_snapshot(
                             AutonomousPhase::Running,
                             turn,
-                            Some("observation recorded; replanning".to_string()),
+                            Some(if resp.stop_reason == StopReason::MaxTokens {
+                                "observation recorded after max_tokens; replanning".to_string()
+                            } else {
+                                "observation recorded; replanning".to_string()
+                            }),
                             None,
                             &goal_summary,
                             &context_so_far,

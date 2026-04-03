@@ -2213,6 +2213,48 @@ impl AppServerSession {
         matches!(self.client, AppServerClient::Remote(_))
     }
 
+    fn using_local_ilhae_runtime() -> bool {
+        codex_ilhae::native_runtime_context()
+            .map(|runtime| {
+                runtime
+                    .settings_store
+                    .get()
+                    .agent
+                    .command
+                    .split_whitespace()
+                    .next()
+                    .map(|command| command == "ilhae")
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    }
+
+    fn local_native_model_preset(config: &Config) -> ModelPreset {
+        let model = config
+            .model
+            .clone()
+            .unwrap_or_else(|| "ilhae-local".to_string());
+        let effort = config.model_reasoning_effort.unwrap_or(ReasoningEffort::Medium);
+        ModelPreset {
+            id: model.clone(),
+            model: model.clone(),
+            display_name: model.clone(),
+            description: "Local native ilhae runtime".to_string(),
+            default_reasoning_effort: effort,
+            supported_reasoning_efforts: vec![ReasoningEffortPreset {
+                effort,
+                description: "Default local runtime reasoning level".to_string(),
+            }],
+            supports_personality: false,
+            is_default: true,
+            upgrade: None,
+            show_in_picker: true,
+            availability_nux: None,
+            supported_in_api: true,
+            input_modalities: vec![InputModality::Text, InputModality::Image],
+        }
+    }
+
     pub(crate) async fn bootstrap(&mut self, config: &Config) -> Result<AppServerBootstrap> {
         let account_request_id = self.next_request_id();
         let account: GetAccountResponse = self
@@ -2238,11 +2280,15 @@ impl AppServerSession {
             })
             .await
             .wrap_err("model/list failed during TUI bootstrap")?;
-        let available_models = models
-            .data
-            .into_iter()
-            .map(model_preset_from_api_model)
-            .collect::<Vec<_>>();
+        let available_models = if Self::using_local_ilhae_runtime() {
+            vec![Self::local_native_model_preset(config)]
+        } else {
+            models
+                .data
+                .into_iter()
+                .map(model_preset_from_api_model)
+                .collect::<Vec<_>>()
+        };
         let default_model = config
             .model
             .clone()

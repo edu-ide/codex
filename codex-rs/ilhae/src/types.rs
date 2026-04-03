@@ -56,6 +56,13 @@ pub const REQ_APP_TASK_CREATE: &str = "ilhae/app/task/create";
 pub const REQ_APP_TASK_UPDATE: &str = "ilhae/app/task/update";
 pub const REQ_APP_TASK_DELETE: &str = "ilhae/app/task/delete";
 pub const REQ_APP_TASK_RUN: &str = "ilhae/app/task/run";
+pub const REQ_APP_KB_WORKSPACE_LIST: &str = "ilhae/app/kb/workspace/list";
+pub const REQ_APP_KB_WORKSPACE_UPSERT: &str = "ilhae/app/kb/workspace/upsert";
+pub const REQ_APP_KB_INGEST: &str = "ilhae/app/kb/ingest";
+pub const REQ_APP_KB_COMPILE: &str = "ilhae/app/kb/compile";
+pub const REQ_APP_KB_LINT: &str = "ilhae/app/kb/lint";
+pub const REQ_APP_KB_QUERY: &str = "ilhae/app/kb/query";
+pub const REQ_APP_KB_FILE_BACK: &str = "ilhae/app/kb/file_back";
 
 // ─── Canonical client-facing DTOs for ilhae app-server v1 ───────────────
 
@@ -64,6 +71,8 @@ pub struct IlhaeEngineStatePayload {
     pub engine: String,
     pub endpoint: String,
     pub team_mode: bool,
+    #[serde(default)]
+    pub team_backend: String,
     pub auto_mode: bool,
     pub advisor_mode: bool,
     pub kairos_enabled: bool,
@@ -76,6 +85,18 @@ pub struct IlhaeEngineStatePayload {
     pub memory_scope: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_scope: Option<String>,
+    #[serde(default)]
+    pub knowledge_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_last_result: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_last_driver: Option<String>,
+    #[serde(default)]
+    pub knowledge_last_issue_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_last_run_reason: Option<String>,
     pub approval_preset: String,
     pub command: String,
     pub capabilities: serde_json::Value,
@@ -330,6 +351,8 @@ pub struct IlhaeAppEngineGetResponse {
     pub command: String,
     #[serde(rename = "teamMode")]
     pub team_mode: bool,
+    #[serde(rename = "teamBackend", default)]
+    pub team_backend: String,
     pub endpoint: String,
     #[serde(rename = "enabledEngines")]
     pub enabled_engines: Vec<String>,
@@ -354,6 +377,8 @@ pub struct IlhaeAppEngineSetResponse {
     pub command: String,
     #[serde(rename = "teamMode")]
     pub team_mode: bool,
+    #[serde(rename = "teamBackend", default)]
+    pub team_backend: String,
     pub endpoint: String,
     #[serde(rename = "enabledEngines")]
     pub enabled_engines: Vec<String>,
@@ -370,6 +395,8 @@ pub struct IlhaeAppProfileAgentDto {
     pub command: Option<String>,
     #[serde(rename = "teamMode")]
     pub team_mode: bool,
+    #[serde(rename = "teamBackend", default)]
+    pub team_backend: String,
     #[serde(rename = "teamMergePolicy", default)]
     pub team_merge_policy: String,
     #[serde(rename = "teamMaxRetries", default)]
@@ -409,12 +436,35 @@ pub struct IlhaeAppProfileScopeDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(default)]
+pub struct IlhaeAppProfileKnowledgeDto {
+    #[serde(default)]
+    pub mode: String,
+    #[serde(
+        rename = "workspaceId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub workspace_id: Option<String>,
+    #[serde(rename = "pollIntervalSecs", default)]
+    pub poll_interval_secs: u64,
+    #[serde(rename = "periodicIntervalSecs", default)]
+    pub periodic_interval_secs: u64,
+    #[serde(rename = "reportTarget", default)]
+    pub report_target: String,
+    #[serde(rename = "reportRelativePath", default)]
+    pub report_relative_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default)]
 pub struct IlhaeAppProfileDto {
     pub id: String,
     pub agent: IlhaeAppProfileAgentDto,
     pub permissions: IlhaeAppProfilePermissionsDto,
     pub memory: IlhaeAppProfileScopeDto,
     pub task: IlhaeAppProfileScopeDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge: Option<IlhaeAppProfileKnowledgeDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
@@ -423,7 +473,11 @@ pub struct IlhaeAppProfileListRequest {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
 pub struct IlhaeAppProfileListResponse {
-    #[serde(rename = "activeProfile", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "activeProfile",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub active_profile: Option<String>,
     pub profiles: Vec<IlhaeAppProfileDto>,
 }
@@ -437,7 +491,11 @@ pub struct IlhaeAppProfileGetRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
 pub struct IlhaeAppProfileGetResponse {
-    #[serde(rename = "activeProfile", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "activeProfile",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub active_profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<IlhaeAppProfileDto>,
@@ -470,7 +528,11 @@ pub struct IlhaeAppProfileUpsertRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
 pub struct IlhaeAppProfileUpsertResponse {
     pub ok: bool,
-    #[serde(rename = "activeProfile", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "activeProfile",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub active_profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<IlhaeAppProfileDto>,
@@ -546,11 +608,182 @@ pub struct IlhaeAppTaskRunResponse {
     pub triggered: Vec<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IlhaeAppKbWorkspaceDto {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "rootPath")]
+    pub root_path: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IlhaeAppKbSourceDto {
+    #[serde(rename = "sourceId")]
+    pub source_id: String,
+    #[serde(rename = "relativePath")]
+    pub relative_path: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub size: u64,
+    #[serde(rename = "modifiedAt")]
+    pub modified_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IlhaeAppKbLintIssueDto {
+    pub kind: String,
+    pub path: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/kb/workspace/list", response = IlhaeAppKbWorkspaceListResponse)]
+pub struct IlhaeAppKbWorkspaceListRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppKbWorkspaceListResponse {
+    pub workspaces: Vec<IlhaeAppKbWorkspaceDto>,
+    #[serde(
+        rename = "activeWorkspace",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub active_workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(
+    method = "ilhae/app/kb/workspace/upsert",
+    response = IlhaeAppKbWorkspaceUpsertResponse
+)]
+pub struct IlhaeAppKbWorkspaceUpsertRequest {
+    #[serde(rename = "workspaceId", default)]
+    pub workspace_id: Option<String>,
+    pub name: String,
+    #[serde(rename = "rootPath")]
+    pub root_path: String,
+    #[serde(default)]
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppKbWorkspaceUpsertResponse {
+    pub ok: bool,
+    #[serde(
+        rename = "activeWorkspace",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub active_workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<IlhaeAppKbWorkspaceDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/kb/ingest", response = IlhaeAppKbIngestResponse)]
+pub struct IlhaeAppKbIngestRequest {
+    #[serde(rename = "workspaceId", default)]
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppKbIngestResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<IlhaeAppKbWorkspaceDto>,
+    pub sources: Vec<IlhaeAppKbSourceDto>,
+    #[serde(
+        rename = "inventoryPath",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub inventory_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/kb/compile", response = IlhaeAppKbCompileResponse)]
+pub struct IlhaeAppKbCompileRequest {
+    #[serde(rename = "workspaceId", default)]
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppKbCompileResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<IlhaeAppKbWorkspaceDto>,
+    #[serde(rename = "compiledSources")]
+    pub compiled_sources: usize,
+    #[serde(rename = "conceptCount")]
+    pub concept_count: usize,
+    #[serde(rename = "generatedFiles")]
+    pub generated_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/kb/lint", response = IlhaeAppKbLintResponse)]
+pub struct IlhaeAppKbLintRequest {
+    #[serde(rename = "workspaceId", default)]
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppKbLintResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<IlhaeAppKbWorkspaceDto>,
+    pub issues: Vec<IlhaeAppKbLintIssueDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/kb/query", response = IlhaeAppKbQueryResponse)]
+pub struct IlhaeAppKbQueryRequest {
+    #[serde(rename = "workspaceId", default)]
+    pub workspace_id: Option<String>,
+    pub query: String,
+    #[serde(rename = "outputPath", default)]
+    pub output_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppKbQueryResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<IlhaeAppKbWorkspaceDto>,
+    pub answer: String,
+    #[serde(rename = "matchedPaths")]
+    pub matched_paths: Vec<String>,
+    #[serde(
+        rename = "reportPath",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub report_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/kb/file_back", response = IlhaeAppKbFileBackResponse)]
+pub struct IlhaeAppKbFileBackRequest {
+    #[serde(rename = "workspaceId", default)]
+    pub workspace_id: Option<String>,
+    pub target: String,
+    #[serde(rename = "relativePath")]
+    pub relative_path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppKbFileBackResponse {
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IlhaeEngineStateNotification {
     pub engine: String,
     pub endpoint: String,
     pub team_mode: bool,
+    #[serde(default)]
+    pub team_backend: String,
     #[serde(default)]
     pub team_merge_policy: String,
     #[serde(default)]
@@ -577,6 +810,18 @@ pub struct IlhaeEngineStateNotification {
     pub memory_scope: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_scope: Option<String>,
+    #[serde(default)]
+    pub knowledge_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_last_result: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_last_driver: Option<String>,
+    #[serde(default)]
+    pub knowledge_last_issue_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_last_run_reason: Option<String>,
     pub approval_preset: String,
     pub command: String,
     pub capabilities: serde_json::Value,
@@ -1583,6 +1828,49 @@ pub struct MemoryToolDreamAnalyzeInput {
 pub struct MemoryToolDreamApplyInput {
     /// Memory chunk ids to update.
     pub ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KbWorkspaceListInput {
+    #[serde(rename = "workspace_id", default)]
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KbIngestInput {
+    #[serde(rename = "workspace_id", default)]
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KbCompileInput {
+    #[serde(rename = "workspace_id", default)]
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KbLintInput {
+    #[serde(rename = "workspace_id", default)]
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KbQueryInput {
+    #[serde(rename = "workspace_id", default)]
+    pub workspace_id: Option<String>,
+    pub query: String,
+    #[serde(rename = "output_path", default)]
+    pub output_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KbFileBackInput {
+    #[serde(rename = "workspace_id", default)]
+    pub workspace_id: Option<String>,
+    pub target: String,
+    #[serde(rename = "relative_path")]
+    pub relative_path: String,
+    pub content: String,
 }
 
 // 💬 Session

@@ -3,6 +3,7 @@
 
 use core_test_support::responses;
 use core_test_support::test_codex_exec::test_codex_exec;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -68,6 +69,33 @@ async fn exec_ignores_empty_piped_stdin_when_prompt_argument_is_present() -> any
             == ["Summarize this concisely".to_string()]),
         "request should preserve the prompt when stdin is empty"
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_with_prompt_argument_does_not_log_optional_stdin_message_for_empty_stdin()
+-> anyhow::Result<()> {
+    let test = test_codex_exec();
+    let server = responses::start_mock_server().await;
+    let body = responses::sse(vec![
+        responses::ev_response_created("resp1"),
+        responses::ev_assistant_message("m1", "fixture hello"),
+        responses::ev_completed("resp1"),
+    ]);
+    let _response_mock = responses::mount_sse_once(&server, body).await;
+
+    test.cmd_with_server(&server)
+        .arg("--skip-git-repo-check")
+        .arg("-C")
+        .arg(test.cwd_path())
+        .arg("-m")
+        .arg("gpt-5.1")
+        .arg("Summarize this concisely")
+        .write_stdin("")
+        .assert()
+        .success()
+        .stderr(contains("Reading additional input from stdin...").not());
 
     Ok(())
 }

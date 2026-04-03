@@ -12,7 +12,7 @@ use crate::admin_proxy;
 use crate::agent_router;
 use crate::channel_bots;
 use crate::context_proxy;
-use crate::helpers::{parse_host_port, probe_tcp};
+use crate::helpers::{infer_agent_id_from_command, parse_host_port, probe_tcp};
 use crate::persistence_proxy;
 use crate::process_supervisor;
 use crate::relay_commands;
@@ -50,7 +50,10 @@ pub async fn start_health_server(shared: Arc<SharedState>) -> anyhow::Result<()>
             || std::env::var("ILHAE_MOCK")
                 .map(|v| v == "true" || v == "1")
                 .unwrap_or(false);
-        let endpoint = if settings.agent.team_mode {
+        let team_backend = crate::config::normalize_team_backend(&settings.agent.team_backend);
+        let use_remote_team = settings.agent.team_mode
+            && crate::config::team_backend_uses_remote_transport(&team_backend);
+        let endpoint = if use_remote_team {
             let ep = settings.agent.a2a_endpoint.trim();
             if ep.is_empty() {
                 resolve_team_main_target(&state.infra_context().ilhae_dir)
@@ -64,12 +67,9 @@ pub async fn start_health_server(shared: Arc<SharedState>) -> anyhow::Result<()>
         } else {
             let ep = settings.agent.a2a_endpoint.trim();
             if ep.is_empty() {
-                let port = if settings.agent.command.contains("codex") {
-                    crate::port_config::codex_a2a_port()
-                } else {
-                    crate::port_config::gemini_a2a_port()
-                };
-                format!("http://127.0.0.1:{port}")
+                let agent_id = infer_agent_id_from_command(&settings.agent.command);
+                let resolved_engine = crate::engine_env::resolve_engine_env(&agent_id);
+                format!("http://127.0.0.1:{}", resolved_engine.default_port())
             } else {
                 ep.to_string()
             }
@@ -78,7 +78,12 @@ pub async fn start_health_server(shared: Arc<SharedState>) -> anyhow::Result<()>
     }
 
     async fn health(AxState(state): AxState<Arc<SharedState>>) -> Json<serde_json::Value> {
-        let desktop_ready = state.infra_context().relay_conductor_cx.latest().await.is_some();
+        let desktop_ready = state
+            .infra_context()
+            .relay_conductor_cx
+            .latest()
+            .await
+            .is_some();
         let (agent_endpoint, mock_mode) = resolve_agent_endpoint(&state);
         let (host, port) = parse_host_port(&agent_endpoint);
         let agent_ready = if mock_mode {
@@ -645,7 +650,13 @@ pub async fn run_conductor(
                         )
                         .await;
 
-                        if event.key == "agent.command" || event.key == "agent.team_mode" {
+                        if matches!(
+                            event.key.as_str(),
+                            "agent.command"
+                                | "agent.team_mode"
+                                | "agent.team_backend"
+                                | "agent.a2a_endpoint"
+                        ) {
                             crate::notify_engine_state(&cx, &ss).await;
                             let _ = refresh_tx.send(());
                         }
@@ -676,7 +687,11 @@ pub async fn run_conductor(
                 // Determine the new engine from current settings
                 let new_engine = {
                     let settings = ss.get();
-                    if settings.agent.team_mode {
+                    let team_backend =
+                        crate::config::normalize_team_backend(&settings.agent.team_backend);
+                    let use_remote_team = settings.agent.team_mode
+                        && crate::config::team_backend_uses_remote_transport(&team_backend);
+                    if use_remote_team {
                         // Team mode handles its own engine switching
                         String::new()
                     } else {

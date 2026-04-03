@@ -104,7 +104,7 @@ fn resolve_codex_cli_profile() -> Option<String> {
         }
     }
 
-    Some("nemotron-local".to_string())
+    Some("gemma-local".to_string())
 }
 
 fn resolve_native_codex_wrapper() -> String {

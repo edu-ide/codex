@@ -20,7 +20,10 @@ use crate::send_synthetic_tool_call;
 
 const DESKTOP_CANCEL_SENTINEL_OPTION_ID: &str = "__ilhae_cancelled_by_desktop__";
 
-fn is_auto_safe_self_improvement_tool(tool_title: &str, cfg: &crate::settings_types::Settings) -> bool {
+fn is_auto_safe_self_improvement_tool(
+    tool_title: &str,
+    cfg: &crate::settings_types::Settings,
+) -> bool {
     if !cfg.agent.self_improvement_enabled
         || !cfg
             .agent
@@ -29,10 +32,7 @@ fn is_auto_safe_self_improvement_tool(tool_title: &str, cfg: &crate::settings_ty
     {
         return false;
     }
-    matches!(
-        tool_title.trim(),
-        "memory_promote" | "memory_extract"
-    )
+    matches!(tool_title.trim(), "memory_promote" | "memory_extract")
 }
 
 pub fn bind_routes<H>(

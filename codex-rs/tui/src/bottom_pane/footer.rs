@@ -730,6 +730,19 @@ fn runtime_mode_footer_line() -> Option<Line<'static>> {
         parts.push("im".to_string());
     }
 
+    if agent.knowledge_mode != "off" {
+        let runtime = &agent.knowledge_runtime;
+        let mut knowledge = format!(
+            "kb:{}:{}",
+            knowledge_mode_short_label(&agent.knowledge_mode),
+            knowledge_result_short_label(&runtime.last_result)
+        );
+        if runtime.last_issue_count > 0 {
+            knowledge.push_str(&format!("/{}i", runtime.last_issue_count));
+        }
+        parts.push(knowledge);
+    }
+
     Some(Line::from(format!("ilhae {}", parts.join(" "))).dim())
 }
 
@@ -751,6 +764,23 @@ fn team_merge_policy_short_label(team_merge_policy: &str) -> &'static str {
 
 fn pause_policy_short_label(pause_on_error: bool) -> &'static str {
     if pause_on_error { "pause" } else { "cont" }
+}
+
+fn knowledge_mode_short_label(mode: &str) -> &'static str {
+    match mode {
+        "worker" => "wk",
+        "kairos" => "kx",
+        "both" => "both",
+        _ => "off",
+    }
+}
+
+fn knowledge_result_short_label(result: &str) -> &'static str {
+    match result {
+        "ok" => "ok",
+        "error" => "err",
+        _ => "idle",
+    }
 }
 
 pub(crate) fn footer_line_width(

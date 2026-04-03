@@ -35,7 +35,10 @@ macro_rules! register_admin_settings_handlers {
                     let current_engine = crate::helpers::infer_agent_id_from_command(&settings_snapshot.agent.command);
                     let target_engine = req.engine_id.unwrap_or_else(|| current_engine.clone());
                     let resolved_engine = crate::engine_env::resolve_engine_env(&target_engine);
-                    let endpoint = if settings_snapshot.agent.team_mode {
+                    let team_backend = crate::config::normalize_team_backend(&settings_snapshot.agent.team_backend);
+                    let use_remote_team = settings_snapshot.agent.team_mode
+                        && crate::config::team_backend_uses_remote_transport(&team_backend);
+                    let endpoint = if use_remote_team {
                         let ep = settings_snapshot.agent.a2a_endpoint.trim();
                         if ep.is_empty() {
                             format!("http://127.0.0.1:{}", crate::port_config::team_base_port())
@@ -54,6 +57,7 @@ macro_rules! register_admin_settings_handlers {
                         current_engine,
                         command: settings_snapshot.agent.command.clone(),
                         team_mode: settings_snapshot.agent.team_mode,
+                        team_backend,
                         endpoint,
                         enabled_engines: settings_snapshot.agent.enabled_engines.clone(),
                         profile: crate::capabilities::engine_capability_profile_json(&target_engine),
@@ -88,7 +92,10 @@ macro_rules! register_admin_settings_handlers {
                     let updated = settings.get();
                     let current_engine = crate::helpers::infer_agent_id_from_command(&updated.agent.command);
                     let resolved_engine = crate::engine_env::resolve_engine_env(&current_engine);
-                    let endpoint = if updated.agent.team_mode {
+                    let team_backend = crate::config::normalize_team_backend(&updated.agent.team_backend);
+                    let use_remote_team = updated.agent.team_mode
+                        && crate::config::team_backend_uses_remote_transport(&team_backend);
+                    let endpoint = if use_remote_team {
                         let ep = updated.agent.a2a_endpoint.trim();
                         if ep.is_empty() {
                             format!("http://127.0.0.1:{}", crate::port_config::team_base_port())
@@ -109,6 +116,7 @@ macro_rules! register_admin_settings_handlers {
                         current_engine: current_engine.clone(),
                         command: updated.agent.command.clone(),
                         team_mode: updated.agent.team_mode,
+                        team_backend,
                         endpoint,
                         enabled_engines: updated.agent.enabled_engines.clone(),
                         profile: crate::capabilities::engine_capability_profile_json(&current_engine),

@@ -9,6 +9,7 @@ use brain_knowledge_rs::memory_store;
 
 use crate::SharedState;
 use crate::context_proxy::autonomy::runner::spawn_autonomous_loop;
+use crate::context_proxy::autonomy::should_continue_autonomous_on_stop_reason;
 use crate::context_proxy::autonomy::state::{
     AutonomousPhase, clear_autonomous_state, current_autonomous_iteration, set_autonomous_phase,
 };
@@ -56,8 +57,7 @@ pub async fn finalize_prompt_result(
         .ok()
         .and_then(extract_a2a_text_from_prompt_response);
     let cancelled_after_start = input.latest_cancel_ver > input.prompt_start_cancel_ver;
-    let should_emit_patch =
-        should_emit_assistant_turn_patch(&input, structured_meta.is_some());
+    let should_emit_patch = should_emit_assistant_turn_patch(&input, structured_meta.is_some());
     let mut leader_content_for_auto = String::new();
     let mut saved_from_buffer = false;
     let lock = &buffers_for_save;
@@ -336,20 +336,29 @@ pub async fn finalize_prompt_result(
                 return Ok(());
             }
 
-            if input.autonomous_mode_enabled && response.stop_reason == StopReason::EndTurn {
+            let should_continue_autonomy =
+                should_continue_autonomous_on_stop_reason(response.stop_reason);
+            if input.autonomous_mode_enabled {
+                info!(
+                    "[AutoMode] Prompt finalized (session={}, stop_reason={:?}, continue={})",
+                    input.session_id, response.stop_reason, should_continue_autonomy
+                );
+            }
+
+            if input.autonomous_mode_enabled && should_continue_autonomy {
                 let existing_iteration =
                     current_autonomous_iteration(&state, &input.session_id).await;
                 if existing_iteration > 0 {
                     info!(
-                        "[AutoMode] EndTurn during active loop; returning to existing runner (session={}, iteration={})",
-                        input.session_id, existing_iteration
+                        "[AutoMode] Continuation stop reason during active loop; returning to existing runner (session={}, iteration={}, stop_reason={:?})",
+                        input.session_id, existing_iteration, response.stop_reason
                     );
                     responder.respond(response)?;
                     return Ok(());
                 }
                 info!(
-                    "[AutoMode] EndTurn detected with autonomous_mode=true. Spawning auto-loop (session={})",
-                    input.session_id
+                    "[AutoMode] Continuation stop reason detected with autonomous_mode=true. Spawning auto-loop (session={}, stop_reason={:?})",
+                    input.session_id, response.stop_reason
                 );
                 set_autonomous_phase(
                     &state,
@@ -370,7 +379,19 @@ pub async fn finalize_prompt_result(
                 return Ok(());
             }
 
-            clear_autonomous_state(&state, &input.session_id).await;
+            if input.autonomous_mode_enabled {
+                set_autonomous_phase(
+                    &state,
+                    &input.session_id,
+                    AutonomousPhase::Completed,
+                    0,
+                    Some(format!("initial stop_reason={:?}", response.stop_reason)),
+                    None,
+                )
+                .await;
+            } else {
+                clear_autonomous_state(&state, &input.session_id).await;
+            }
             responder.respond(response)?;
             Ok(())
         }

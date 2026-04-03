@@ -25,6 +25,10 @@ pub(crate) trait EventProcessor {
     /// Handle a local exec warning that is not represented as an app-server notification.
     fn process_warning(&mut self, message: String) -> CodexStatus;
 
+    fn has_inflight_items(&self) -> bool {
+        false
+    }
+
     fn print_final_output(&mut self) {}
 }
 

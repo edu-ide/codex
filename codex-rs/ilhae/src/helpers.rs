@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::types::{IlhaeEngineStateNotification, NOTIF_ENGINE_STATE};
 use agent_client_protocol_schema::{
     InitializeRequest, NewSessionRequest, NewSessionResponse, ProtocolVersion, SessionNotification,
     SessionUpdate, ToolCall as AcpToolCall, ToolCallUpdate,
@@ -18,7 +19,6 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant, sleep};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
-use crate::types::{IlhaeEngineStateNotification, NOTIF_ENGINE_STATE};
 
 const CX_CACHE_MAX_ENTRIES: usize = 16;
 pub const ILHAE_DIR_NAME: &str = "ilhae";
@@ -322,8 +322,11 @@ pub async fn notify_engine_state(
     let engine = infer_agent_id_from_command(&settings.agent.command);
     let resolved_engine = crate::engine_env::resolve_engine_env(&engine);
     let team_mode = settings.agent.team_mode;
+    let team_backend = crate::config::normalize_team_backend(&settings.agent.team_backend);
+    let use_remote_team =
+        team_mode && crate::config::team_backend_uses_remote_transport(&team_backend);
 
-    let endpoint = if team_mode {
+    let endpoint = if use_remote_team {
         let ep = settings.agent.a2a_endpoint.trim();
         if ep.is_empty() {
             format!("http://127.0.0.1:{}", crate::port_config::team_base_port())
@@ -340,8 +343,8 @@ pub async fn notify_engine_state(
     };
 
     info!(
-        "[SSoT] Pushing engine_state: engine={}, endpoint={}, team_mode={}",
-        engine, endpoint, team_mode
+        "[SSoT] Pushing engine_state: engine={}, endpoint={}, team_mode={}, team_backend={}",
+        engine, endpoint, team_mode, team_backend
     );
 
     cx_cache
@@ -351,6 +354,7 @@ pub async fn notify_engine_state(
                 engine: engine.clone(),
                 endpoint,
                 team_mode,
+                team_backend: team_backend.clone(),
                 team_merge_policy: settings.agent.team_merge_policy.clone(),
                 team_max_retries: settings.agent.team_max_retries,
                 team_pause_on_error: settings.agent.team_pause_on_error,
@@ -366,6 +370,18 @@ pub async fn notify_engine_state(
                 active_profile: settings.agent.active_profile.clone(),
                 memory_scope: settings.agent.memory_scope.clone(),
                 task_scope: settings.agent.task_scope.clone(),
+                knowledge_mode: settings.agent.knowledge_mode.clone(),
+                knowledge_workspace_id: settings.agent.knowledge_runtime.last_workspace_id.clone(),
+                knowledge_last_result: (!settings
+                    .agent
+                    .knowledge_runtime
+                    .last_result
+                    .trim()
+                    .is_empty())
+                .then(|| settings.agent.knowledge_runtime.last_result.clone()),
+                knowledge_last_driver: settings.agent.knowledge_runtime.last_driver.clone(),
+                knowledge_last_issue_count: settings.agent.knowledge_runtime.last_issue_count,
+                knowledge_last_run_reason: settings.agent.knowledge_runtime.last_run_reason.clone(),
                 approval_preset: settings.permissions.approval_preset.clone(),
                 command: settings.agent.command.clone(),
                 capabilities: crate::capabilities::engine_capability_profile_json(&engine),
@@ -606,8 +622,11 @@ pub async fn spawn_local_a2a_server(
     card_name: Option<&str>,
     team_env: Option<TeamSpawnEnv>,
 ) -> anyhow::Result<tokio::process::Child> {
-    let engine_name = if agent_cmd.contains("codex") {
-        "codex"
+    let inferred = infer_agent_id_from_command(agent_cmd);
+    let engine_name = if is_ilhae_native_agent_id(&inferred) {
+        ILHAE_AGENT_ID
+    } else if inferred == "codex" {
+        LEGACY_CODEX_AGENT_ID
     } else {
         "gemini"
     };

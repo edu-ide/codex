@@ -130,7 +130,9 @@ macro_rules! register_admin_artifact_handlers {
                                 if path.is_file()
                                     && path.extension().map_or(false, |ext| ext == "md")
                                 {
-                                    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                    if let Some(filename) =
+                                        path.file_name().and_then(|n| n.to_str())
+                                    {
                                         if !filename.starts_with("DESIGN_")
                                             && !filename.starts_with("PLAN_")
                                             && !filename.starts_with("VERIFICATION_")
@@ -156,9 +158,11 @@ macro_rules! register_admin_artifact_handlers {
                                             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                                             .duration_since(std::time::SystemTime::UNIX_EPOCH)
                                             .unwrap_or_default()
-                                            .as_millis() as i64;
+                                            .as_millis()
+                                            as i64;
 
-                                        let content = std::fs::read_to_string(&path).unwrap_or_default();
+                                        let content =
+                                            std::fs::read_to_string(&path).unwrap_or_default();
                                         let mut doc_project_path = None;
                                         let mut doc_date = None;
 
@@ -166,10 +170,22 @@ macro_rules! register_admin_artifact_handlers {
                                             if let Some(end_idx) = content[4..].find("\n---\n") {
                                                 let frontmatter = &content[4..end_idx + 4];
                                                 for line in frontmatter.lines() {
-                                                    if let Some(rest) = line.strip_prefix("project_path: ") {
-                                                        doc_project_path = Some(rest.trim_matches('"').trim().to_string());
-                                                    } else if let Some(rest) = line.strip_prefix("date: ") {
-                                                        doc_date = Some(rest.trim_matches('"').trim().to_string());
+                                                    if let Some(rest) =
+                                                        line.strip_prefix("project_path: ")
+                                                    {
+                                                        doc_project_path = Some(
+                                                            rest.trim_matches('"')
+                                                                .trim()
+                                                                .to_string(),
+                                                        );
+                                                    } else if let Some(rest) =
+                                                        line.strip_prefix("date: ")
+                                                    {
+                                                        doc_date = Some(
+                                                            rest.trim_matches('"')
+                                                                .trim()
+                                                                .to_string(),
+                                                        );
                                                     }
                                                 }
                                             }
@@ -263,10 +279,7 @@ macro_rules! register_admin_artifact_handlers {
                     async move |req: IlhaeAppArtifactListRequest,
                                 responder: Responder<IlhaeAppArtifactListResponse>,
                                 _cx: ConnectionTo<Conductor>| {
-                        info!(
-                            "ilhae/app/artifact/list RPC session={}",
-                            req.session_id
-                        );
+                        info!("ilhae/app/artifact/list RPC session={}", req.session_id);
                         let artifacts = artifact_store
                             .list_session_artifacts(&req.session_id)
                             .unwrap_or_else(|e| {

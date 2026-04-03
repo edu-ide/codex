@@ -101,7 +101,9 @@ impl SettingsStore {
             }
             let matches = Regex::new(pattern)
                 .map(|re| re.is_match(tool_title))
-                .unwrap_or_else(|_| tool_title.starts_with(pattern) || tool_title.contains(pattern));
+                .unwrap_or_else(|_| {
+                    tool_title.starts_with(pattern) || tool_title.contains(pattern)
+                });
             if !matches {
                 continue;
             }

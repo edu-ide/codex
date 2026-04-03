@@ -63,6 +63,19 @@ pub fn build_dynamic_instructions(settings: &settings_store::Settings) -> String
         "</dynamic_instructions>",
     ));
 
+    parts.push(concat!(
+        "<dynamic_instructions>\n",
+        "## Brain / Knowledge 라우팅 규칙\n",
+        "사용자가 knowledge workspace, raw/wiki/output/index, health report, broken link, compile, lint, ingest, query 같은 표현을 쓰면 shell 탐색보다 `kb_*` 도구를 우선하세요.\n",
+        "권장 수리 루프: `kb_workspace_list` → `kb_lint` → 필요 시 관련 markdown만 확인 → `kb_file_back` 또는 `kb_compile` → `kb_lint` 재실행으로 issue count를 확인합니다.\n",
+        "`brain_knowledge_ops`는 cross-session knowledge graph 질의용 보조 도구입니다. 유효한 action은 `search`, `unified_search`, `diff`, `batch_delete`, `link_add`, `link_remove`, `link_list` 뿐입니다. `action = list`는 잘못된 호출이므로 절대 사용하지 마세요.\n",
+        "`list_mcp_resources`와 `read_mcp_resource`는 MCP 리소스를 이미 알고 있을 때만 씁니다. repository 파일 탐색이나 워크스페이스 위치 찾기에 쓰지 마세요.\n",
+        "`list_mcp_resources`는 `cursor`를 사용할 때 반드시 같은 `server`를 함께 지정해야 합니다.\n",
+        "`read_mcp_resource`는 이전 `list_mcp_resources` 결과에서 받은 정확한 `server`와 `uri`에만 사용하세요. `server = default` 같은 추측값을 쓰지 마세요.\n",
+        "knowledge workspace 수리 중에는 `find /workspace`, `ls -R /workspace` 같은 광범위한 스캔을 피하고, 먼저 전용 도구로 대상 workspace를 좁히세요.\n",
+        "</dynamic_instructions>",
+    ));
+
     // ── Team mode: instruct leader to delegate via tool_calls ──
     if settings.agent.team_mode {
         // Load team config to get actual agent role names
@@ -115,6 +128,24 @@ pub fn build_dynamic_instructions(settings: &settings_store::Settings) -> String
     let mut all = owned_parts.iter().map(|s| s.as_str()).collect::<Vec<_>>();
     all.extend_from_slice(&parts);
     all.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_dynamic_instructions;
+
+    #[test]
+    fn build_dynamic_instructions_includes_kb_routing_guardrails() {
+        let settings = crate::settings_store::Settings::default();
+        let instructions = build_dynamic_instructions(&settings);
+
+        assert!(instructions.contains("Brain / Knowledge 라우팅 규칙"));
+        assert!(instructions.contains("`kb_workspace_list`"));
+        assert!(instructions.contains("`kb_lint`"));
+        assert!(instructions.contains("`kb_file_back`"));
+        assert!(instructions.contains("`action = list`"));
+        assert!(instructions.contains("`server = default`"));
+    }
 }
 
 // ─── Codex capability injection ──────────────────────────────────────────

@@ -9,6 +9,7 @@ use sacp::DynConnectTo;
 use moka::sync::Cache;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock, atomic::AtomicU64};
+use std::{process::Stdio, time::Duration};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -44,9 +45,47 @@ pub struct BootstrappedIlhaeRuntime {
 }
 
 static NATIVE_RUNTIME_CONTEXT: OnceLock<BootstrappedIlhaeRuntime> = OnceLock::new();
+static NATIVE_RUNTIME_BACKGROUND_WORKERS_STARTED: OnceLock<()> = OnceLock::new();
+const DEFAULT_GEPA_OPTIMIZER_INTERVAL_SECS: u64 = 1800;
 
 pub fn native_runtime_context() -> Option<BootstrappedIlhaeRuntime> {
     NATIVE_RUNTIME_CONTEXT.get().cloned()
+}
+
+fn spawn_native_runtime_background_workers(runtime: &BootstrappedIlhaeRuntime) {
+    if NATIVE_RUNTIME_BACKGROUND_WORKERS_STARTED.set(()).is_err() {
+        return;
+    }
+
+    let ilhae_dir_for_knowledge_worker = runtime.ilhae_dir.clone();
+    let settings_for_knowledge_worker = runtime.settings_store.clone();
+    tokio::spawn(async move {
+        knowledge_loop::run_worker_loop(
+            settings_for_knowledge_worker,
+            ilhae_dir_for_knowledge_worker,
+        )
+        .await;
+    });
+
+    let ilhae_dir_for_super_loop = runtime.ilhae_dir.clone();
+    let settings_for_super_loop = runtime.settings_store.clone();
+    let brain_for_super_loop = runtime.brain.clone();
+    let autonomous_sessions_for_super_loop: Arc<
+        Cache<String, context_proxy::autonomy::state::AutonomousSessionState>,
+    > = Arc::new(
+        moka::sync::Cache::builder()
+            .time_to_idle(std::time::Duration::from_secs(3600))
+            .build(),
+    );
+    tokio::spawn(async move {
+        crate::super_loop::run_worker_loop(
+            brain_for_super_loop,
+            settings_for_super_loop,
+            autonomous_sessions_for_super_loop,
+            ilhae_dir_for_super_loop,
+        )
+        .await;
+    });
 }
 
 pub fn current_native_backend_engine() -> Option<String> {
@@ -58,6 +97,203 @@ pub fn current_native_backend_capability_profile()
 -> Option<crate::capabilities::EngineCapabilityProfile> {
     current_native_backend_engine()
         .map(|engine| crate::capabilities::engine_capability_profile(&engine))
+}
+
+async fn native_runtime_healthcheck(url: &str) -> bool {
+    if url.trim().is_empty() {
+        return false;
+    }
+
+    match reqwest::Client::new()
+        .get(url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(response) => response.status().is_success(),
+        Err(_) => false,
+    }
+}
+
+fn parse_positive_env_secs(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+fn gepa_optimizer_interval_secs() -> u64 {
+    parse_positive_env_secs(
+        "ILHAE_GEPA_OPTIMIZER_INTERVAL_SECS",
+        DEFAULT_GEPA_OPTIMIZER_INTERVAL_SECS,
+    )
+}
+
+fn gepa_auto_approve_enabled() -> bool {
+    matches!(
+        std::env::var("ILHAE_GEPA_AUTO_APPROVE")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+fn build_gepa_optimizer_request(
+    preset: &str,
+    subject: &str,
+    detail: &str,
+    group_count: usize,
+    top_paths: Vec<String>,
+) -> crate::super_loop::GepaSidecarRequest {
+    let base_spec = crate::super_loop::default_self_improvement_followup_spec_for_runtime();
+    crate::super_loop::GepaSidecarRequest {
+        kind: "self_improvement_followup_offline".to_string(),
+        preset: preset.to_string(),
+        subject: subject.to_string(),
+        detail: detail.to_string(),
+        prompt: base_spec.prompt,
+        instructions: base_spec.instructions,
+        task_history: Vec::new(),
+        top_paths,
+        group_count: Some(group_count),
+    }
+}
+
+fn gate_gepa_optimizer_candidate(
+    response: &crate::super_loop::GepaSidecarResponse,
+) -> Result<(String, String, f64), String> {
+    let prompt = response
+        .optimized_prompt
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    let instructions = response
+        .optimized_instructions
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    if prompt.is_empty() || instructions.is_empty() {
+        return Err("missing optimized prompt or instructions".to_string());
+    }
+    if prompt.len() > 480 {
+        return Err(format!("prompt too long: {} chars", prompt.len()));
+    }
+    if instructions.len() > 900 {
+        return Err(format!(
+            "instructions too long: {} chars",
+            instructions.len()
+        ));
+    }
+
+    let prompt_lower = prompt.to_ascii_lowercase();
+    let instructions_lower = instructions.to_ascii_lowercase();
+    if !(prompt_lower.contains("review") || prompt_lower.contains("summarize")) {
+        return Err("prompt must keep review/summarize intent".to_string());
+    }
+    if !instructions_lower.contains("memory_dream_") {
+        return Err("instructions must stay within memory_dream tool scope".to_string());
+    }
+    let score = response.score.unwrap_or(0.0);
+    if score <= 0.0 {
+        return Err("candidate score did not improve baseline".to_string());
+    }
+    Ok((prompt.to_string(), instructions.to_string(), score))
+}
+
+fn spawn_native_runtime_server(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> anyhow::Result<()> {
+    if config.server_bin.trim().is_empty() {
+        anyhow::bail!("native runtime server_bin is required");
+    }
+
+    let mut command = std::process::Command::new(&config.server_bin);
+    if config.args.is_empty() {
+        if !config.model_path.trim().is_empty() {
+            command.arg("-m").arg(&config.model_path);
+        }
+        if !config.chat_template_file.trim().is_empty() {
+            command
+                .arg("--chat-template-file")
+                .arg(&config.chat_template_file);
+        }
+    } else {
+        command.args(&config.args);
+    }
+
+    command.stdin(Stdio::null());
+
+    if config.log_file.trim().is_empty() {
+        command.stdout(Stdio::null());
+        command.stderr(Stdio::null());
+    } else {
+        let log_path = std::path::Path::new(&config.log_file);
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let stdout = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)?;
+        let stderr = stdout.try_clone()?;
+        command.stdout(Stdio::from(stdout));
+        command.stderr(Stdio::from(stderr));
+    }
+
+    let child = command.spawn()?;
+    info!(
+        pid = child.id(),
+        server_bin = %config.server_bin,
+        "[NativeRuntime] spawned local model server"
+    );
+    Ok(())
+}
+
+pub async fn ensure_native_runtime_for_cli() -> anyhow::Result<()> {
+    let Some((profile_id, config)) = crate::config::get_active_native_runtime_config() else {
+        return Ok(());
+    };
+
+    if native_runtime_healthcheck(&config.health_url).await {
+        if !config.base_url.trim().is_empty() {
+            unsafe {
+                std::env::set_var("CODEX_OSS_BASE_URL", &config.base_url);
+            }
+        }
+        return Ok(());
+    }
+
+    spawn_native_runtime_server(&config)?;
+
+    let timeout_secs = config.startup_timeout_secs.max(1);
+    let started = tokio::time::Instant::now();
+    loop {
+        if native_runtime_healthcheck(&config.health_url).await {
+            break;
+        }
+        if started.elapsed().as_secs() >= timeout_secs {
+            anyhow::bail!(
+                "native runtime for profile `{profile_id}` did not become healthy within {}s",
+                timeout_secs
+            );
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    if !config.base_url.trim().is_empty() {
+        unsafe {
+            std::env::set_var("CODEX_OSS_BASE_URL", &config.base_url);
+        }
+    }
+
+    info!(
+        profile = %profile_id,
+        base_url = %config.base_url,
+        "[NativeRuntime] local model runtime ready"
+    );
+    Ok(())
 }
 
 fn flatten_prompt_blocks_to_text(blocks: Vec<ContentBlock>) -> String {
@@ -218,6 +454,12 @@ pub async fn bootstrap_ilhae_runtime() -> anyhow::Result<BootstrappedIlhaeRuntim
     });
     crate::mock_provider::init_mock_mode(false);
     let settings_store = Arc::new(SettingsStore::new(&ilhae_dir));
+    if let Err(err) = crate::config::apply_active_ilhae_profile_projection(&settings_store) {
+        warn!(
+            "[Startup] Failed to apply active profile projection: {}",
+            err
+        );
+    }
     let mock_enabled = match std::env::var("ILHAE_MOCK") {
         Ok(value) => {
             let normalized = value.trim().to_ascii_lowercase();
@@ -244,6 +486,7 @@ pub async fn bootstrap_ilhae_runtime() -> anyhow::Result<BootstrappedIlhaeRuntim
         cx_cache,
     };
     let _ = NATIVE_RUNTIME_CONTEXT.set(runtime.clone());
+    spawn_native_runtime_background_workers(&runtime);
 
     Ok(runtime)
 }
@@ -301,15 +544,18 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
     let supervisor_handle = process_supervisor::create_supervisor(settings_store.clone());
     {
         let settings = settings_store.get();
+        let team_backend = crate::config::normalize_team_backend(&settings.agent.team_backend);
+        let use_remote_team = settings.agent.team_mode
+            && crate::config::team_backend_uses_remote_transport(&team_backend);
         info!(
-            "[Startup] team_mode={}, a2a_endpoint={}",
-            settings.agent.team_mode, settings.agent.a2a_endpoint
+            "[Startup] team_mode={}, team_backend={}, a2a_endpoint={}",
+            settings.agent.team_mode, team_backend, settings.agent.a2a_endpoint
         );
-        if !settings.agent.team_mode {
+        if !use_remote_team {
             if mock_enabled {
-                info!("[Startup] Solo mode + mock mode → skipping A2A server spawning");
+                info!("[Startup] Solo/local-team mode + mock mode → skipping A2A server spawning");
             } else {
-                info!("[Startup] Entering SOLO mode branch");
+                info!("[Startup] Entering solo/local-team branch");
                 // Solo mode: initial spawn of both A2A servers (supervisor will keep them alive)
                 let gemini_port = {
                     let ep = settings.agent.a2a_endpoint.trim();
@@ -341,7 +587,9 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                 });
             }
         } else if mock_enabled {
-            info!("[Startup] Team mode + mock mode → skipping real team A2A pre-spawn");
+            info!(
+                "[Startup] Remote/hybrid team mode + mock mode → skipping real team A2A pre-spawn"
+            );
         } else {
             // Team mode: pre-spawn + register with supervisor
             use context_proxy::{
@@ -726,8 +974,10 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
     {
         let brain_for_kairos = brain_service.clone();
         let settings_for_kairos = settings_store.clone();
+        let autonomous_sessions_for_kairos = autonomous_sessions.clone();
         let notif_store_for_kairos = notification_store.clone();
         let relay_tx_for_kairos = relay_tx.clone();
+        let ilhae_dir_for_kairos = ilhae_dir.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(15)).await;
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -735,13 +985,43 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                 interval.tick().await;
 
                 let settings_snapshot = settings_for_kairos.get();
-                if !settings_snapshot.agent.kairos_enabled {
+                let run_task_kairos = settings_snapshot.agent.kairos_enabled;
+                let run_kb_kairos = crate::config::knowledge_mode_includes_kairos(
+                    &settings_snapshot.agent.knowledge_mode,
+                );
+                let run_hygiene_kairos = crate::hygiene_loop::hygiene_mode_includes_kairos(
+                    &settings_snapshot.agent.hygiene_mode,
+                );
+                if !run_task_kairos && !run_kb_kairos && !run_hygiene_kairos {
                     continue;
                 }
 
-                let task_scope = normalize_task_scope(settings_snapshot.agent.task_scope.as_deref());
-                let triggered = brain_for_kairos
-                    .schedule_run_with_scope(task_scope.as_deref(), None);
+                if run_kb_kairos {
+                    knowledge_loop::maybe_run_cycle(
+                        knowledge_loop::KnowledgeLoopDriver::Kairos,
+                        settings_for_kairos.clone(),
+                        ilhae_dir_for_kairos.clone(),
+                    )
+                    .await;
+                }
+
+                crate::super_loop::maybe_run_cycle(
+                    crate::super_loop::SuperLoopDriver::Kairos,
+                    brain_for_kairos.clone(),
+                    settings_for_kairos.clone(),
+                    autonomous_sessions_for_kairos.clone(),
+                    ilhae_dir_for_kairos.clone(),
+                )
+                .await;
+
+                if !run_task_kairos {
+                    continue;
+                }
+
+                let task_scope =
+                    normalize_task_scope(settings_snapshot.agent.task_scope.as_deref());
+                let triggered =
+                    brain_for_kairos.schedule_run_with_scope(task_scope.as_deref(), None);
 
                 if triggered.is_empty() {
                     continue;
@@ -784,6 +1064,34 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
         });
     }
 
+    {
+        let settings_for_knowledge_worker = settings_store.clone();
+        let ilhae_dir_for_knowledge_worker = ilhae_dir.clone();
+        tokio::spawn(async move {
+            knowledge_loop::run_worker_loop(
+                settings_for_knowledge_worker,
+                ilhae_dir_for_knowledge_worker,
+            )
+            .await;
+        });
+    }
+
+    {
+        let brain_for_super_loop = brain_service.clone();
+        let settings_for_super_loop = settings_store.clone();
+        let autonomous_sessions_for_super_loop = autonomous_sessions.clone();
+        let ilhae_dir_for_super_loop = ilhae_dir.clone();
+        tokio::spawn(async move {
+            crate::super_loop::run_worker_loop(
+                brain_for_super_loop,
+                settings_for_super_loop,
+                autonomous_sessions_for_super_loop,
+                ilhae_dir_for_super_loop,
+            )
+            .await;
+        });
+    }
+
     // ── Self-improvement review loop ────────────────────────────────────
     {
         let brain_for_self_improvement = brain_service.clone();
@@ -806,8 +1114,15 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                     applied_group_signatures.clear();
                     continue;
                 }
-                let self_improvement_preset =
-                    settings_snapshot.agent.self_improvement_preset.trim().to_ascii_lowercase();
+                let self_improvement_preset = settings_snapshot
+                    .agent
+                    .self_improvement_preset
+                    .trim()
+                    .to_ascii_lowercase();
+                let auto_summarize_enabled = matches!(
+                    self_improvement_preset.as_str(),
+                    "safe_summarize" | "safe_apply"
+                );
 
                 let Ok(preview) = brain_for_self_improvement.memory_dream_preview(5) else {
                     continue;
@@ -829,6 +1144,176 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                     continue;
                 }
 
+                let top_paths = groups
+                    .iter()
+                    .take(3)
+                    .filter_map(|group| group.get("path").and_then(|value| value.as_str()))
+                    .map(basename_for_runtime)
+                    .collect::<Vec<_>>();
+
+                if self_improvement_preset == "gepa_sidecar" {
+                    let now_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let optimizer_interval_secs = gepa_optimizer_interval_secs();
+                    let last_run_at = settings_snapshot
+                        .agent
+                        .self_improvement_runtime
+                        .last_run_at
+                        .unwrap_or(0);
+                    if now_secs.saturating_sub(last_run_at) >= optimizer_interval_secs {
+                        let subject = settings_snapshot
+                            .agent
+                            .active_profile
+                            .clone()
+                            .unwrap_or_else(|| "default".to_string());
+                        let detail = if top_paths.is_empty() {
+                            format!(
+                                "{} dream groups pending under preset {}",
+                                group_count, self_improvement_preset
+                            )
+                        } else {
+                            format!(
+                                "{} dream groups pending under preset {} ({})",
+                                group_count,
+                                self_improvement_preset,
+                                top_paths.join(", ")
+                            )
+                        };
+                        let request = build_gepa_optimizer_request(
+                            &self_improvement_preset,
+                            &subject,
+                            &detail,
+                            group_count,
+                            top_paths.clone(),
+                        );
+                        let mut runtime_status =
+                            settings_snapshot.agent.self_improvement_runtime.clone();
+                        runtime_status.last_run_at = Some(now_secs);
+
+                        match crate::super_loop::run_gepa_self_improvement_sidecar(&request) {
+                            Ok(response) => match gate_gepa_optimizer_candidate(&response) {
+                                Ok((prompt, instructions, score)) => {
+                                    let optimizer = response
+                                        .optimizer
+                                        .clone()
+                                        .unwrap_or_else(|| "gepa_sidecar".to_string());
+                                    let reason = response.reason.clone();
+                                    let auto_approved = gepa_auto_approve_enabled();
+
+                                    runtime_status.last_result = if auto_approved {
+                                        "approved".to_string()
+                                    } else {
+                                        "candidate_ready".to_string()
+                                    };
+                                    runtime_status.last_optimizer = Some(optimizer.clone());
+                                    runtime_status.last_success_at = Some(now_secs);
+                                    runtime_status.last_error = None;
+                                    runtime_status.last_reason = reason.clone();
+                                    runtime_status.candidate_prompt = Some(prompt.clone());
+                                    runtime_status.candidate_instructions =
+                                        Some(instructions.clone());
+                                    runtime_status.candidate_score = Some(score);
+                                    runtime_status.candidate_generated_at = Some(now_secs);
+                                    if auto_approved {
+                                        runtime_status.approved_prompt = Some(prompt);
+                                        runtime_status.approved_instructions = Some(instructions);
+                                        runtime_status.approved_score = Some(score);
+                                        runtime_status.approved_at = Some(now_secs);
+                                    }
+
+                                    let persist_result = settings_for_self_improvement.set_value(
+                                        "agent.self_improvement_runtime",
+                                        serde_json::to_value(&runtime_status)
+                                            .unwrap_or(serde_json::Value::Null),
+                                    );
+                                    if let Err(error) = persist_result {
+                                        warn!(
+                                            "[Self-Improvement] Failed to persist offline optimizer runtime status: {}",
+                                            error
+                                        );
+                                    } else {
+                                        let action_label = if auto_approved {
+                                            "approved"
+                                        } else {
+                                            "prepared candidate"
+                                        };
+                                        let suffix = if top_paths.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!(" ({})", top_paths.join(", "))
+                                        };
+                                        let message = format!(
+                                            "[Self-Improvement] Offline optimizer {} for {} dream groups{} [score={:.2}, optimizer={}]",
+                                            action_label, group_count, suffix, score, optimizer
+                                        );
+                                        info!("{}", message);
+                                        if let Err(error) = notif_store_for_self_improvement.add(
+                                            &message,
+                                            "info",
+                                            "self-improvement",
+                                        ) {
+                                            warn!(
+                                                "[Self-Improvement] Failed to persist optimizer notification: {}",
+                                                error
+                                            );
+                                        }
+                                        broadcast_event(
+                                            &relay_tx_for_self_improvement,
+                                            RelayEvent::UiNotification {
+                                                message,
+                                                level: "info".to_string(),
+                                                source: Some("self-improvement".to_string()),
+                                            },
+                                        );
+                                    }
+                                }
+                                Err(error) => {
+                                    runtime_status.last_result = "candidate_rejected".to_string();
+                                    runtime_status.last_optimizer = response.optimizer.clone();
+                                    runtime_status.last_error =
+                                        Some(format!("hard gate rejected candidate: {}", error));
+                                    runtime_status.last_reason = response.reason.clone();
+                                    if let Err(persist_error) = settings_for_self_improvement
+                                        .set_value(
+                                            "agent.self_improvement_runtime",
+                                            serde_json::to_value(&runtime_status)
+                                                .unwrap_or(serde_json::Value::Null),
+                                        )
+                                    {
+                                        warn!(
+                                            "[Self-Improvement] Failed to persist rejected optimizer runtime status: {}",
+                                            persist_error
+                                        );
+                                    }
+                                }
+                            },
+                            Err(error) => {
+                                let mut runtime_status =
+                                    settings_snapshot.agent.self_improvement_runtime.clone();
+                                runtime_status.last_run_at = Some(now_secs);
+                                runtime_status.last_result = "error".to_string();
+                                runtime_status.last_error = Some(error.clone());
+                                if let Err(persist_error) = settings_for_self_improvement.set_value(
+                                    "agent.self_improvement_runtime",
+                                    serde_json::to_value(&runtime_status)
+                                        .unwrap_or(serde_json::Value::Null),
+                                ) {
+                                    warn!(
+                                        "[Self-Improvement] Failed to persist optimizer error runtime status: {}",
+                                        persist_error
+                                    );
+                                }
+                                warn!(
+                                    "[Self-Improvement] Offline optimizer failed for preset gepa_sidecar: {}",
+                                    error
+                                );
+                            }
+                        }
+                    }
+                }
+
                 let mut candidate_dirs = Vec::new();
                 for group in &groups {
                     let Some(path) = group.get("path").and_then(|value| value.as_str()) else {
@@ -838,7 +1323,10 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                         continue;
                     };
                     let normalized_parent = normalize_loop_path(parent.to_string_lossy().as_ref());
-                    if !candidate_dirs.iter().any(|existing| existing == &normalized_parent) {
+                    if !candidate_dirs
+                        .iter()
+                        .any(|existing| existing == &normalized_parent)
+                    {
                         candidate_dirs.push(normalized_parent);
                     }
                     if candidate_dirs.len() >= 3 {
@@ -857,7 +1345,7 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                 }
 
                 let mut auto_summarized = Vec::new();
-                if self_improvement_preset != "review_only" {
+                if auto_summarize_enabled {
                     for group in &groups {
                         let Some(path) = group.get("path").and_then(|value| value.as_str()) else {
                             continue;
@@ -880,7 +1368,8 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                         let chunk_count = group
                             .get("chunk_count")
                             .and_then(|value| value.as_u64())
-                            .unwrap_or(ids.len() as u64) as usize;
+                            .unwrap_or(ids.len() as u64)
+                            as usize;
 
                         if ids.is_empty() || chunk_count < 2 {
                             continue;
@@ -919,7 +1408,8 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                         .as_ref()
                         .and_then(|value| value.get("group_count"))
                         .and_then(|value| value.as_u64())
-                        .unwrap_or(group_count as u64) as usize;
+                        .unwrap_or(group_count as u64)
+                        as usize;
                     last_reported_groups = remaining_groups;
                     last_review_signature = None;
 
@@ -941,11 +1431,9 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                         suffix
                     );
                     info!("{}", message);
-                    if let Err(e) = notif_store_for_self_improvement.add(
-                        &message,
-                        "info",
-                        "self-improvement",
-                    ) {
+                    if let Err(e) =
+                        notif_store_for_self_improvement.add(&message, "info", "self-improvement")
+                    {
                         warn!(
                             "[Self-Improvement] Failed to persist auto-apply notification: {}",
                             e
@@ -962,12 +1450,6 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                     continue;
                 }
 
-                let top_paths = groups
-                    .iter()
-                    .take(3)
-                    .filter_map(|group| group.get("path").and_then(|value| value.as_str()))
-                    .map(basename_for_runtime)
-                    .collect::<Vec<_>>();
                 let review_signature = format!("{}:{}", group_count, top_paths.join("|"));
                 if group_count == last_reported_groups
                     && last_review_signature.as_deref() == Some(review_signature.as_str())
@@ -988,15 +1470,10 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                 );
 
                 info!("{}", message);
-                if let Err(e) = notif_store_for_self_improvement.add(
-                    &message,
-                    "info",
-                    "self-improvement",
-                ) {
-                    warn!(
-                        "[Self-Improvement] Failed to persist notification: {}",
-                        e
-                    );
+                if let Err(e) =
+                    notif_store_for_self_improvement.add(&message, "info", "self-improvement")
+                {
+                    warn!("[Self-Improvement] Failed to persist notification: {}", e);
                 }
                 broadcast_event(
                     &relay_tx_for_self_improvement,

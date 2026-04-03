@@ -89,8 +89,7 @@ async fn request_next_directive_inner(
          Your output must be exactly one short next directive sentence in Korean, or exactly '모든 작업이 완료되었습니다'.\n\
          What is your next directive?",
         loop_context.goal,
-        progress
-        ,
+        progress,
         last_directive,
         loop_context.remaining_turns,
         loop_context.remaining_time_secs,

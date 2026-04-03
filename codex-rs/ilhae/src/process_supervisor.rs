@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use crate::helpers::{infer_agent_id_from_command, is_ilhae_native_agent_id};
 use crate::ports::AgentSpawner;
 use crate::settings_store::SettingsStore;
 
@@ -392,7 +393,8 @@ pub fn create_supervisor_with_spawner(
 
     let mut processes = HashMap::new();
     let is_team = settings.agent.team_mode;
-    let is_codex = settings.agent.command.contains("codex");
+    let primary_agent_id = infer_agent_id_from_command(&settings.agent.command);
+    let is_codex = primary_agent_id == "codex" || is_ilhae_native_agent_id(&primary_agent_id);
 
     // Solo Gemini
     let gemini_port = {
@@ -634,7 +636,8 @@ pub async fn switch_solo_engine(handle: &SupervisorHandle, new_engine: &str) {
     let mut sv = handle.write().await;
 
     // Determine which solo process maps to the new engine
-    let new_key = if new_engine.contains("codex") {
+    let new_agent_id = infer_agent_id_from_command(new_engine);
+    let new_key = if new_agent_id == "codex" || is_ilhae_native_agent_id(&new_agent_id) {
         "codex-solo"
     } else {
         "gemini-solo"

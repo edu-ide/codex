@@ -18,6 +18,8 @@ pub mod capabilities;
 pub mod context_proxy;
 pub mod engine_env;
 pub mod helpers;
+pub mod hygiene_loop;
+pub mod knowledge_loop;
 pub mod mcp_manager;
 pub mod memory_provider;
 
@@ -38,6 +40,7 @@ pub mod session_store;
 pub mod session_timeline;
 pub mod settings_store;
 pub mod settings_types;
+pub mod super_loop;
 pub mod superpowers_skills;
 pub mod team_parser;
 pub mod team_timeline;
@@ -86,10 +89,9 @@ pub mod a2a_persistence;
 // ── Native CLI entry point ──
 pub mod startup_main;
 pub use startup_main::{
-    BootstrappedIlhaeRuntime, bootstrap_ilhae_runtime,
-    current_native_backend_capability_profile, current_native_backend_engine,
-    native_runtime_context, prepare_native_turn_inputs, prepare_session_turn_inputs,
-    run_ilhae_proxy,
+    BootstrappedIlhaeRuntime, bootstrap_ilhae_runtime, current_native_backend_capability_profile,
+    current_native_backend_engine, ensure_native_runtime_for_cli, native_runtime_context,
+    prepare_native_turn_inputs, prepare_session_turn_inputs, run_ilhae_proxy,
 };
 
 // ═══════════════════════════════════════════════════════════════

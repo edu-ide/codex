@@ -376,6 +376,7 @@ use codex_file_search::FileMatch;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::AskForApproval;
@@ -7740,6 +7741,11 @@ impl ChatWidget {
             return;
         }
 
+        if let Some(presets) = self.ilhae_local_model_presets() {
+            self.open_model_popup_with_presets(presets);
+            return;
+        }
+
         let presets: Vec<ModelPreset> = match self.model_catalog.try_list_models() {
             Ok(models) => models,
             Err(_) => {
@@ -7751,6 +7757,40 @@ impl ChatWidget {
             }
         };
         self.open_model_popup_with_presets(presets);
+    }
+
+    fn ilhae_local_model_presets(&self) -> Option<Vec<ModelPreset>> {
+        let Some(_) = native_runtime_context() else {
+            return None;
+        };
+
+        let model = self.current_model().trim();
+        if model.is_empty() {
+            return None;
+        }
+
+        let effort = self
+            .current_reasoning_effort()
+            .unwrap_or(ReasoningEffortConfig::Medium);
+
+        Some(vec![ModelPreset {
+            id: model.to_string(),
+            model: model.to_string(),
+            display_name: model.to_string(),
+            description: "Local native ilhae runtime".to_string(),
+            default_reasoning_effort: effort,
+            supported_reasoning_efforts: vec![ReasoningEffortPreset {
+                effort,
+                description: "Default local runtime reasoning level".to_string(),
+            }],
+            supports_personality: false,
+            is_default: true,
+            upgrade: None,
+            show_in_picker: true,
+            availability_nux: None,
+            supported_in_api: true,
+            input_modalities: vec![InputModality::Text, InputModality::Image],
+        }])
     }
 
     pub(crate) fn open_personality_popup(&mut self) {

@@ -514,6 +514,7 @@ impl EventProcessorWithJsonOutput {
                         }
                         self.emit_final_message_on_shutdown = true;
                         events.push(ThreadEvent::TurnCompleted(TurnCompletedEvent {
+                            turn_id: notification.turn.id.clone(),
                             usage: self.usage_from_last_total(),
                         }));
                         CodexStatus::InitiateShutdown
@@ -574,8 +575,10 @@ impl EventProcessorWithJsonOutput {
                 }
                 CodexStatus::Running
             }
-            ServerNotification::TurnStarted(_) => {
-                events.push(ThreadEvent::TurnStarted(TurnStartedEvent {}));
+            ServerNotification::TurnStarted(notification) => {
+                events.push(ThreadEvent::TurnStarted(TurnStartedEvent {
+                    turn_id: notification.turn.id.clone(),
+                }));
                 CodexStatus::Running
             }
             _ => CodexStatus::Running,
@@ -674,6 +677,60 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&output_path).expect("read output file"),
             "keep existing contents"
+        );
+    }
+
+    #[test]
+    fn turn_events_include_turn_id() {
+        let mut processor = EventProcessorWithJsonOutput::new(None);
+
+        let started = processor.collect_thread_events(ServerNotification::TurnStarted(
+            codex_app_server_protocol::TurnStartedNotification {
+                thread_id: "thread-1".to_string(),
+                turn: codex_app_server_protocol::Turn {
+                    id: "turn-42".to_string(),
+                    items: Vec::new(),
+                    status: TurnStatus::InProgress,
+                    error: None,
+                },
+            },
+        ));
+
+        assert_eq!(
+            started,
+            CollectedThreadEvents {
+                events: vec![ThreadEvent::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-42".to_string(),
+                })],
+                status: CodexStatus::Running,
+            }
+        );
+
+        let completed = processor.collect_thread_events(ServerNotification::TurnCompleted(
+            codex_app_server_protocol::TurnCompletedNotification {
+                thread_id: "thread-1".to_string(),
+                turn: codex_app_server_protocol::Turn {
+                    id: "turn-42".to_string(),
+                    items: vec![ThreadItem::AgentMessage {
+                        id: "msg-1".to_string(),
+                        text: "done".to_string(),
+                        phase: None,
+                        memory_citation: None,
+                    }],
+                    status: TurnStatus::Completed,
+                    error: None,
+                },
+            },
+        ));
+        assert_eq!(
+            completed,
+            CollectedThreadEvents {
+                events: vec![ThreadEvent::TurnCompleted(TurnCompletedEvent {
+                    turn_id: "turn-42".to_string(),
+                    usage: Usage::default(),
+                })],
+                status: CodexStatus::InitiateShutdown,
+            }
         );
     }
 }

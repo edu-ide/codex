@@ -329,7 +329,8 @@ impl ConnectTo<Conductor> for ContextProxy {
                         responder.respond(IlhaeAppTurnStartResponse {
                             session_id,
                             stop_reason,
-                            meta: serde_json::to_value(response.meta).unwrap_or(serde_json::Value::Null),
+                            meta: serde_json::to_value(response.meta)
+                                .unwrap_or(serde_json::Value::Null),
                         })
                     }
                 },

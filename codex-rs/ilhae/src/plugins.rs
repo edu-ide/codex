@@ -59,6 +59,26 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDef] = &[
         ],
     },
     BuiltinPluginDef {
+        id: "knowledge",
+        emoji: "📚",
+        label: "지식베이스",
+        description: "사용자 워크스페이스의 raw/wiki/output/index를 컴파일하고 질의하는 도구",
+        tools: &[
+            ("kb_workspace_list", "지식베이스 워크스페이스 목록 조회"),
+            ("kb_ingest", "raw/를 스캔해 inventory를 갱신"),
+            ("kb_compile", "raw/를 wiki/index markdown으로 컴파일"),
+            ("kb_lint", "broken links, missing summaries, stale raw 검사"),
+            (
+                "kb_query",
+                "wiki/index를 기준으로 질의하고 markdown report 생성",
+            ),
+            (
+                "kb_file_back",
+                "wiki/output/index 아래로 markdown 결과를 기록",
+            ),
+        ],
+    },
+    BuiltinPluginDef {
         id: "skills",
         emoji: "🧩",
         label: "스킬",

@@ -186,15 +186,25 @@ pub async fn load_config_layers_state(
     // exists, but is malformed, then this error should be propagated to the
     // user.
     let user_file = AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home)?;
-    let user_layer = load_config_toml_for_required_layer(&user_file, |config_toml| {
+    let ilhae_runtime = std::env::var("ILHAE_RUNTIME").ok().as_deref() == Some("1");
+    let user_layer = if ilhae_runtime {
         ConfigLayerEntry::new(
             ConfigLayerSource::User {
                 file: user_file.clone(),
             },
-            config_toml,
+            TomlValue::Table(toml::map::Map::new()),
         )
-    })
-    .await?;
+    } else {
+        load_config_toml_for_required_layer(&user_file, |config_toml| {
+            ConfigLayerEntry::new(
+                ConfigLayerSource::User {
+                    file: user_file.clone(),
+                },
+                config_toml,
+            )
+        })
+        .await?
+    };
     layers.push(user_layer);
 
     if let Some(cwd) = cwd {

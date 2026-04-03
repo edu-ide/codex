@@ -9,15 +9,16 @@ use sacp::{Agent, Client, Conductor, ConnectTo, ConnectionTo, Proxy, Responder};
 use tracing::{info, warn};
 
 use crate::{
-    DeleteSessionRequest, DeleteSessionResponse, ListSessionsRequest, ListSessionsResponse,
-    IlhaeAppSessionCreateRequest, IlhaeAppSessionCreateResponse,
-    IlhaeAppSessionDeleteRequest, IlhaeAppSessionDeleteResponse, IlhaeAppSessionGetRequest,
-    IlhaeAppSessionGetResponse, IlhaeAppSessionListRequest, IlhaeAppSessionListResponse,
-    IlhaeAppSessionSearchRequest, IlhaeAppSessionSearchResponse, IlhaeAppSessionUpdateRequest,
-    IlhaeAppSessionUpdateResponse, IlhaeAppTimelineReadRequest, IlhaeAppTimelineReadResponse, SessionInfoDto,
+    DeleteSessionRequest, DeleteSessionResponse, IlhaeAppSessionCreateRequest,
+    IlhaeAppSessionCreateResponse, IlhaeAppSessionDeleteRequest, IlhaeAppSessionDeleteResponse,
+    IlhaeAppSessionGetRequest, IlhaeAppSessionGetResponse, IlhaeAppSessionListRequest,
+    IlhaeAppSessionListResponse, IlhaeAppSessionSearchRequest, IlhaeAppSessionSearchResponse,
+    IlhaeAppSessionUpdateRequest, IlhaeAppSessionUpdateResponse, IlhaeAppTimelineReadRequest,
+    IlhaeAppTimelineReadResponse, ListSessionsRequest, ListSessionsResponse,
     LoadSessionMessagesRequest, LoadSessionMessagesResponse, LoadTeamTimelineRequest,
-    LoadTeamTimelineResponse, SearchSessionsRequest, SearchSessionsResponse, UpdateSessionTitleRequest, UpdateSessionTitleResponse,
-    enrich_response_with_config_options, infer_agent_id_from_command,
+    LoadTeamTimelineResponse, SearchSessionsRequest, SearchSessionsResponse, SessionInfoDto,
+    UpdateSessionTitleRequest, UpdateSessionTitleResponse, enrich_response_with_config_options,
+    infer_agent_id_from_command,
 };
 use agent_client_protocol_schema::{
     LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse,

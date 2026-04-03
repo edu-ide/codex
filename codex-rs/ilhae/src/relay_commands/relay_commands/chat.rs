@@ -378,7 +378,10 @@ async fn standalone_chat_via_a2a(
             ep.to_string()
         } else {
             // In team mode, route to the leader agent instead of solo
-            let team_leader_port = if settings.agent.team_mode {
+            let team_backend = crate::config::normalize_team_backend(&settings.agent.team_backend);
+            let use_remote_team = settings.agent.team_mode
+                && crate::config::team_backend_uses_remote_transport(&team_backend);
+            let team_leader_port = if use_remote_team {
                 let sv = ctx.team.supervisor.read().await;
                 sv.processes
                     .iter()
@@ -391,12 +394,9 @@ async fn standalone_chat_via_a2a(
             if let Some(leader_port) = team_leader_port {
                 format!("http://127.0.0.1:{}", leader_port)
             } else {
-                let port = if settings.agent.command.contains("codex") {
-                    crate::port_config::codex_a2a_port()
-                } else {
-                    crate::port_config::gemini_a2a_port()
-                };
-                format!("http://127.0.0.1:{}", port)
+                let agent_id = infer_agent_id_from_command(&settings.agent.command);
+                let resolved_engine = crate::engine_env::resolve_engine_env(&agent_id);
+                format!("http://127.0.0.1:{}", resolved_engine.default_port())
             }
         }
     };

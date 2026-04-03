@@ -2,6 +2,8 @@ pub mod runner;
 pub mod state;
 pub mod user_agent;
 
+use agent_client_protocol_schema::StopReason;
+
 pub const AUTONOMOUS_MAX_TURNS: u32 = 10;
 pub const USER_AGENT_ENDPOINT: &str = "http://localhost:4325";
 
@@ -24,4 +26,37 @@ pub const RALPH_LOOP_TEMPLATE: &str = r#"[RALPH LOOP - 자율 실행 모드]
 
 pub fn build_ralph_loop_prompt(progress: &str) -> String {
     RALPH_LOOP_TEMPLATE.replace("{progress}", progress)
+}
+
+pub fn should_continue_autonomous_on_stop_reason(stop_reason: StopReason) -> bool {
+    matches!(stop_reason, StopReason::EndTurn | StopReason::MaxTokens)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_continue_autonomous_on_stop_reason;
+    use agent_client_protocol_schema::StopReason;
+
+    #[test]
+    fn autonomous_loop_continues_on_end_turn_and_max_tokens() {
+        assert!(should_continue_autonomous_on_stop_reason(
+            StopReason::EndTurn
+        ));
+        assert!(should_continue_autonomous_on_stop_reason(
+            StopReason::MaxTokens
+        ));
+    }
+
+    #[test]
+    fn autonomous_loop_stops_on_other_terminal_reasons() {
+        assert!(!should_continue_autonomous_on_stop_reason(
+            StopReason::Cancelled
+        ));
+        assert!(!should_continue_autonomous_on_stop_reason(
+            StopReason::MaxTurnRequests
+        ));
+        assert!(!should_continue_autonomous_on_stop_reason(
+            StopReason::Refusal
+        ));
+    }
 }

@@ -903,11 +903,17 @@ impl AgentExecutor for ForwardingExecutor {
                                                             0, // duration tracked on delegation_complete
                                                         );
                                                         let turn_id = if tool_call_id.is_empty() {
-                                                            format!("delegation-response-{}", event_count)
+                                                            format!(
+                                                                "delegation-response-{}",
+                                                                event_count
+                                                            )
                                                         } else {
-                                                        format!("delegation-response-{}", tool_call_id)
-                                                    };
-                                                    self.notify_ui(
+                                                            format!(
+                                                                "delegation-response-{}",
+                                                                tool_call_id
+                                                            )
+                                                        };
+                                                        self.notify_ui(
                                                         crate::types::NOTIF_APP_SESSION_EVENT,
                                                         json!({
                                                             "engine": target,
@@ -921,7 +927,7 @@ impl AgentExecutor for ForwardingExecutor {
                                                             }
                                                         }),
                                                     ).await;
-                                                    self.notify_ui(
+                                                        self.notify_ui(
                                                         crate::types::NOTIF_APP_SESSION_EVENT,
                                                         json!({
                                                             "engine": target,

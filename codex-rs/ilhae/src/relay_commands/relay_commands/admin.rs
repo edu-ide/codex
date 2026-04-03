@@ -77,7 +77,11 @@ pub async fn handle_team_save(
     ) {
         Ok(_) => {
             // Hot-apply if team_mode enabled
-            if ctx.infra.settings_store.get().agent.team_mode {
+            let settings = ctx.infra.settings_store.get();
+            let team_backend = crate::config::normalize_team_backend(&settings.agent.team_backend);
+            let use_remote_team = settings.agent.team_mode
+                && crate::config::team_backend_uses_remote_transport(&team_backend);
+            if use_remote_team {
                 let dir = ilhae_dir.clone();
                 let sv = ctx.team.supervisor.clone();
                 tokio::spawn(async move {

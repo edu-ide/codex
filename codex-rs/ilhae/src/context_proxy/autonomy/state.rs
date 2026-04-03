@@ -103,12 +103,7 @@ pub async fn set_autonomous_phase(
         snapshot.stalled_turns = previous.stalled_turns;
         snapshot.stop_reason = previous.stop_reason.clone();
     }
-    set_autonomous_snapshot(
-        state,
-        session_id,
-        snapshot,
-    )
-    .await;
+    set_autonomous_snapshot(state, session_id, snapshot).await;
 }
 
 pub async fn current_autonomous_iteration(state: &Arc<SharedState>, session_id: &str) -> u32 {

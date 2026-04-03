@@ -90,10 +90,15 @@ use event_processor_with_human_output::EventProcessorWithHumanOutput;
 use event_processor_with_jsonl_output::EventProcessorWithJsonOutput;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::IsTerminal;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
+use std::time::Instant;
 use supports_color::Stream;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -111,6 +116,28 @@ use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
 
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
+const AUTONOMOUS_IDLE_GRACE_SECS: u64 = 15;
+const DEFAULT_EXEC_AUTO_MAX_TURNS: u32 = 8;
+const DEFAULT_EXEC_AUTO_TIMEBOX_MINUTES: u32 = 20;
+const EXEC_AUTONOMY_STALLED_TURN_LIMIT: u32 = 2;
+
+#[derive(Debug, Clone, Copy)]
+struct ExecAutonomySettings {
+    max_turns: u32,
+    timebox: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExecAutonomyDecision {
+    Stop {
+        reason: &'static str,
+    },
+    Continue {
+        progress_signature: u64,
+        stalled_turns: u32,
+        followup_prompt: String,
+    },
+}
 
 enum InitialOperation {
     UserTurn {
@@ -671,6 +698,16 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         }
     });
 
+    let user_turn_requested = matches!(&initial_operation, InitialOperation::UserTurn { .. });
+    let follow_autonomous_thread =
+        user_turn_requested && follow_autonomous_thread_from_config(&config);
+    let autonomous_root_prompt = follow_autonomous_thread.then(|| prompt_summary.clone());
+    let autonomous_settings = follow_autonomous_thread.then(|| {
+        exec_autonomy_settings_from_config(&config)
+            .expect("autonomous settings should exist when autonomous follow is enabled")
+    });
+    let autonomous_started_at = autonomous_settings.map(|_| Instant::now());
+
     let task_id = match initial_operation {
         InitialOperation::UserTurn {
             items,
@@ -683,7 +720,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                     params: TurnStartParams {
                         thread_id: primary_thread_id_for_span.clone(),
                         input: items.into_iter().map(Into::into).collect(),
-                        cwd: Some(default_cwd),
+                        cwd: Some(default_cwd.clone()),
                         approval_policy: Some(default_approval_policy.into()),
                         approvals_reviewer: None,
                         sandbox_policy: Some(default_sandbox_policy.clone().into()),
@@ -738,31 +775,91 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     let mut error_seen = false;
     let mut interrupt_channel_open = true;
     let primary_thread_id_for_requests = primary_thread_id.to_string();
+    let mut current_turn_id = task_id.clone();
+    let mut awaiting_autonomous_quiescence = false;
+    let mut last_completed_turn_id: Option<String> = None;
+    let mut autonomous_turns_started = u32::from(autonomous_settings.is_some());
+    let mut last_progress_signature: Option<u64> = None;
+    let mut stalled_autonomous_turns = 0u32;
     loop {
-        let server_event = tokio::select! {
-            maybe_interrupt = interrupt_rx.recv(), if interrupt_channel_open => {
-                if maybe_interrupt.is_none() {
-                    interrupt_channel_open = false;
+        let server_event = if follow_autonomous_thread && awaiting_autonomous_quiescence {
+            tokio::select! {
+                maybe_interrupt = interrupt_rx.recv(), if interrupt_channel_open => {
+                    if maybe_interrupt.is_none() {
+                        interrupt_channel_open = false;
+                        continue;
+                    }
+                    if let Err(err) = send_request_with_response::<TurnInterruptResponse>(
+                        &client,
+                        ClientRequest::TurnInterrupt {
+                            request_id: request_ids.next(),
+                            params: TurnInterruptParams {
+                                thread_id: primary_thread_id_for_requests.clone(),
+                                turn_id: current_turn_id.clone(),
+                            },
+                        },
+                        "turn/interrupt",
+                    )
+                    .await
+                    {
+                        warn!("turn/interrupt failed: {err}");
+                    }
                     continue;
                 }
-                if let Err(err) = send_request_with_response::<TurnInterruptResponse>(
-                    &client,
-                    ClientRequest::TurnInterrupt {
-                        request_id: request_ids.next(),
-                        params: TurnInterruptParams {
-                            thread_id: primary_thread_id_for_requests.clone(),
-                            turn_id: task_id.clone(),
-                        },
-                    },
-                    "turn/interrupt",
-                )
-                .await
-                {
-                    warn!("turn/interrupt failed: {err}");
+                maybe_event = tokio::time::timeout(
+                    std::time::Duration::from_secs(AUTONOMOUS_IDLE_GRACE_SECS),
+                    client.next_event(),
+                ) => {
+                    match maybe_event {
+                        Ok(event) => event,
+                        Err(_) => {
+                            if let Err(err) = maybe_process_latest_thread_turn_completion(
+                                &client,
+                                &mut request_ids,
+                                &primary_thread_id_for_requests,
+                                last_completed_turn_id.as_deref(),
+                                event_processor.as_mut(),
+                            ).await {
+                                warn!("thread/read refresh failed during autonomous shutdown: {err}");
+                            }
+                            if let Err(err) = request_shutdown(
+                                &client,
+                                &mut request_ids,
+                                &primary_thread_id_for_requests,
+                            ).await {
+                                warn!("thread/unsubscribe failed during autonomous shutdown: {err}");
+                            }
+                            break;
+                        }
+                    }
                 }
-                continue;
             }
-            maybe_event = client.next_event() => maybe_event,
+        } else {
+            tokio::select! {
+                maybe_interrupt = interrupt_rx.recv(), if interrupt_channel_open => {
+                    if maybe_interrupt.is_none() {
+                        interrupt_channel_open = false;
+                        continue;
+                    }
+                    if let Err(err) = send_request_with_response::<TurnInterruptResponse>(
+                        &client,
+                        ClientRequest::TurnInterrupt {
+                            request_id: request_ids.next(),
+                            params: TurnInterruptParams {
+                                thread_id: primary_thread_id_for_requests.clone(),
+                                turn_id: current_turn_id.clone(),
+                            },
+                        },
+                        "turn/interrupt",
+                    )
+                    .await
+                    {
+                        warn!("turn/interrupt failed: {err}");
+                    }
+                    continue;
+                }
+                maybe_event = client.next_event() => maybe_event,
+            }
         };
 
         let Some(server_event) = server_event else {
@@ -774,36 +871,118 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 handle_server_request(&client, request, &mut error_seen).await;
             }
             InProcessServerEvent::ServerNotification(mut notification) => {
+                if let ServerNotification::TurnStarted(payload) = &notification
+                    && payload.thread_id == primary_thread_id_for_requests
+                {
+                    current_turn_id = payload.turn.id.clone();
+                    awaiting_autonomous_quiescence = false;
+                }
+
                 if let ServerNotification::Error(payload) = &notification {
                     if payload.thread_id == primary_thread_id_for_requests
-                        && payload.turn_id == task_id
+                        && payload.turn_id == current_turn_id
                         && !payload.will_retry
                     {
                         error_seen = true;
                     }
                 } else if let ServerNotification::TurnCompleted(payload) = &notification
                     && payload.thread_id == primary_thread_id_for_requests
-                    && payload.turn.id == task_id
-                    && matches!(
+                {
+                    current_turn_id = payload.turn.id.clone();
+                    last_completed_turn_id = Some(payload.turn.id.clone());
+                    if follow_autonomous_thread {
+                        awaiting_autonomous_quiescence = true;
+                    }
+                    if matches!(
                         payload.turn.status,
                         codex_app_server_protocol::TurnStatus::Failed
                             | codex_app_server_protocol::TurnStatus::Interrupted
-                    )
-                {
-                    error_seen = true;
+                    ) {
+                        error_seen = true;
+                    }
                 }
 
                 maybe_backfill_turn_completed_items(&client, &mut request_ids, &mut notification)
                     .await;
 
+                let autonomous_decision =
+                    match (&notification, autonomous_settings, autonomous_started_at) {
+                        (
+                            ServerNotification::TurnCompleted(payload),
+                            Some(settings),
+                            Some(started_at),
+                        ) if payload.thread_id == primary_thread_id_for_requests
+                            && payload.turn.status
+                                == codex_app_server_protocol::TurnStatus::Completed =>
+                        {
+                            Some(decide_exec_autonomy_followup(
+                                settings,
+                                started_at.elapsed(),
+                                autonomous_turns_started,
+                                last_progress_signature,
+                                stalled_autonomous_turns,
+                                autonomous_root_prompt.as_deref().unwrap_or_default(),
+                                payload.turn.items.as_slice(),
+                            ))
+                        }
+                        _ => None,
+                    };
+
                 if should_process_notification(
                     &notification,
                     &primary_thread_id_for_requests,
-                    &task_id,
+                    &current_turn_id,
+                    follow_autonomous_thread,
                 ) {
                     match event_processor.process_server_notification(notification) {
                         CodexStatus::Running => {}
                         CodexStatus::InitiateShutdown => {
+                            if let Some(decision) = autonomous_decision {
+                                match decision {
+                                    ExecAutonomyDecision::Continue {
+                                        progress_signature,
+                                        stalled_turns,
+                                        followup_prompt,
+                                    } => {
+                                        match start_exec_autonomous_followup_turn(
+                                            &client,
+                                            &mut request_ids,
+                                            &primary_thread_id_for_requests,
+                                            &default_cwd,
+                                            default_approval_policy,
+                                            &default_sandbox_policy,
+                                            default_effort,
+                                            followup_prompt,
+                                        )
+                                        .await
+                                        {
+                                            Ok(next_turn_id) => {
+                                                current_turn_id = next_turn_id;
+                                                autonomous_turns_started =
+                                                    autonomous_turns_started.saturating_add(1);
+                                                last_progress_signature = Some(progress_signature);
+                                                stalled_autonomous_turns = stalled_turns;
+                                                awaiting_autonomous_quiescence = false;
+                                                continue;
+                                            }
+                                            Err(err) => {
+                                                warn!(
+                                                    "turn/start failed for autonomous exec continuation: {err}"
+                                                );
+                                                error_seen = true;
+                                            }
+                                        }
+                                    }
+                                    ExecAutonomyDecision::Stop { reason } => {
+                                        info!(
+                                            reason,
+                                            autonomous_turns_started,
+                                            stalled_autonomous_turns,
+                                            "headless exec autonomous loop stopping"
+                                        );
+                                    }
+                                }
+                            }
                             if let Err(err) = request_shutdown(
                                 &client,
                                 &mut request_ids,
@@ -1001,11 +1180,312 @@ fn lagged_event_warning_message(skipped: usize) -> String {
     format!("in-process app-server event stream lagged; dropped {skipped} events")
 }
 
+fn resolve_ilhae_config_dir() -> Option<PathBuf> {
+    if !std::env::var("ILHAE_RUNTIME")
+        .ok()
+        .is_some_and(|value| value.trim() == "1")
+    {
+        return None;
+    }
+
+    if let Ok(from_env) = std::env::var("ILHAE_CONFIG_DIR") {
+        let trimmed = from_env.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+
+    std::env::var("HOME")
+        .ok()
+        .map(|home| PathBuf::from(home).join(".ilhae"))
+}
+
+fn profile_auto_mode_from_config_path(config_path: &Path, active_profile: &str) -> Option<bool> {
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let parsed: toml::Value = toml::from_str(&content).ok()?;
+
+    parsed
+        .get("profiles")
+        .and_then(toml::Value::as_table)
+        .and_then(|profiles| profiles.get(active_profile))
+        .and_then(toml::Value::as_table)
+        .and_then(|profile| profile.get("agent"))
+        .and_then(toml::Value::as_table)
+        .and_then(|agent| agent.get("auto_mode"))
+        .and_then(toml::Value::as_bool)
+}
+
+fn codex_active_profile_from_config_path(config_path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let parsed: toml::Value = toml::from_str(&content).ok()?;
+
+    parsed
+        .get("profile")
+        .and_then(toml::Value::as_str)
+        .map(str::to_string)
+}
+
+fn ilhae_active_profile_from_config_path(config_path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let parsed: toml::Value = toml::from_str(&content).ok()?;
+
+    parsed
+        .get("profile")
+        .and_then(toml::Value::as_table)
+        .and_then(|profile| profile.get("active"))
+        .and_then(toml::Value::as_str)
+        .map(str::to_string)
+}
+
+fn codex_profile_auto_mode_from_config(config: &Config, active_profile: &str) -> Option<bool> {
+    profile_auto_mode_from_config_path(
+        &config.codex_home.join(codex_core::config::CONFIG_TOML_FILE),
+        active_profile,
+    )
+}
+
+fn codex_active_profile_from_config(config: &Config) -> Option<String> {
+    codex_active_profile_from_config_path(
+        &config.codex_home.join(codex_core::config::CONFIG_TOML_FILE),
+    )
+}
+
+fn ilhae_active_profile_from_native_config() -> Option<String> {
+    let config_dir = resolve_ilhae_config_dir()?;
+    let config_path = config_dir.join(codex_core::config::CONFIG_TOML_FILE);
+    ilhae_active_profile_from_config_path(&config_path)
+}
+
+fn ilhae_profile_auto_mode_from_native_config(active_profile: &str) -> Option<bool> {
+    let config_dir = resolve_ilhae_config_dir()?;
+    let config_path = config_dir.join(codex_core::config::CONFIG_TOML_FILE);
+    profile_auto_mode_from_config_path(&config_path, active_profile)
+}
+
+fn active_profile_from_merged_config(merged: &toml::Value) -> Option<String> {
+    merged
+        .get("profile")
+        .and_then(toml::Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            merged
+                .get("profile")
+                .and_then(toml::Value::as_table)
+                .and_then(|profile| profile.get("active"))
+                .and_then(toml::Value::as_str)
+                .map(str::to_string)
+        })
+}
+
+fn follow_autonomous_thread_from_config(config: &Config) -> bool {
+    let merged = config.config_layer_stack.effective_config();
+
+    if let Some(enabled) = merged
+        .get("agent")
+        .and_then(toml::Value::as_table)
+        .and_then(|agent| agent.get("autonomous_mode"))
+        .and_then(toml::Value::as_bool)
+    {
+        return enabled;
+    }
+
+    let active_profile = config
+        .active_profile
+        .clone()
+        .or_else(|| active_profile_from_merged_config(&merged))
+        .or_else(|| codex_active_profile_from_config(config))
+        .or_else(ilhae_active_profile_from_native_config);
+
+    let Some(active_profile) = active_profile.as_deref() else {
+        return false;
+    };
+
+    merged
+        .get("profiles")
+        .and_then(toml::Value::as_table)
+        .and_then(|profiles| profiles.get(active_profile))
+        .and_then(toml::Value::as_table)
+        .and_then(|profile| profile.get("agent"))
+        .and_then(toml::Value::as_table)
+        .and_then(|agent| agent.get("auto_mode"))
+        .and_then(toml::Value::as_bool)
+        .or_else(|| codex_profile_auto_mode_from_config(config, active_profile))
+        .or_else(|| ilhae_profile_auto_mode_from_native_config(active_profile))
+        .unwrap_or(false)
+}
+
+fn exec_autonomy_settings_from_config(config: &Config) -> Option<ExecAutonomySettings> {
+    if !follow_autonomous_thread_from_config(config) {
+        return None;
+    }
+
+    let merged = config.config_layer_stack.effective_config();
+    let agent = merged.get("agent").and_then(toml::Value::as_table);
+    let max_turns = agent
+        .and_then(|agent| agent.get("auto_max_turns"))
+        .and_then(toml::Value::as_integer)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(DEFAULT_EXEC_AUTO_MAX_TURNS)
+        .max(1);
+    let timebox_minutes = agent
+        .and_then(|agent| agent.get("auto_timebox_minutes"))
+        .and_then(toml::Value::as_integer)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(DEFAULT_EXEC_AUTO_TIMEBOX_MINUTES)
+        .max(1);
+
+    Some(ExecAutonomySettings {
+        max_turns,
+        timebox: Duration::from_secs(u64::from(timebox_minutes) * 60),
+    })
+}
+
+fn latest_turn_progress_text(items: &[AppServerThreadItem]) -> Option<String> {
+    items.iter().rev().find_map(|item| match item {
+        AppServerThreadItem::AgentMessage { text, .. } => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        AppServerThreadItem::Plan { text, .. } => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        _ => None,
+    })
+}
+
+fn exec_autonomy_progress_signature(text: &str) -> u64 {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut hasher = DefaultHasher::new();
+    normalized.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn exec_autonomy_should_stop(progress: &str) -> bool {
+    let trimmed = progress.trim();
+    !trimmed.is_empty()
+        && (trimmed == "모든 작업이 완료되었습니다"
+            || trimmed.contains("모든 작업이 완료되었습니다")
+            || trimmed.contains("작업이 완료되었습니다"))
+}
+
+fn extract_pseudo_exec_command(progress: &str) -> Option<String> {
+    let parsed: Value = serde_json::from_str(progress).ok()?;
+    let tool = parsed.get("tool")?.as_str()?;
+    if tool != "functions.exec_command" {
+        return None;
+    }
+
+    parsed
+        .get("arguments")
+        .and_then(|arguments| arguments.get("cmd"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn build_exec_autonomy_followup_prompt_with_root(progress: &str, root_prompt: &str) -> String {
+    let original_task_block = if root_prompt.trim().is_empty() {
+        String::new()
+    } else {
+        format!("원래 사용자 작업:\n{root_prompt}\n\n")
+    };
+
+    if let Some(command) = extract_pseudo_exec_command(progress) {
+        return format!(
+            "[HEADLESS AUTO LOOP]\n\n{original_task_block}직전 턴이 실제 실행 대신 exec_command tool 호출 JSON만 출력했습니다.\n이번 턴에서는 아래 명령을 exec_command로 실제 실행하세요.\n- command: {command}\n- 먼저 이 명령만 실제로 실행하고, 실행 결과를 짧게 보고한 뒤 종료하세요.\n- 원래 사용자 작업의 나머지 단계와 완료 조건을 계속 만족해야 합니다.\n- 아직 실행하지 않은 다음 단계로 넘어가지 마세요.\n- 남은 작업이 없을 때만 정확히 '모든 작업이 완료되었습니다'라고만 답하세요."
+        );
+    }
+
+    format!(
+        "[HEADLESS AUTO LOOP]\n\n{original_task_block}최근 결과:\n{progress}\n\n다음 미완료 작업을 같은 thread에서 계속 수행하세요.\n- 실제 tool을 호출해 작업을 수행하세요. tool 호출을 텍스트로 흉내만 내지 마세요.\n- 직전 턴이 tool 호출 설명만 하고 끝났다면, 이번 턴에서는 그 tool을 실제로 실행하세요.\n- 원래 사용자 작업의 완료 조건을 끝까지 유지하세요.\n- 이미 끝난 단계는 반복하지 마세요.\n- 남은 작업이 없다면 정확히 '모든 작업이 완료되었습니다'라고만 답하세요."
+    )
+}
+
+fn decide_exec_autonomy_followup(
+    settings: ExecAutonomySettings,
+    elapsed: Duration,
+    turns_started: u32,
+    last_progress_signature: Option<u64>,
+    stalled_turns: u32,
+    root_prompt: &str,
+    items: &[AppServerThreadItem],
+) -> ExecAutonomyDecision {
+    if turns_started >= settings.max_turns {
+        return ExecAutonomyDecision::Stop {
+            reason: "max_turns",
+        };
+    }
+
+    if elapsed >= settings.timebox {
+        return ExecAutonomyDecision::Stop { reason: "timebox" };
+    }
+
+    let progress = latest_turn_progress_text(items)
+        .unwrap_or_else(|| "직전 턴에서 명시적 진행 요약이 없었습니다.".to_string());
+    if exec_autonomy_should_stop(&progress) {
+        return ExecAutonomyDecision::Stop {
+            reason: "completed",
+        };
+    }
+
+    let progress_signature = exec_autonomy_progress_signature(&progress);
+    let stalled_turns = if last_progress_signature == Some(progress_signature) {
+        stalled_turns.saturating_add(1)
+    } else {
+        0
+    };
+    if stalled_turns >= EXEC_AUTONOMY_STALLED_TURN_LIMIT {
+        return ExecAutonomyDecision::Stop { reason: "stalled" };
+    }
+
+    ExecAutonomyDecision::Continue {
+        progress_signature,
+        stalled_turns,
+        followup_prompt: build_exec_autonomy_followup_prompt_with_root(&progress, root_prompt),
+    }
+}
+
 fn should_process_notification(
     notification: &ServerNotification,
     thread_id: &str,
     turn_id: &str,
+    follow_thread_turns: bool,
 ) -> bool {
+    if follow_thread_turns {
+        return match notification {
+            ServerNotification::ConfigWarning(_) | ServerNotification::DeprecationNotice(_) => true,
+            ServerNotification::Error(notification) => notification.thread_id == thread_id,
+            ServerNotification::HookCompleted(notification) => notification.thread_id == thread_id,
+            ServerNotification::HookStarted(notification) => notification.thread_id == thread_id,
+            ServerNotification::ItemCompleted(notification) => notification.thread_id == thread_id,
+            ServerNotification::ItemStarted(notification) => notification.thread_id == thread_id,
+            ServerNotification::ModelRerouted(notification) => notification.thread_id == thread_id,
+            ServerNotification::ThreadStatusChanged(notification) => {
+                notification.thread_id == thread_id
+            }
+            ServerNotification::ThreadTokenUsageUpdated(notification) => {
+                notification.thread_id == thread_id
+            }
+            ServerNotification::TurnCompleted(notification) => notification.thread_id == thread_id,
+            ServerNotification::TurnDiffUpdated(notification) => {
+                notification.thread_id == thread_id
+            }
+            ServerNotification::TurnPlanUpdated(notification) => {
+                notification.thread_id == thread_id
+            }
+            ServerNotification::TurnStarted(notification) => notification.thread_id == thread_id,
+            _ => false,
+        };
+    }
+
     match notification {
         ServerNotification::ConfigWarning(_) | ServerNotification::DeprecationNotice(_) => true,
         ServerNotification::Error(notification) => {
@@ -1053,6 +1533,90 @@ fn should_process_notification(
     }
 }
 
+async fn maybe_process_latest_thread_turn_completion(
+    client: &InProcessAppServerClient,
+    request_ids: &mut RequestIdSequencer,
+    thread_id: &str,
+    last_completed_turn_id: Option<&str>,
+    event_processor: &mut dyn EventProcessor,
+) -> Result<(), String> {
+    let response = send_request_with_response::<ThreadReadResponse>(
+        client,
+        ClientRequest::ThreadRead {
+            request_id: request_ids.next(),
+            params: ThreadReadParams {
+                thread_id: thread_id.to_string(),
+                include_turns: true,
+            },
+        },
+        "thread/read",
+    )
+    .await?;
+
+    let Some(latest_turn) = response.thread.turns.last().cloned() else {
+        return Ok(());
+    };
+
+    if last_completed_turn_id == Some(latest_turn.id.as_str()) {
+        return Ok(());
+    }
+
+    let _ = event_processor.process_server_notification(ServerNotification::TurnCompleted(
+        codex_app_server_protocol::TurnCompletedNotification {
+            thread_id: thread_id.to_string(),
+            turn: latest_turn,
+        },
+    ));
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "turn/start requires explicit request parameters"
+)]
+async fn start_exec_autonomous_followup_turn(
+    client: &InProcessAppServerClient,
+    request_ids: &mut RequestIdSequencer,
+    thread_id: &str,
+    cwd: &Path,
+    approval_policy: AskForApproval,
+    sandbox_policy: &SandboxPolicy,
+    effort: Option<codex_protocol::openai_models::ReasoningEffort>,
+    followup_prompt: String,
+) -> Result<String, String> {
+    let response: TurnStartResponse = send_request_with_response(
+        client,
+        ClientRequest::TurnStart {
+            request_id: request_ids.next(),
+            params: TurnStartParams {
+                thread_id: thread_id.to_string(),
+                input: vec![
+                    UserInput::Text {
+                        text: followup_prompt,
+                        text_elements: Vec::new(),
+                    }
+                    .into(),
+                ],
+                cwd: Some(cwd.to_path_buf()),
+                approval_policy: Some(approval_policy.into()),
+                approvals_reviewer: None,
+                sandbox_policy: Some(sandbox_policy.clone().into()),
+                model: None,
+                service_tier: None,
+                effort,
+                summary: None,
+                personality: None,
+                output_schema: None,
+                collaboration_mode: None,
+            },
+        },
+        "turn/start",
+    )
+    .await?;
+
+    Ok(response.turn.id)
+}
+
 async fn maybe_backfill_turn_completed_items(
     client: &InProcessAppServerClient,
     request_ids: &mut RequestIdSequencer,
@@ -1065,7 +1629,7 @@ async fn maybe_backfill_turn_completed_items(
     let ServerNotification::TurnCompleted(payload) = notification else {
         return;
     };
-    if !payload.turn.items.is_empty() {
+    if !turn_items_need_backfill(payload.turn.items.as_slice()) {
         return;
     }
 
@@ -1092,6 +1656,40 @@ async fn maybe_backfill_turn_completed_items(
             warn!("thread/read failed while backfilling turn items for turn completion: {err}");
         }
     }
+}
+
+fn turn_items_need_backfill(items: &[AppServerThreadItem]) -> bool {
+    if items.is_empty() {
+        return true;
+    }
+
+    items.iter().any(|item| match item {
+        AppServerThreadItem::CommandExecution { status, .. } => {
+            matches!(
+                status,
+                codex_app_server_protocol::CommandExecutionStatus::InProgress
+            )
+        }
+        AppServerThreadItem::FileChange { status, .. } => {
+            matches!(
+                status,
+                codex_app_server_protocol::PatchApplyStatus::InProgress
+            )
+        }
+        AppServerThreadItem::McpToolCall { status, .. } => {
+            matches!(
+                status,
+                codex_app_server_protocol::McpToolCallStatus::InProgress
+            )
+        }
+        AppServerThreadItem::CollabAgentToolCall { status, .. } => {
+            matches!(
+                status,
+                codex_app_server_protocol::CollabAgentToolCallStatus::InProgress
+            )
+        }
+        _ => false,
+    })
 }
 
 fn turn_items_for_thread(
@@ -1548,6 +2146,8 @@ fn decode_utf16(
 
 fn read_prompt_from_stdin(behavior: StdinPromptBehavior) -> Option<String> {
     let stdin_is_terminal = std::io::stdin().is_terminal();
+    let announce_optional_append =
+        matches!(behavior, StdinPromptBehavior::OptionalAppend) && !stdin_is_terminal;
 
     match behavior {
         StdinPromptBehavior::RequiredIfPiped if stdin_is_terminal => {
@@ -1561,9 +2161,7 @@ fn read_prompt_from_stdin(behavior: StdinPromptBehavior) -> Option<String> {
         }
         StdinPromptBehavior::Forced => {}
         StdinPromptBehavior::OptionalAppend if stdin_is_terminal => return None,
-        StdinPromptBehavior::OptionalAppend => {
-            eprintln!("Reading additional input from stdin...");
-        }
+        StdinPromptBehavior::OptionalAppend => {}
     }
 
     let mut bytes = Vec::new();
@@ -1589,6 +2187,9 @@ fn read_prompt_from_stdin(behavior: StdinPromptBehavior) -> Option<String> {
             }
         }
     } else {
+        if announce_optional_append {
+            eprintln!("Reading additional input from stdin...");
+        }
         Some(buffer)
     }
 }
@@ -1674,6 +2275,35 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
     use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: tests mutate env in-process and restore the previous value on drop.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: tests restore env before leaving scope.
+            unsafe {
+                if let Some(previous) = self.previous.as_deref() {
+                    std::env::set_var(self.key, previous);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 
     fn test_tracing_subscriber() -> impl tracing::Subscriber + Send + Sync {
         let provider = SdkTracerProvider::builder().build();
@@ -1871,6 +2501,146 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn follow_autonomous_thread_from_config_reads_active_profile_agent_auto_mode() {
+        let codex_home = tempdir().expect("create temp codex home");
+        let cwd = tempdir().expect("create temp cwd");
+        std::fs::write(
+            codex_home.path().join(codex_core::config::CONFIG_TOML_FILE),
+            r#"
+profile = "nemotron-local"
+
+[profiles.nemotron-local.agent]
+auto_mode = true
+"#,
+        )
+        .expect("write temp config");
+
+        let config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .fallback_cwd(Some(cwd.path().to_path_buf()))
+            .build()
+            .await
+            .expect("build config");
+
+        assert!(follow_autonomous_thread_from_config(&config));
+    }
+
+    #[tokio::test]
+    async fn follow_autonomous_thread_from_config_reads_profile_table_active_auto_mode() {
+        let codex_home = tempdir().expect("create temp codex home");
+        let cwd = tempdir().expect("create temp cwd");
+        std::fs::write(
+            codex_home.path().join(codex_core::config::CONFIG_TOML_FILE),
+            r#"
+[profile]
+active = "nemotron-local"
+
+[profiles.nemotron-local.agent]
+auto_mode = true
+"#,
+        )
+        .expect("write temp config");
+
+        let config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .fallback_cwd(Some(cwd.path().to_path_buf()))
+            .build()
+            .await
+            .expect("build config");
+
+        assert!(follow_autonomous_thread_from_config(&config));
+    }
+
+    #[tokio::test]
+    async fn follow_autonomous_thread_from_config_reads_ilhae_native_profile_auto_mode() {
+        let codex_home = tempdir().expect("create temp codex home");
+        let cwd = tempdir().expect("create temp cwd");
+        std::fs::write(
+            codex_home.path().join("managed_config.toml"),
+            r#"
+profile = "nemotron-local"
+
+[profiles.nemotron-local]
+model = "nemotron"
+model_provider = "llama-server"
+"#,
+        )
+        .expect("write temp codex config");
+
+        let ilhae_config_dir = tempdir().expect("create temp ilhae config");
+        std::fs::write(
+            ilhae_config_dir
+                .path()
+                .join(codex_core::config::CONFIG_TOML_FILE),
+            r#"
+[profile]
+active = "nemotron-local"
+
+[profiles.nemotron-local.agent]
+auto_mode = true
+"#,
+        )
+        .expect("write temp ilhae config");
+        let _runtime_guard = EnvVarGuard::set("ILHAE_RUNTIME", "1");
+        let _config_dir_guard = EnvVarGuard::set(
+            "ILHAE_CONFIG_DIR",
+            ilhae_config_dir.path().to_string_lossy().as_ref(),
+        );
+
+        let config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .fallback_cwd(Some(cwd.path().to_path_buf()))
+            .build()
+            .await
+            .expect("build config");
+
+        assert!(follow_autonomous_thread_from_config(&config));
+    }
+
+    #[test]
+    fn should_process_notification_ignores_followup_turns_without_autonomous_follow() {
+        let notification = ServerNotification::TurnStarted(TurnStartedNotification {
+            thread_id: "thread-1".to_string(),
+            turn: codex_app_server_protocol::Turn {
+                id: "turn-2".to_string(),
+                items: Vec::new(),
+                status: codex_app_server_protocol::TurnStatus::InProgress,
+                error: None,
+            },
+        });
+
+        assert!(!should_process_notification(
+            &notification,
+            "thread-1",
+            "turn-1",
+            false,
+        ));
+    }
+
+    #[test]
+    fn should_process_notification_accepts_followup_turns_when_autonomous_follow_is_enabled() {
+        let notification = ServerNotification::ItemCompleted(
+            codex_app_server_protocol::ItemCompletedNotification {
+                item: AppServerThreadItem::AgentMessage {
+                    id: "msg-2".to_string(),
+                    text: "next turn".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                },
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-2".to_string(),
+            },
+        );
+
+        assert!(should_process_notification(
+            &notification,
+            "thread-1",
+            "turn-1",
+            true,
+        ));
+    }
+
+    #[tokio::test]
     async fn resume_lookup_model_providers_filters_only_last_lookup() {
         let codex_home = tempdir().expect("create temp codex home");
         let cwd = tempdir().expect("create temp cwd");
@@ -1975,6 +2745,77 @@ mod tests {
         );
     }
 
+    #[test]
+    fn should_process_notification_accepts_follow_on_turn_for_same_thread() {
+        let notification = ServerNotification::TurnStarted(TurnStartedNotification {
+            thread_id: "thread-1".to_string(),
+            turn: codex_app_server_protocol::Turn {
+                id: "turn-2".to_string(),
+                items: Vec::new(),
+                status: codex_app_server_protocol::TurnStatus::InProgress,
+                error: None,
+            },
+        });
+
+        assert!(
+            should_process_notification(&notification, "thread-1", "turn-1", true),
+            "exec should keep tracking same-thread follow-on turns so autonomous/headless loops can continue"
+        );
+    }
+
+    #[test]
+    fn turn_items_need_backfill_when_completion_payload_is_empty() {
+        assert!(turn_items_need_backfill(&[]));
+    }
+
+    #[test]
+    fn turn_items_need_backfill_when_completion_payload_contains_in_progress_item() {
+        let items = vec![AppServerThreadItem::CommandExecution {
+            id: "cmd-1".to_string(),
+            command: "find /tmp -name thing".to_string(),
+            aggregated_output: Some(String::new()),
+            exit_code: None,
+            status: codex_app_server_protocol::CommandExecutionStatus::InProgress,
+            duration_ms: None,
+            cwd: PathBuf::from("/tmp"),
+            process_id: None,
+            source: codex_app_server_protocol::CommandExecutionSource::UserShell,
+            command_actions: vec![codex_app_server_protocol::CommandAction::Unknown {
+                command: "find /tmp -name thing".to_string(),
+            }],
+        }];
+
+        assert!(turn_items_need_backfill(items.as_slice()));
+    }
+
+    #[test]
+    fn turn_items_need_backfill_is_false_when_payload_already_has_completed_items() {
+        let items = vec![
+            AppServerThreadItem::CommandExecution {
+                id: "cmd-1".to_string(),
+                command: "echo done".to_string(),
+                aggregated_output: Some("done".to_string()),
+                exit_code: Some(0),
+                status: codex_app_server_protocol::CommandExecutionStatus::Completed,
+                duration_ms: Some(5),
+                cwd: PathBuf::from("/tmp"),
+                process_id: None,
+                source: codex_app_server_protocol::CommandExecutionSource::UserShell,
+                command_actions: vec![codex_app_server_protocol::CommandAction::Unknown {
+                    command: "echo done".to_string(),
+                }],
+            },
+            AppServerThreadItem::AgentMessage {
+                id: "msg-1".to_string(),
+                text: "완료했습니다.".to_string(),
+                phase: None,
+                memory_citation: None,
+            },
+        ];
+
+        assert!(!turn_items_need_backfill(items.as_slice()));
+    }
+
     #[tokio::test]
     async fn thread_start_params_include_review_policy_when_review_policy_is_manual_only() {
         let codex_home = tempdir().expect("create temp codex home");
@@ -2065,5 +2906,219 @@ mod tests {
             event.approvals_reviewer,
             ApprovalsReviewer::GuardianSubagent
         );
+    }
+
+    #[test]
+    fn decide_exec_autonomy_followup_stops_when_max_turns_reached() {
+        let decision = decide_exec_autonomy_followup(
+            ExecAutonomySettings {
+                max_turns: 2,
+                timebox: Duration::from_secs(600),
+            },
+            Duration::from_secs(5),
+            2,
+            None,
+            0,
+            "원래 작업",
+            &[AppServerThreadItem::AgentMessage {
+                id: "msg-1".to_string(),
+                text: "다음 단계로 진행하겠습니다.".to_string(),
+                phase: None,
+                memory_citation: None,
+            }],
+        );
+
+        assert_eq!(
+            decision,
+            ExecAutonomyDecision::Stop {
+                reason: "max_turns"
+            }
+        );
+    }
+
+    #[test]
+    fn decide_exec_autonomy_followup_stops_when_timebox_exceeded() {
+        let decision = decide_exec_autonomy_followup(
+            ExecAutonomySettings {
+                max_turns: 5,
+                timebox: Duration::from_secs(60),
+            },
+            Duration::from_secs(61),
+            1,
+            None,
+            0,
+            "원래 작업",
+            &[AppServerThreadItem::AgentMessage {
+                id: "msg-1".to_string(),
+                text: "계속 진행하겠습니다.".to_string(),
+                phase: None,
+                memory_citation: None,
+            }],
+        );
+
+        assert_eq!(decision, ExecAutonomyDecision::Stop { reason: "timebox" });
+    }
+
+    #[test]
+    fn decide_exec_autonomy_followup_stops_when_agent_reports_completion() {
+        let decision = decide_exec_autonomy_followup(
+            ExecAutonomySettings {
+                max_turns: 5,
+                timebox: Duration::from_secs(600),
+            },
+            Duration::from_secs(5),
+            1,
+            None,
+            0,
+            "원래 작업",
+            &[AppServerThreadItem::AgentMessage {
+                id: "msg-1".to_string(),
+                text: "모든 작업이 완료되었습니다".to_string(),
+                phase: None,
+                memory_citation: None,
+            }],
+        );
+
+        assert_eq!(
+            decision,
+            ExecAutonomyDecision::Stop {
+                reason: "completed"
+            }
+        );
+    }
+
+    #[test]
+    fn decide_exec_autonomy_followup_stops_when_progress_stalls() {
+        let signature = exec_autonomy_progress_signature("같은 상태");
+        let decision = decide_exec_autonomy_followup(
+            ExecAutonomySettings {
+                max_turns: 5,
+                timebox: Duration::from_secs(600),
+            },
+            Duration::from_secs(5),
+            2,
+            Some(signature),
+            EXEC_AUTONOMY_STALLED_TURN_LIMIT - 1,
+            "원래 작업",
+            &[AppServerThreadItem::AgentMessage {
+                id: "msg-1".to_string(),
+                text: "같은 상태".to_string(),
+                phase: None,
+                memory_citation: None,
+            }],
+        );
+
+        assert_eq!(decision, ExecAutonomyDecision::Stop { reason: "stalled" });
+    }
+
+    #[test]
+    fn decide_exec_autonomy_followup_continues_with_followup_prompt_for_new_progress() {
+        let decision = decide_exec_autonomy_followup(
+            ExecAutonomySettings {
+                max_turns: 5,
+                timebox: Duration::from_secs(600),
+            },
+            Duration::from_secs(5),
+            1,
+            None,
+            0,
+            "STEP1, STEP2, summary를 모두 완료해야 한다.",
+            &[AppServerThreadItem::AgentMessage {
+                id: "msg-1".to_string(),
+                text: "STEP1 파일을 만들었고 이제 STEP2를 해야 합니다.".to_string(),
+                phase: None,
+                memory_citation: None,
+            }],
+        );
+
+        match decision {
+            ExecAutonomyDecision::Continue {
+                reason,
+                progress_signature,
+                stalled_turns,
+                followup_prompt,
+            } => {
+                assert_eq!(reason, "progressed");
+                assert_eq!(stalled_turns, 0);
+                assert_eq!(
+                    progress_signature,
+                    exec_autonomy_progress_signature(
+                        "STEP1 파일을 만들었고 이제 STEP2를 해야 합니다."
+                    )
+                );
+                assert!(
+                    followup_prompt.contains("STEP1 파일을 만들었고 이제 STEP2를 해야 합니다.")
+                );
+                assert!(followup_prompt.contains("STEP1, STEP2, summary를 모두 완료해야 한다."));
+                assert!(followup_prompt.contains("실제 tool을 호출"));
+            }
+            other => panic!("expected continue decision, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decide_exec_autonomy_followup_continues_with_stalled_retry_reason_before_limit() {
+        let signature = exec_autonomy_progress_signature("같은 상태");
+        let decision = decide_exec_autonomy_followup(
+            ExecAutonomySettings {
+                max_turns: 5,
+                timebox: Duration::from_secs(600),
+            },
+            Duration::from_secs(5),
+            2,
+            Some(signature),
+            0,
+            "원래 작업",
+            &[AppServerThreadItem::AgentMessage {
+                id: "msg-1".to_string(),
+                text: "같은 상태".to_string(),
+                phase: None,
+                memory_citation: None,
+            }],
+        );
+
+        match decision {
+            ExecAutonomyDecision::Continue {
+                reason,
+                stalled_turns,
+                ..
+            } => {
+                assert_eq!(reason, "stalled_retry");
+                assert_eq!(stalled_turns, 1);
+            }
+            other => panic!("expected continue decision, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extract_pseudo_exec_command_reads_json_tool_stub() {
+        let progress = r#"{
+  "tool": "functions.exec_command",
+  "arguments": {
+    "cmd": "echo STEP1 > /tmp/file"
+  }
+}"#;
+
+        assert_eq!(
+            extract_pseudo_exec_command(progress).as_deref(),
+            Some("echo STEP1 > /tmp/file")
+        );
+    }
+
+    #[test]
+    fn build_exec_autonomy_followup_prompt_prioritizes_stubbed_exec_command() {
+        let progress = r#"{
+  "tool": "functions.exec_command",
+  "arguments": {
+    "cmd": "echo STEP1 > /tmp/file"
+  }
+}"#;
+
+        let prompt = build_exec_autonomy_followup_prompt_with_root(progress, "원래 작업 조건");
+
+        assert!(prompt.contains("실제 실행 대신 exec_command tool 호출 JSON만 출력"));
+        assert!(prompt.contains("echo STEP1 > /tmp/file"));
+        assert!(prompt.contains("원래 작업 조건"));
+        assert!(prompt.contains("아직 실행하지 않은 다음 단계로 넘어가지 마세요"));
     }
 }

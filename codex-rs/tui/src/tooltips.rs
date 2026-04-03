@@ -2,6 +2,7 @@ use codex_features::FEATURES;
 use codex_protocol::account::PlanType;
 use lazy_static::lazy_static;
 use rand::Rng;
+use std::env;
 
 const ANNOUNCEMENT_TIP_URL: &str =
     "https://raw.githubusercontent.com/openai/codex/main/announcement_tip.toml";
@@ -40,6 +41,18 @@ lazy_static! {
         tips.extend(experimental_tooltips());
         tips
     };
+    static ref ILHAE_TOOLTIPS: Vec<&'static str> = TOOLTIPS
+        .iter()
+        .copied()
+        .filter(|tip| {
+            let lowered = tip.to_ascii_lowercase();
+            !lowered.contains("codex")
+                && !lowered.contains("openai")
+                && !lowered.contains("chatgpt")
+                && !lowered.contains("discord.gg/openai")
+                && !lowered.contains("community.openai.com")
+        })
+        .collect();
 }
 
 fn experimental_tooltips() -> Vec<&'static str> {
@@ -51,6 +64,11 @@ fn experimental_tooltips() -> Vec<&'static str> {
 
 /// Pick a random tooltip to show to the user when starting Codex.
 pub(crate) fn get_tooltip(plan: Option<PlanType>, fast_mode_enabled: bool) -> Option<String> {
+    if is_ilhae_binary() {
+        let mut rng = rand::rng();
+        return pick_ilhae_tooltip(&mut rng).map(str::to_string);
+    }
+
     let mut rng = rand::rng();
 
     if let Some(announcement) = announcement::fetch_announcement_tip() {
@@ -86,6 +104,13 @@ pub(crate) fn get_tooltip(plan: Option<PlanType>, fast_mode_enabled: bool) -> Op
     pick_tooltip(&mut rng).map(str::to_string)
 }
 
+fn is_ilhae_binary() -> bool {
+    env::current_exe()
+        .ok()
+        .and_then(|path| path.file_name().map(|name| name == "ilhae"))
+        .unwrap_or(false)
+}
+
 fn paid_app_tooltip() -> &'static str {
     if IS_MACOS {
         PAID_TOOLTIP
@@ -114,6 +139,16 @@ fn pick_tooltip<R: Rng + ?Sized>(rng: &mut R) -> Option<&'static str> {
     } else {
         ALL_TOOLTIPS
             .get(rng.random_range(0..ALL_TOOLTIPS.len()))
+            .copied()
+    }
+}
+
+fn pick_ilhae_tooltip<R: Rng + ?Sized>(rng: &mut R) -> Option<&'static str> {
+    if ILHAE_TOOLTIPS.is_empty() {
+        None
+    } else {
+        ILHAE_TOOLTIPS
+            .get(rng.random_range(0..ILHAE_TOOLTIPS.len()))
             .copied()
     }
 }

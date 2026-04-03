@@ -29,11 +29,10 @@ use crate::{
     IlhaeAppArtifactListRequest, IlhaeAppArtifactListResponse, IlhaeAppArtifactVersionsRequest,
     IlhaeAppArtifactVersionsResponse, IlhaeAppWorkflowGetRequest, IlhaeAppWorkflowGetResponse,
     IlhaeAppWorkflowListRequest, IlhaeAppWorkflowListResponse, ListA2ATasksRequest,
-    ListA2ATasksResponse,
-    ListArtifactVersionsRequest, ListArtifactVersionsResponse, ListPluginsRequest,
-    ListPluginsResponse, ListProjectsRequest, ListProjectsResponse, ListSessionArtifactsRequest,
-    ListSessionArtifactsResponse, ListSharedTasksRequest, ListSharedTasksResponse, ListTasksRequest,
-    ListTasksResponse, ListWorkflowArtifactsRequest,
+    ListA2ATasksResponse, ListArtifactVersionsRequest, ListArtifactVersionsResponse,
+    ListPluginsRequest, ListPluginsResponse, ListProjectsRequest, ListProjectsResponse,
+    ListSessionArtifactsRequest, ListSessionArtifactsResponse, ListSharedTasksRequest,
+    ListSharedTasksResponse, ListTasksRequest, ListTasksResponse, ListWorkflowArtifactsRequest,
     ListWorkflowArtifactsResponse, MemoryForgetRequest, MemoryForgetResponse, MemoryListRequest,
     MemoryListResponse, MemoryPinRequest, MemoryPinResponse, MemorySearchRequest,
     MemorySearchResponse, MemoryStatsRequest, MemoryStatsResponse, MemoryStoreRequest,
@@ -163,6 +162,7 @@ impl ConnectTo<Conductor> for AdminProxy {
         let builder = crate::register_admin_notification_handlers!(builder, s);
         let builder = crate::register_admin_task_handlers!(builder, s);
         let builder = crate::register_admin_memory_handlers!(builder, s);
+        let builder = crate::register_admin_kb_handlers!(builder, s);
         let builder = crate::register_admin_plugin_handlers!(builder, s);
         let builder = crate::register_admin_team_handlers!(builder, s);
         let builder = crate::register_admin_artifact_handlers!(builder, s);

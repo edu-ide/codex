@@ -124,8 +124,11 @@ pub(super) async fn read_config_from_path(
 pub(super) fn managed_config_default_path(codex_home: &Path) -> PathBuf {
     #[cfg(unix)]
     {
-        let _ = codex_home;
-        PathBuf::from(CODEX_MANAGED_CONFIG_SYSTEM_PATH)
+        if std::env::var("ILHAE_RUNTIME").ok().as_deref() == Some("1") {
+            codex_home.join("managed_config.toml")
+        } else {
+            PathBuf::from(CODEX_MANAGED_CONFIG_SYSTEM_PATH)
+        }
     }
 
     #[cfg(not(unix))]

@@ -86,6 +86,23 @@ impl ChatWidget {
         if pause_on_error { "pause" } else { "cont" }
     }
 
+    fn knowledge_mode_label(mode: &str) -> &'static str {
+        match mode {
+            "worker" => "wk",
+            "kairos" => "kx",
+            "both" => "both",
+            _ => "off",
+        }
+    }
+
+    fn knowledge_result_label(result: &str) -> &'static str {
+        match result {
+            "ok" => "ok",
+            "error" => "err",
+            _ => "idle",
+        }
+    }
+
     fn execution_loop_status_text(&self) -> Option<String> {
         let workflow_surface = self.workflow_surface_status_text();
         let Some(runtime) = native_runtime_context() else {
@@ -132,6 +149,19 @@ impl ChatWidget {
 
         if agent.self_improvement_enabled {
             parts.push("improve".to_string());
+        }
+
+        if agent.knowledge_mode != "off" {
+            let runtime = &agent.knowledge_runtime;
+            let mut knowledge = format!(
+                "kb:{}:{}",
+                Self::knowledge_mode_label(&agent.knowledge_mode),
+                Self::knowledge_result_label(&runtime.last_result)
+            );
+            if runtime.last_issue_count > 0 {
+                knowledge.push_str(&format!("/{}i", runtime.last_issue_count));
+            }
+            parts.push(knowledge);
         }
 
         if parts.len() == 1 {

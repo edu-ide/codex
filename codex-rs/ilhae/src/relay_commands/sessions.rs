@@ -13,7 +13,8 @@ fn payload_str<'a>(payload: &'a serde_json::Value, keys: &[&str]) -> Option<&'a 
 }
 
 fn payload_i64(payload: &serde_json::Value, keys: &[&str]) -> Option<i64> {
-    keys.iter().find_map(|key| payload.get(*key).and_then(|v| v.as_i64()))
+    keys.iter()
+        .find_map(|key| payload.get(*key).and_then(|v| v.as_i64()))
 }
 
 pub async fn handle_session_list(
@@ -74,8 +75,7 @@ pub async fn handle_session_load(
     maybe_respond: impl Fn(Option<&str>, serde_json::Value, Option<String>),
 ) {
     let session_id = payload_str(&cmd.payload, &["session_id", "sessionId"]).unwrap_or("");
-    let limit = payload_i64(&cmd.payload, &["limit"])
-        .and_then(|v| usize::try_from(v).ok());
+    let limit = payload_i64(&cmd.payload, &["limit"]).and_then(|v| usize::try_from(v).ok());
     let before_id = payload_i64(&cmd.payload, &["before_id", "beforeId"]);
     match ctx
         .infra

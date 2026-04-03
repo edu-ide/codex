@@ -1,4 +1,5 @@
 pub mod artifact;
+pub mod knowledge;
 pub mod memory;
 pub mod misc;
 pub mod session;

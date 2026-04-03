@@ -272,6 +272,7 @@ pub async fn handle_team_status(
         "leader": leader,
         "agents": agents,
         "team_mode": settings.agent.team_mode,
+        "team_backend": crate::config::normalize_team_backend(&settings.agent.team_backend),
         "engine": settings.agent.command,
         "mock_mode": crate::mock_provider::is_mock_mode(),
     });
