@@ -1,7 +1,7 @@
-use crate::error::Result;
-use crate::model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
+use crate::LLAMA_SERVER_OSS_PROVIDER_ID;
 pub use codex_api::common::ResponseEvent;
 use codex_config::types::Personality;
+use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::ResponseItem;

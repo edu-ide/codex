@@ -88,3 +88,9 @@ workspace = true
 
 [dev-dependencies.reqwest]
 workspace = true
+
+[dependencies.base64]
+workspace = true
+
+[dependencies.chrono]
+workspace = true

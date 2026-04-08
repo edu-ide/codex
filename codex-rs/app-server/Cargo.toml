@@ -23,7 +23,7 @@ workspace = true
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
-axum = { workspace = true, default-features = false, features = [
+axum = { workspace = true, features = [
     "http1",
     "json",
     "tokio",
@@ -46,6 +46,7 @@ codex-file-search = { workspace = true }
 codex-chatgpt = { workspace = true }
 codex-login = { workspace = true }
 codex-mcp = { workspace = true }
+codex-models-manager = { workspace = true }
 codex-protocol = { workspace = true }
 codex-app-server-protocol = { workspace = true }
 codex-feedback = { workspace = true }
@@ -85,7 +86,7 @@ uuid = { workspace = true, features = ["serde", "v7"] }
 [dev-dependencies]
 app_test_support = { workspace = true }
 base64 = { workspace = true }
-axum = { workspace = true, default-features = false, features = [
+axum = { workspace = true, features = [
     "http1",
     "json",
     "tokio",
@@ -96,7 +97,7 @@ opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 pretty_assertions = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls"] }
-rmcp = { workspace = true, default-features = false, features = [
+rmcp = { version = "0.15.0", default-features = false, features = [
     "elicitation",
     "server",
     "transport-streamable-http-server",

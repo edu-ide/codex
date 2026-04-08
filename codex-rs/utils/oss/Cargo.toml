@@ -22,6 +22,9 @@ workspace = true
 [dependencies.codex-ollama]
 workspace = true
 
+[dependencies.codex-model-provider-info]
+workspace = true
+
 [dependencies.reqwest]
 workspace = true
 features = [ "json",]

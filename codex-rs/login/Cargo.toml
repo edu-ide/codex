@@ -115,3 +115,9 @@ workspace = true
 
 [dev-dependencies.wiremock]
 workspace = true
+[dependencies.codex-api]
+workspace = true
+[dependencies.codex-model-provider-info]
+workspace = true
+[dependencies.codex-otel]
+workspace = true

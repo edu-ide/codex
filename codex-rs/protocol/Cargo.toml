@@ -94,3 +94,34 @@ workspace = true
 
 [package.metadata.cargo-shear]
 ignored = [ "icu_provider", "strum",]
+
+[dependencies.chardetng]
+workspace = true
+
+[dependencies.encoding_rs]
+workspace = true
+
+[dependencies.thiserror]
+workspace = true
+
+[dependencies.chrono]
+workspace = true
+features = ["serde"]
+
+[dependencies.reqwest]
+workspace = true
+
+[dependencies.tokio]
+workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies.seccompiler]
+workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies.landlock]
+workspace = true
+
+[dependencies.codex-network-proxy]
+workspace = true
+
+[dependencies.codex-async-utils]
+workspace = true

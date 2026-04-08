@@ -22,7 +22,6 @@ fn default_limit() -> usize {
     50
 }
 
-#[async_trait]
 impl ToolHandler for GrepSearchHandler {
     type Output = FunctionToolOutput;
 
@@ -30,7 +29,10 @@ impl ToolHandler for GrepSearchHandler {
         ToolKind::Function
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
+    async fn handle(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Self::Output, FunctionCallError> {
         let args: GrepArgs = crate::tools::handlers::parse_arguments(&match invocation.payload {
             ToolPayload::Function { arguments } => arguments,
             _ => {

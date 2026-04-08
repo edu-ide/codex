@@ -59,7 +59,6 @@ impl LspToolHandler {
     }
 }
 
-#[async_trait]
 impl ToolHandler for LspToolHandler {
     type Output = FunctionToolOutput;
 
@@ -67,7 +66,10 @@ impl ToolHandler for LspToolHandler {
         ToolKind::Function
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
+    async fn handle(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Self::Output, FunctionCallError> {
         let arguments = match &invocation.payload {
             ToolPayload::Function { arguments } => arguments,
             _ => {
@@ -85,7 +87,7 @@ impl ToolHandler for LspToolHandler {
             .unwrap_or("");
 
         // Ensure LSP server is running for this file type
-        let server = match self
+        let server: std::sync::Arc<crate::tools::handlers::lsp_manager::LspServerInstance> = match self
             .manager
             .get_or_start_server(ext, &format!("file://{}", cwd.display()))
             .await

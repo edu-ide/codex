@@ -1,6 +1,7 @@
 use crate::bottom_pane::FeedbackAudience;
 use crate::status::StatusAccountDisplay;
 use crate::status::plan_type_display_name;
+use codex_app_server_protocol::RequestId;
 use agent_client_protocol_schema::CancelNotification;
 use agent_client_protocol_schema::ContentBlock;
 use agent_client_protocol_schema::PermissionOptionKind;
@@ -39,7 +40,6 @@ use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::Model as ApiModel;
 use codex_app_server_protocol::ModelListParams;
 use codex_app_server_protocol::ModelListResponse;
-use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ReasoningTextDeltaNotification;
 use codex_app_server_protocol::ReviewDelivery;
 use codex_app_server_protocol::ReviewStartParams;
@@ -157,6 +157,7 @@ pub(crate) struct AppServerSession {
     client: AppServerClient,
     next_request_id: i64,
     pending_ilhae_events: VecDeque<IlhaeAppSessionEventNotification>,
+    remote_cwd_override: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -475,6 +476,7 @@ impl AcpConversationRuntime {
         };
 
         Thread {
+            forked_from_id: None,
             id: session.id,
             preview,
             ephemeral: false,
@@ -676,13 +678,14 @@ impl AcpConversationRuntime {
 
         let session = thread_session_state_from_thread_response(
             &global_session_id_str,
+            None,
             existing_info
                 .as_ref()
                 .and_then(|info| (!info.title.trim().is_empty()).then_some(info.title.clone())),
             None,
             self.current_model(config),
             self.engine_id.clone(),
-            None,
+            config.service_tier.clone(),
             config.permissions.approval_policy.value(),
             config.approvals_reviewer,
             config.permissions.sandbox_policy.get().clone(),
@@ -697,6 +700,7 @@ impl AcpConversationRuntime {
             .map(|info| self.current_thread_from_session(info, true))
             .transpose()?
             .unwrap_or(Thread {
+                forked_from_id: None,
                 id: global_session_id_str.clone(),
                 preview: global_session_id_str.clone(),
                 ephemeral: config.ephemeral,
@@ -730,6 +734,10 @@ impl AcpConversationRuntime {
 #[async_trait]
 pub(crate) trait ConversationRuntime {
     fn is_remote(&self) -> bool;
+
+    fn remote_cwd_override(&self) -> Option<&std::path::Path> {
+        None
+    }
 
     async fn list_threads(&mut self, params: ThreadListParams) -> Result<ThreadListResponse>;
 
@@ -1374,6 +1382,10 @@ impl ConversationRuntime for AppServerSession {
         AppServerSession::is_remote(self)
     }
 
+    fn remote_cwd_override(&self) -> Option<&std::path::Path> {
+        AppServerSession::remote_cwd_override(self)
+    }
+
     async fn list_threads(&mut self, params: ThreadListParams) -> Result<ThreadListResponse> {
         AppServerSession::thread_list(self, params).await
     }
@@ -1429,6 +1441,13 @@ pub(crate) enum SelectedConversationRuntime {
 }
 
 impl SelectedConversationRuntime {
+    pub(crate) fn with_remote_cwd_override(self, override_path: Option<PathBuf>) -> Self {
+        match self {
+            Self::AppServer(runtime) => Self::AppServer(runtime.with_remote_cwd_override(override_path)),
+            Self::Acp(runtime) => Self::Acp(runtime),
+        }
+    }
+
     pub(crate) fn from_native(app_server: AppServerSession) -> Self {
         Self::AppServer(app_server)
     }
@@ -2206,7 +2225,17 @@ impl AppServerSession {
             client,
             next_request_id: 1,
             pending_ilhae_events: VecDeque::new(),
+            remote_cwd_override: None,
         }
+    }
+
+    pub(crate) fn with_remote_cwd_override(mut self, remote_cwd_override: Option<PathBuf>) -> Self {
+        self.remote_cwd_override = remote_cwd_override;
+        self
+    }
+
+    pub(crate) fn remote_cwd_override(&self) -> Option<&std::path::Path> {
+        self.remote_cwd_override.as_deref()
     }
 
     pub(crate) fn is_remote(&self) -> bool {
@@ -2410,7 +2439,11 @@ impl AppServerSession {
             .client
             .request_typed(ClientRequest::ThreadStart {
                 request_id,
-                params: thread_start_params_from_config(config, self.thread_params_mode()),
+                params: thread_start_params_from_config(
+                    config,
+                    self.thread_params_mode(),
+                    self.remote_cwd_override.as_deref(),
+                ),
             })
             .await
             .wrap_err("thread/start failed during TUI bootstrap")?;
@@ -2431,6 +2464,7 @@ impl AppServerSession {
                     config.clone(),
                     thread_id,
                     self.thread_params_mode(),
+                    self.remote_cwd_override.as_deref(),
                 ),
             })
             .await
@@ -2452,6 +2486,7 @@ impl AppServerSession {
                     config.clone(),
                     thread_id,
                     self.thread_params_mode(),
+                    self.remote_cwd_override.as_deref(),
                 ),
             })
             .await
@@ -2962,11 +2997,12 @@ fn sandbox_mode_from_policy(
 fn thread_start_params_from_config(
     config: &Config,
     thread_params_mode: ThreadParamsMode,
+    remote_cwd_override: Option<&std::path::Path>,
 ) -> ThreadStartParams {
     ThreadStartParams {
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(config),
-        cwd: thread_cwd_from_config(config, thread_params_mode),
+        cwd: thread_cwd_from_config(config, thread_params_mode, remote_cwd_override),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox_mode_from_policy(config.permissions.sandbox_policy.get().clone()),
@@ -2981,12 +3017,13 @@ fn thread_resume_params_from_config(
     config: Config,
     thread_id: ThreadId,
     thread_params_mode: ThreadParamsMode,
+    remote_cwd_override: Option<&std::path::Path>,
 ) -> ThreadResumeParams {
     ThreadResumeParams {
         thread_id: thread_id.to_string(),
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(&config),
-        cwd: thread_cwd_from_config(&config, thread_params_mode),
+        cwd: thread_cwd_from_config(&config, thread_params_mode, remote_cwd_override),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(&config),
         sandbox: sandbox_mode_from_policy(config.permissions.sandbox_policy.get().clone()),
@@ -3000,12 +3037,13 @@ fn thread_fork_params_from_config(
     config: Config,
     thread_id: ThreadId,
     thread_params_mode: ThreadParamsMode,
+    remote_cwd_override: Option<&std::path::Path>,
 ) -> ThreadForkParams {
     ThreadForkParams {
         thread_id: thread_id.to_string(),
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(&config),
-        cwd: thread_cwd_from_config(&config, thread_params_mode),
+        cwd: thread_cwd_from_config(&config, thread_params_mode, remote_cwd_override),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(&config),
         sandbox: sandbox_mode_from_policy(config.permissions.sandbox_policy.get().clone()),
@@ -3016,10 +3054,16 @@ fn thread_fork_params_from_config(
     }
 }
 
-fn thread_cwd_from_config(config: &Config, thread_params_mode: ThreadParamsMode) -> Option<String> {
+fn thread_cwd_from_config(
+    config: &Config,
+    thread_params_mode: ThreadParamsMode,
+    remote_cwd_override: Option<&std::path::Path>,
+) -> Option<String> {
     match thread_params_mode {
         ThreadParamsMode::Embedded => Some(config.cwd.to_string_lossy().to_string()),
-        ThreadParamsMode::Remote => None,
+        ThreadParamsMode::Remote => {
+            remote_cwd_override.map(|cwd| cwd.to_string_lossy().to_string())
+        }
     }
 }
 
@@ -3068,6 +3112,7 @@ async fn thread_session_state_from_thread_start_response(
 ) -> Result<ThreadSessionState, String> {
     thread_session_state_from_thread_response(
         &response.thread.id,
+        response.thread.forked_from_id.clone(),
         response.thread.name.clone(),
         response.thread.path.clone(),
         response.model.clone(),
@@ -3089,6 +3134,7 @@ async fn thread_session_state_from_thread_resume_response(
 ) -> Result<ThreadSessionState, String> {
     thread_session_state_from_thread_response(
         &response.thread.id,
+        response.thread.forked_from_id.clone(),
         response.thread.name.clone(),
         response.thread.path.clone(),
         response.model.clone(),
@@ -3110,6 +3156,7 @@ async fn thread_session_state_from_thread_fork_response(
 ) -> Result<ThreadSessionState, String> {
     thread_session_state_from_thread_response(
         &response.thread.id,
+        response.thread.forked_from_id.clone(),
         response.thread.name.clone(),
         response.thread.path.clone(),
         response.model.clone(),
@@ -3150,6 +3197,7 @@ fn review_target_to_app_server(
 )]
 async fn thread_session_state_from_thread_response(
     thread_id: &str,
+    forked_from_id: Option<String>,
     thread_name: Option<String>,
     rollout_path: Option<PathBuf>,
     model: String,
@@ -3164,12 +3212,17 @@ async fn thread_session_state_from_thread_response(
 ) -> Result<ThreadSessionState, String> {
     let thread_id = ThreadId::from_string(thread_id)
         .map_err(|err| format!("thread id `{thread_id}` is invalid: {err}"))?;
+    let forked_from_id = forked_from_id
+        .as_deref()
+        .map(ThreadId::from_string)
+        .transpose()
+        .map_err(|err| format!("forked_from_id is invalid: {err}"))?;
     let (history_log_id, history_entry_count) = message_history::history_metadata(config).await;
     let history_entry_count = u64::try_from(history_entry_count).unwrap_or(u64::MAX);
 
     Ok(ThreadSessionState {
         thread_id,
-        forked_from_id: None,
+        forked_from_id,
         thread_name,
         model,
         model_provider_id,
@@ -3257,22 +3310,39 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let config = build_config(&temp_dir).await;
 
-        let params = thread_start_params_from_config(&config, ThreadParamsMode::Embedded);
+        let params = thread_start_params_from_config(
+            &config,
+            ThreadParamsMode::Embedded,
+            /*remote_cwd_override*/ None,
+        );
 
         assert_eq!(params.cwd, Some(config.cwd.to_string_lossy().to_string()));
         assert_eq!(params.model_provider, Some(config.model_provider_id));
     }
 
     #[tokio::test]
-    async fn thread_lifecycle_params_omit_local_overrides_for_remote_sessions() {
+    async fn thread_lifecycle_params_omit_cwd_without_remote_override_for_remote_sessions() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let config = build_config(&temp_dir).await;
         let thread_id = ThreadId::new();
 
-        let start = thread_start_params_from_config(&config, ThreadParamsMode::Remote);
-        let resume =
-            thread_resume_params_from_config(config.clone(), thread_id, ThreadParamsMode::Remote);
-        let fork = thread_fork_params_from_config(config, thread_id, ThreadParamsMode::Remote);
+        let start = thread_start_params_from_config(
+            &config,
+            ThreadParamsMode::Remote,
+            /*remote_cwd_override*/ None,
+        );
+        let resume = thread_resume_params_from_config(
+            config.clone(),
+            thread_id,
+            ThreadParamsMode::Remote,
+            /*remote_cwd_override*/ None,
+        );
+        let fork = thread_fork_params_from_config(
+            config,
+            thread_id,
+            ThreadParamsMode::Remote,
+            /*remote_cwd_override*/ None,
+        );
 
         assert_eq!(start.cwd, None);
         assert_eq!(resume.cwd, None);
@@ -3283,13 +3353,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn thread_lifecycle_params_forward_explicit_remote_cwd_override_for_remote_sessions() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = build_config(&temp_dir).await;
+        let thread_id = ThreadId::new();
+        let remote_cwd = PathBuf::from("repo/on/server");
+
+        let start = thread_start_params_from_config(
+            &config,
+            ThreadParamsMode::Remote,
+            Some(remote_cwd.as_path()),
+        );
+        let resume = thread_resume_params_from_config(
+            config.clone(),
+            thread_id,
+            ThreadParamsMode::Remote,
+            Some(remote_cwd.as_path()),
+        );
+        let fork = thread_fork_params_from_config(
+            config,
+            thread_id,
+            ThreadParamsMode::Remote,
+            Some(remote_cwd.as_path()),
+        );
+
+        assert_eq!(start.cwd.as_deref(), Some("repo/on/server"));
+        assert_eq!(resume.cwd.as_deref(), Some("repo/on/server"));
+        assert_eq!(fork.cwd.as_deref(), Some("repo/on/server"));
+        assert_eq!(start.model_provider, None);
+        assert_eq!(resume.model_provider, None);
+        assert_eq!(fork.model_provider, None);
+    }
+
+    #[tokio::test]
     async fn resume_response_restores_turns_from_thread_items() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let config = build_config(&temp_dir).await;
         let thread_id = ThreadId::new();
+        let forked_from_id = ThreadId::new();
         let response = ThreadResumeResponse {
             thread: codex_app_server_protocol::Thread {
                 id: thread_id.to_string(),
+                forked_from_id: Some(forked_from_id.to_string()),
                 preview: "hello".to_string(),
                 ephemeral: false,
                 model_provider: "openai".to_string(),
@@ -3338,6 +3443,7 @@ mod tests {
         let started = started_thread_from_resume_response(response.clone(), &config)
             .await
             .expect("resume response should map");
+        assert_eq!(started.session.forked_from_id, Some(forked_from_id));
         assert_eq!(started.turns.len(), 1);
         assert_eq!(started.turns[0], response.thread.turns[0]);
     }
@@ -3357,6 +3463,7 @@ mod tests {
 
         let session = thread_session_state_from_thread_response(
             &thread_id.to_string(),
+            /*forked_from_id*/ None,
             Some("restore".to_string()),
             /*rollout_path*/ None,
             "gpt-5.4".to_string(),
@@ -3374,6 +3481,34 @@ mod tests {
 
         assert_ne!(session.history_log_id, 0);
         assert_eq!(session.history_entry_count, 2);
+    }
+
+    #[tokio::test]
+    async fn session_configured_preserves_fork_source_thread_id() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = build_config(&temp_dir).await;
+        let thread_id = ThreadId::new();
+        let forked_from_id = ThreadId::new();
+
+        let session = thread_session_state_from_thread_response(
+            &thread_id.to_string(),
+            Some(forked_from_id.to_string()),
+            Some("restore".to_string()),
+            /*rollout_path*/ None,
+            "gpt-5.4".to_string(),
+            "openai".to_string(),
+            /*service_tier*/ None,
+            AskForApproval::Never,
+            codex_protocol::config_types::ApprovalsReviewer::User,
+            SandboxPolicy::new_read_only_policy(),
+            PathBuf::from("/tmp/project"),
+            /*reasoning_effort*/ None,
+            &config,
+        )
+        .await
+        .expect("session should map");
+
+        assert_eq!(session.forked_from_id, Some(forked_from_id));
     }
 
     #[test]

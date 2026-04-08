@@ -1,4 +1,4 @@
-use crate::model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
+use codex_model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
 use crate::shell::Shell;
 use crate::shell::ShellType;
 use crate::tools::code_mode::PUBLIC_TOOL_NAME;
@@ -29,7 +29,7 @@ use codex_tools::WaitAgentTimeoutOptions;
 use codex_tools::augment_tool_spec_for_code_mode;
 use codex_tools::create_apply_patch_freeform_tool;
 use codex_tools::create_apply_patch_json_tool;
-use codex_tools::create_assign_task_tool;
+use codex_tools::create_followup_task_tool;
 use codex_tools::create_close_agent_tool_v1;
 use codex_tools::create_close_agent_tool_v2;
 use codex_tools::create_code_mode_tool;
@@ -109,18 +109,18 @@ pub(crate) struct ApplyPatchToolArgs {
 pub fn create_tools_json_for_responses_api_with_provider(
     tools: &[ToolSpec],
     provider_id: &str,
-) -> crate::error::Result<Vec<serde_json::Value>> {
+) -> codex_protocol::error::Result<Vec<serde_json::Value>> {
     if provider_id == LLAMA_SERVER_OSS_PROVIDER_ID {
         return create_tools_json_for_llama_server(tools);
     }
 
     codex_tools::create_tools_json_for_responses_api(tools)
-        .map_err(|e| crate::error::CodexErr::Fatal(e.to_string()))
+        .map_err(|e| codex_protocol::error::CodexErr::Fatal(e.to_string()))
 }
 
 fn create_tools_json_for_llama_server(
     tools: &[ToolSpec],
-) -> crate::error::Result<Vec<serde_json::Value>> {
+) -> codex_protocol::error::Result<Vec<serde_json::Value>> {
     let mut tools_json = Vec::new();
 
     for tool in tools {
@@ -331,7 +331,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::multi_agents::SendInputHandler;
     use crate::tools::handlers::multi_agents::SpawnAgentHandler;
     use crate::tools::handlers::multi_agents::WaitAgentHandler;
-    use crate::tools::handlers::multi_agents_v2::AssignTaskHandler as AssignTaskHandlerV2;
+    use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
     use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
     use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
     use crate::tools::handlers::multi_agents_v2::SendMessageHandler as SendMessageHandlerV2;
@@ -1064,7 +1064,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
             );
             push_tool_spec(
                 &mut builder,
-                create_assign_task_tool(),
+                create_followup_task_tool(),
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
@@ -1126,7 +1126,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
             );
             builder.register_handler(
                 "assign_task",
-                Arc::new(AssignTaskHandlerV2),
+                Arc::new(FollowupTaskHandlerV2),
                 CommandMeta {
                     name: "assign_task".to_string(),
                     help_text: "Assign a task to an agent.".to_string(),
