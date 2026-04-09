@@ -790,7 +790,8 @@ pub async fn run_worker_loop(
                     [CRITICAL RULE: 절대 실제 소스코드(.ts, .rs, .py 등)나 프로젝트 파일을 수정/삭제하지 마라! 오직 지식 금고(.brain/ 또는 글로벌 메모리)의 마크다운(.md) 파일만 다루어야 한다.] \
                     사용자와 직접 소통하지 말고 즉시 `brain_memory_ops`의 `dream_preview`를 호출해서 \
                     산발된 기억 조각들과 중복 청크들을 진단해. \
-                    그 후 `brain_artifact_ops`를 사용해 의미 있는 마크다운 파일(index.md 등)로 융합하고 중복을 제거한 뒤 세션을 종료해.";
+                    그 후 `brain_artifact_ops`를 사용해 의미 있는 마크다운 파일(index.md 등)로 융합하고 중복을 제거해. \
+                    모든 정리가 끝나면 마지막으로 반드시 `ui_notify` 도구를 호출하여 '🌙 무의식(Dream) 에이전트가 백그라운드 지식 융합 및 정리를 완료했습니다!' 라고 의식(메인 에이전트)에게 보고한 뒤 세션을 종료해.";
                 
                 tokio::spawn(async move {
                     match tokio::process::Command::new(exe_path)
