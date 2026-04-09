@@ -1650,9 +1650,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "dirs 6.0.0",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "walkdir",
 ]
 
 [[package]]
