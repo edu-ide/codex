@@ -342,6 +342,12 @@ pub async fn notify_engine_state(
         }
     };
 
+    if settings.agent.embed_mode {
+        std::env::set_var("ILHAE_EMBED_MODE", "1");
+    } else {
+        std::env::set_var("ILHAE_EMBED_MODE", "0");
+    }
+
     info!(
         "[SSoT] Pushing engine_state: engine={}, endpoint={}, team_mode={}, team_backend={}",
         engine, endpoint, team_mode, team_backend

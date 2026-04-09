@@ -110,6 +110,10 @@ pub fn default_allow_always() -> String {
     "allow_always".to_string()
 }
 
+pub fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct McpSettings {
@@ -180,6 +184,12 @@ pub struct AgentSettings {
     /// Team mode on/off flag from UI.
     #[serde(default)]
     pub team_mode: bool,
+    /// Dream mode (Background hygiene agent) on/off flag.
+    #[serde(default = "default_true")]
+    pub dream_mode: bool,
+    /// Embed mode (Right Brain vector search) on/off flag.
+    #[serde(default = "default_true")]
+    pub embed_mode: bool,
     /// Team execution backend: local | remote | hybrid.
     #[serde(default = "default_team_backend")]
     pub team_backend: String,
@@ -535,6 +545,8 @@ impl Default for AgentSettings {
             active_profile: None,
             a2a_endpoint: String::new(),
             team_mode: false,
+            dream_mode: true,
+            embed_mode: true,
             team_backend: default_team_backend(),
             team_merge_policy: default_team_merge_policy(),
             team_max_retries: default_team_max_retries(),

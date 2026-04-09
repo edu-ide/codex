@@ -20,6 +20,8 @@ pub enum SlashCommand {
     Auto,
     Team,
     Kairos,
+    Dream,
+    Embed,
     Improve,
     Tmux,
     Worktree,
@@ -113,6 +115,8 @@ impl SlashCommand {
             SlashCommand::Auto => "toggle autonomous mode",
             SlashCommand::Team => "toggle team mode",
             SlashCommand::Kairos => "toggle kairos scheduling",
+            SlashCommand::Dream => "toggle background dream mode (unconscious memory hygiene)",
+            SlashCommand::Embed => "toggle semantic embedding indexing (Right Brain)",
             SlashCommand::Improve => "toggle self-improvement mode",
             SlashCommand::Tmux => "show tmux workflow guidance",
             SlashCommand::Worktree => "show git worktree workflow guidance",
@@ -162,6 +166,8 @@ impl SlashCommand {
             | SlashCommand::Auto
             | SlashCommand::Team
             | SlashCommand::Kairos
+            | SlashCommand::Dream
+            | SlashCommand::Embed
             | SlashCommand::Improve
             | SlashCommand::Tmux
             | SlashCommand::Worktree
@@ -213,6 +219,8 @@ impl SlashCommand {
             | SlashCommand::Auto
             | SlashCommand::Team
             | SlashCommand::Kairos
+            | SlashCommand::Dream
+            | SlashCommand::Embed
             | SlashCommand::Improve
             | SlashCommand::Personality
             | SlashCommand::Approvals

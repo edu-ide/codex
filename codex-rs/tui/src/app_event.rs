@@ -316,6 +316,16 @@ pub(crate) enum AppEvent {
         enabled: Option<bool>,
     },
 
+    /// Toggle or explicitly set dream mode in the native embedded runtime.
+    SetIlhaeDreamMode {
+        enabled: Option<bool>,
+    },
+
+    /// Toggle or explicitly set embed mode in the native embedded runtime.
+    SetIlhaeEmbedMode {
+        enabled: Option<bool>,
+    },
+
     /// Toggle or explicitly set Kairos in the native embedded runtime.
     SetIlhaeKairosMode {
         enabled: Option<bool>,

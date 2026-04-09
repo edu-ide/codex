@@ -95,6 +95,10 @@ pub struct IlhaeProfileAgentConfig {
     pub engine_id: Option<String>,
     pub command: Option<String>,
     pub team_mode: bool,
+    #[serde(default = "crate::settings_types::default_true")]
+    pub dream_mode: bool,
+    #[serde(default = "crate::settings_types::default_true")]
+    pub embed_mode: bool,
     #[serde(default = "default_team_backend")]
     pub team_backend: String,
     #[serde(default = "default_team_merge_policy")]
@@ -286,6 +290,8 @@ pub fn profile_to_dto(id: &str, profile: &IlhaeProfileConfig) -> crate::IlhaeApp
             engine_id: profile.agent.engine_id.clone(),
             command: profile.agent.command.clone(),
             team_mode: profile.agent.team_mode,
+            dream_mode: profile.agent.dream_mode,
+            embed_mode: profile.agent.embed_mode,
             team_backend: normalize_team_backend(&profile.agent.team_backend),
             team_merge_policy: profile.agent.team_merge_policy.clone(),
             team_max_retries: profile.agent.team_max_retries,
@@ -329,6 +335,8 @@ pub fn dto_to_profile(dto: &crate::IlhaeAppProfileDto) -> IlhaeProfileConfig {
             engine_id: dto.agent.engine_id.clone(),
             command: dto.agent.command.clone(),
             team_mode: dto.agent.team_mode,
+            dream_mode: dto.agent.dream_mode,
+            embed_mode: dto.agent.embed_mode,
             team_backend: normalize_team_backend(&dto.agent.team_backend),
             team_merge_policy: if dto.agent.team_merge_policy.trim().is_empty() {
                 default_team_merge_policy()

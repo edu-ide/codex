@@ -4805,6 +4805,20 @@ impl App {
                 })
                 .await;
             }
+            AppEvent::SetIlhaeDreamMode { enabled } => {
+                self.mutate_native_ilhae_active_profile("dream", move |profile| {
+                    profile.agent.dream_mode = enabled.unwrap_or(!profile.agent.dream_mode);
+                    Ok(())
+                })
+                .await;
+            }
+            AppEvent::SetIlhaeEmbedMode { enabled } => {
+                self.mutate_native_ilhae_active_profile("embed", move |profile| {
+                    profile.agent.embed_mode = enabled.unwrap_or(!profile.agent.embed_mode);
+                    Ok(())
+                })
+                .await;
+            }
             AppEvent::SetIlhaeKairosMode { enabled } => {
                 self.mutate_native_ilhae_active_profile("kairos", move |profile| {
                     profile.agent.kairos = enabled.unwrap_or(!profile.agent.kairos);

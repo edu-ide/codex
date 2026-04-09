@@ -5089,6 +5089,14 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::SetIlhaeTeamMode { enabled: None });
             }
+            SlashCommand::Dream => {
+                self.app_event_tx
+                    .send(AppEvent::SetIlhaeDreamMode { enabled: None });
+            }
+            SlashCommand::Embed => {
+                self.app_event_tx
+                    .send(AppEvent::SetIlhaeEmbedMode { enabled: None });
+            }
             SlashCommand::Kairos => {
                 self.app_event_tx
                     .send(AppEvent::SetIlhaeKairosMode { enabled: None });
