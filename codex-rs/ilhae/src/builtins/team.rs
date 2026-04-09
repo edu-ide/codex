@@ -933,7 +933,7 @@ pub async fn setup_a2a_proxy(
     mode: &str,
 ) -> Result<(A2aProxy, String, String), sacp::Error> {
     let settings = state.infra.settings_store.get();
-    if !settings.agent.team_mode {
+    if !settings.agent.team_mode && std::env::var("ILHAE_DREAM_MODE").is_err() {
         return Err(sacp::Error::invalid_request()
             .data("Team mode is not enabled. Enable it in Settings.".to_string()));
     }

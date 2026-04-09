@@ -109,8 +109,9 @@ impl ConnectTo<Conductor> for ToolsProxy {
         };
 
         if std::env::var("ILHAE_DREAM_MODE").is_ok() {
-            // Dream mode: only ilhae-tools, NO browser tools, NO team servers
-            base_builder.connect_with(conductor, connect_handler).await
+            // Dream mode: ilhae-tools + team-tools, NO browser tools
+            let final_builder = crate::with_team_server!(base_builder, s);
+            final_builder.connect_with(conductor, connect_handler).await
         } else {
             // Normal mode: browser tools + team servers
             let b_builder = base_builder.with_mcp_server({
