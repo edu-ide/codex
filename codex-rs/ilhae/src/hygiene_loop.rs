@@ -737,8 +737,8 @@ fn run_cycle_blocking(
     brain: Arc<BrainService>,
     settings_store: Arc<SettingsStore>,
     ilhae_dir: PathBuf,
-) -> Result<(), String> {
-    run_embedded_cycle(driver, brain, settings_store, ilhae_dir).map(|_| ())
+) -> Result<HygieneLoopOutcome, String> {
+    run_embedded_cycle(driver, brain, settings_store, ilhae_dir)
 }
 
 pub async fn maybe_run_cycle(
@@ -746,16 +746,20 @@ pub async fn maybe_run_cycle(
     brain: Arc<BrainService>,
     settings_store: Arc<SettingsStore>,
     ilhae_dir: PathBuf,
-) {
+) -> Option<HygieneLoopOutcome> {
     let result = tokio::task::spawn_blocking(move || {
         run_cycle_blocking(driver, brain, settings_store, ilhae_dir)
     })
     .await;
     match result {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => warn!(driver = driver.as_str(), error = %err, "[HygieneLoop] cycle failed"),
+        Ok(Ok(outcome)) => Some(outcome),
+        Ok(Err(err)) => {
+            warn!(driver = driver.as_str(), error = %err, "[HygieneLoop] cycle failed");
+            None
+        }
         Err(err) => {
-            warn!(driver = driver.as_str(), error = %err, "[HygieneLoop] worker join failed")
+            warn!(driver = driver.as_str(), error = %err, "[HygieneLoop] worker join failed");
+            None
         }
     }
 }
@@ -766,15 +770,49 @@ pub async fn run_worker_loop(
     ilhae_dir: PathBuf,
 ) {
     info!("[HygieneLoop] worker loop started");
+    // Initial delay before first hygiene cycle
     tokio::time::sleep(Duration::from_secs(75)).await;
     loop {
-        maybe_run_cycle(
+        let outcome = maybe_run_cycle(
             HygieneLoopDriver::Worker,
             brain.clone(),
             settings_store.clone(),
             ilhae_dir.clone(),
         )
         .await;
+        
+        // Spawn background LLM Dream if candidates are found
+        if let Some(out) = outcome {
+            if out.dream_duplicate_candidates > 0 || out.dream_rare_candidates > 0 {
+                info!("[HygieneLoop] Discovered dream candidates. Spawning background autonomous Dream Agent...");
+                let exe_path = std::env::current_exe().unwrap_or_else(|_| "ilhae".into());
+                let dream_prompt = "너는 백그라운드 지식 정리(Dream) 에이전트야. \
+                    사용자와 직접 소통하지 말고 즉시 `brain_memory_ops`의 `dream_preview`를 호출해서 \
+                    산발된 기억 조각들과 중복 청크들을 진단해. \
+                    그 후 `brain_artifact_ops`를 사용해 의미 있는 마크다운 파일(index.md 등)로 융합하고 중복을 제거한 뒤 세션을 종료해.";
+                
+                tokio::spawn(async move {
+                    match tokio::process::Command::new(exe_path)
+                        .arg("exec")
+                        .arg(dream_prompt)
+                        .output()
+                        .await
+                    {
+                        Ok(output) => {
+                            if output.status.success() {
+                                info!("[HygieneLoop] Background Dream Agent completed successfully.");
+                            } else {
+                                warn!("[HygieneLoop] Background Dream Agent failed with exit code: {:?}", output.status.code());
+                            }
+                        }
+                        Err(e) => {
+                            warn!("[HygieneLoop] Failed to spawn Background Dream Agent: {}", e);
+                        }
+                    }
+                });
+            }
+        }
+
         tokio::time::sleep(Duration::from_secs(DEFAULT_HYGIENE_POLL_INTERVAL_SECS)).await;
     }
 }
