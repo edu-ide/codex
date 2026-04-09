@@ -376,37 +376,6 @@ fn maybe_emit_team_tool_events(
     }
 }
 
-use regex::Regex;
-
-async fn extract_and_save_knowledge(
-    brain: &Arc<brain_rs::BrainService>,
-    summary: &str,
-    session_id: &str,
-) {
-    let re = Regex::new(r"(?s)10\. Knowledge Extraction \(for brain-rs\):\s*(.*)").unwrap();
-    if let Some(caps) = re.captures(summary) {
-        let extracted_section = caps.get(1).map_or("", |m| m.as_str());
-        let fact_re = Regex::new(r"-\s*(.*?):\s*(fact|preference)\s*-\s*(.*)").unwrap();
-
-        for cap in fact_re.captures_iter(extracted_section) {
-            let label = cap.get(1).map_or("", |m| m.as_str()).trim();
-            let kind = cap.get(2).map_or("", |m| m.as_str()).trim();
-            let content = cap.get(3).map_or("", |m| m.as_str()).trim();
-
-            info!(
-                "[Knowledge Extraction] Found {}: {} ({})",
-                kind, label, content
-            );
-
-            // Save to brain-rs knowledge base
-            let fact_summary = format!("{}: {}", label, content);
-            let _ = fact_summary;
-            // Actual brain-rs knowledge saving logic would go here
-            // e.g., brain.knowledge().add_fact(label, kind, content, session_id).await;
-        }
-    }
-}
-
 impl ConnectTo<Conductor> for RelayProxy {
     async fn connect_to(self, conductor: impl ConnectTo<Proxy>) -> Result<(), sacp::Error> {
         let s = self.state;

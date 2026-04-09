@@ -12,7 +12,7 @@ macro_rules! register_admin_memory_handlers {
                                 responder: Responder<MemorySearchResponse>,
                                 _cx: ConnectionTo<Conductor>| {
                         info!("ilhae/memory_search RPC query={}", req.query);
-                        match brain.memory_search(&req.query, req.limit, None) {
+                        match brain.memory_search(&req.query, req.limit, None, None) {
                             Ok(chunks) => responder.respond(MemorySearchResponse { chunks }),
                             Err(e) => {
                                 warn!("memory_search error: {}", e);

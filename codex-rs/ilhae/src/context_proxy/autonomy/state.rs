@@ -12,6 +12,7 @@ pub enum AutonomousPhase {
     Running,
     WaitingForApproval,
     ResumingAfterApproval,
+    Retro,
     Completed,
     Cancelled,
     Failed,

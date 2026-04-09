@@ -58,7 +58,7 @@ macro_rules! register_memory_tools {
                     let bts = $bt_settings.clone();
                     async move |input: MemoryToolSearchInput, _cx| {
                         $crate::check_tool_enabled!(bts, "memory_search");
-                        match brain.memory_search(&input.query, input.limit, None) {
+                        match brain.memory_search(&input.query, input.limit, None, None) {
                             Ok(chunks) => {
                                 let text = serde_json::to_string_pretty(&chunks)
                                     .unwrap_or("[]".to_string());
