@@ -29,7 +29,7 @@ impl ConnectTo<Conductor> for ToolsProxy {
         let s = self.state;
         let sub_handle;
 
-        let proxy_builder = Proxy.builder()
+        let base_builder = Proxy.builder()
             .name("tools-proxy")
             // ═══ Built-in MCP Tools (20 tools) ═══
             .with_mcp_server({
@@ -55,9 +55,65 @@ impl ConnectTo<Conductor> for ToolsProxy {
                 let builder = crate::register_misc_tools!(builder, brain, bt_settings, notify_relay_tx, notif_store);
                 
                 builder.build()
-            })
-            // ═══ Browser Automation MCP Tools (19 tools via browser-use-rs) ═══
-            .with_mcp_server({
+            });
+
+        // Closure to handle the connection and watcher
+        let s_clone = s.clone();
+        let sub_handle_clone = sub_handle.clone();
+        let connect_handler = move |cx: ConnectionTo<Conductor>| {
+            let s_conn = s_clone.clone();
+            let subs = sub_handle_clone.clone();
+            async move {
+                s_conn.infra.relay_conductor_cx.try_add(cx.clone()).await;
+
+                // ═══ MCP Resource Change Watcher ═══
+                let cx_notif = cx.clone();
+                tokio::spawn(async move {
+                    let mut rx = crate::memory_provider::subscribe_changes();
+                    loop {
+                        match rx.recv().await {
+                            Ok(event) => {
+                                if subs.is_subscribed(&event.uri)
+                                    || subs.is_subscribed("ilhae://memory/all")
+                                {
+                                    tracing::info!(
+                                        "[MCP] Resource updated: {}, notifying subscribers",
+                                        event.uri
+                                    );
+                                    if let Ok(notif) = sacp::UntypedMessage::new(
+                                        "notifications/resources/updated",
+                                        serde_json::json!({ "uri": event.uri }),
+                                    ) {
+                                        let _ = cx_notif.send_notification_to(Agent, notif);
+                                    }
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!(
+                                    "[MCP] Resource watcher lagged, missed {} events",
+                                    n
+                                );
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                tracing::debug!(
+                                    "[MCP] Resource change channel closed, stopping watcher"
+                                );
+                                break;
+                            }
+                        }
+                    }
+                });
+
+                std::future::pending::<Result<(), sacp::Error>>().await
+            }
+        };
+
+        if std::env::var("ILHAE_DREAM_MODE").is_ok() {
+            // Dream mode: only ilhae-tools, NO browser tools, NO team servers
+            base_builder.connect_with(conductor, connect_handler).await
+        } else {
+            // Normal mode: browser tools + team servers
+            let b_builder = base_builder.with_mcp_server({
                 let session_handle = s.infra.browser_mgr.get_session();
                 let bmgr = s.infra.browser_mgr.clone();
                 let bsettings = s.infra.settings_store.clone();
@@ -67,56 +123,8 @@ impl ConnectTo<Conductor> for ToolsProxy {
                 b.build()
             });
 
-        // ═══ Team Agent Delegation MCP Tools (A2A via A2aProxy) ═══
-        let proxy_builder = crate::with_team_server!(proxy_builder, s);
-
-        proxy_builder
-            .connect_with(conductor, async move |cx: ConnectionTo<Conductor>| {
-                s.infra.relay_conductor_cx.try_add(cx.clone()).await;
-
-                // ═══ MCP Resource Change Watcher ═══
-                {
-                    let subs = sub_handle.clone();
-                    let cx_notif = cx.clone();
-                    tokio::spawn(async move {
-                        let mut rx = crate::memory_provider::subscribe_changes();
-                        loop {
-                            match rx.recv().await {
-                                Ok(event) => {
-                                    if subs.is_subscribed(&event.uri)
-                                        || subs.is_subscribed("ilhae://memory/all")
-                                    {
-                                        tracing::info!(
-                                            "[MCP] Resource updated: {}, notifying subscribers",
-                                            event.uri
-                                        );
-                                        if let Ok(notif) = sacp::UntypedMessage::new(
-                                            "notifications/resources/updated",
-                                            serde_json::json!({ "uri": event.uri }),
-                                        ) {
-                                            let _ = cx_notif.send_notification_to(Agent, notif);
-                                        }
-                                    }
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                    tracing::warn!(
-                                        "[MCP] Resource watcher lagged, missed {} events",
-                                        n
-                                    );
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                    tracing::debug!(
-                                        "[MCP] Resource change channel closed, stopping watcher"
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-                    });
-                }
-
-                std::future::pending::<Result<(), sacp::Error>>().await
-            })
-            .await
+            let final_builder = crate::with_team_server!(b_builder, s);
+            final_builder.connect_with(conductor, connect_handler).await
+        }
     }
 }

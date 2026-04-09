@@ -977,49 +977,51 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
 
     let mut mcp_servers = toml::value::Table::new();
 
-    let mut brain = toml::value::Table::new();
-    brain.insert(
-        "command".to_string(),
-        toml::Value::String("brain".to_string()),
-    );
-    brain.insert(
-        "args".to_string(),
-        toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
-    );
-    mcp_servers.insert("brain".to_string(), toml::Value::Table(brain));
+    if std::env::var("ILHAE_DREAM_MODE").is_err() {
+        let mut brain = toml::value::Table::new();
+        brain.insert(
+            "command".to_string(),
+            toml::Value::String("brain".to_string()),
+        );
+        brain.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
+        );
+        mcp_servers.insert("brain".to_string(), toml::Value::Table(brain));
 
-    let mut browser = toml::value::Table::new();
-    browser.insert(
-        "command".to_string(),
-        toml::Value::String("browser".to_string()),
-    );
-    browser.insert(
-        "args".to_string(),
-        toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
-    );
-    mcp_servers.insert("browser".to_string(), toml::Value::Table(browser));
+        let mut browser = toml::value::Table::new();
+        browser.insert(
+            "command".to_string(),
+            toml::Value::String("browser".to_string()),
+        );
+        browser.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
+        );
+        mcp_servers.insert("browser".to_string(), toml::Value::Table(browser));
 
-    let mut computer = toml::value::Table::new();
-    computer.insert(
-        "command".to_string(),
-        toml::Value::String("computer".to_string()),
-    );
-    computer.insert(
-        "args".to_string(),
-        toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
-    );
-    mcp_servers.insert("computer".to_string(), toml::Value::Table(computer));
+        let mut computer = toml::value::Table::new();
+        computer.insert(
+            "command".to_string(),
+            toml::Value::String("computer".to_string()),
+        );
+        computer.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
+        );
+        mcp_servers.insert("computer".to_string(), toml::Value::Table(computer));
 
-    let mut email = toml::value::Table::new();
-    email.insert(
-        "command".to_string(),
-        toml::Value::String("email".to_string()),
-    );
-    email.insert(
-        "args".to_string(),
-        toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
-    );
-    mcp_servers.insert("email".to_string(), toml::Value::Table(email));
+        let mut email = toml::value::Table::new();
+        email.insert(
+            "command".to_string(),
+            toml::Value::String("email".to_string()),
+        );
+        email.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
+        );
+        mcp_servers.insert("email".to_string(), toml::Value::Table(email));
+    }
 
     root.insert("mcp_servers".to_string(), toml::Value::Table(mcp_servers));
 

@@ -40,7 +40,6 @@ pub struct BootstrappedIlhaeRuntime {
     pub ilhae_dir: std::path::PathBuf,
     pub settings_store: Arc<SettingsStore>,
     pub brain: Arc<brain_rs::BrainService>,
-    pub context_prefix: String,
     pub cx_cache: CxCache,
 }
 
@@ -378,7 +377,7 @@ pub async fn prepare_session_turn_inputs(
     let context_deps = crate::session_context_service::SessionPromptContextDeps {
         brain: runtime.brain.clone(),
         settings_store: runtime.settings_store.clone(),
-        context_prefix: runtime.context_prefix.clone(),
+        ilhae_dir: runtime.ilhae_dir.clone(),
         reverse_session_map: None,
         active_session_id: None,
     };
@@ -475,14 +474,12 @@ pub async fn bootstrap_ilhae_runtime() -> anyhow::Result<BootstrappedIlhaeRuntim
         brain_rs::BrainService::new_with_brain_writer(&ilhae_dir, None, brain_writer)
             .expect("Failed to initialize BrainService");
     let brain_service = Arc::new(brain_service);
-    let context_prefix = build_context_prefix(&ilhae_dir);
     let cx_cache = CxCache::new();
 
     let runtime = BootstrappedIlhaeRuntime {
         ilhae_dir: ilhae_dir.clone(),
         settings_store: settings_store.clone(),
         brain: brain_service,
-        context_prefix,
         cx_cache,
     };
     let _ = NATIVE_RUNTIME_CONTEXT.set(runtime.clone());
@@ -501,7 +498,6 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
     let ilhae_dir = bootstrapped.ilhae_dir.clone();
     let settings_store = bootstrapped.settings_store.clone();
     let brain_service = bootstrapped.brain.clone();
-    let context_prefix = bootstrapped.context_prefix.clone();
     let runtime_cx_cache = bootstrapped.cx_cache.clone();
     let mock_enabled = crate::mock_provider::is_mock_mode();
 
@@ -1535,7 +1531,6 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
         terminal_manager: terminal_manager.clone(),
         cached_config_options: cached_config_options.clone(),
         shared_task_pool: shared_task_pool.clone(),
-        context_prefix: context_prefix.clone(),
         agent_refresh_tx: agent_refresh_tx.clone(),
     };
 

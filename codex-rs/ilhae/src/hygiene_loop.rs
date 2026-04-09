@@ -28,7 +28,7 @@ impl HygieneLoopDriver {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(crate) struct HygieneLoopOutcome {
+pub struct HygieneLoopOutcome {
     pub(crate) duplicate_groups: usize,
     pub(crate) duplicate_tasks_folded: usize,
     pub(crate) legacy_commands_normalized: usize,
@@ -787,6 +787,7 @@ pub async fn run_worker_loop(
                 info!("[HygieneLoop] Discovered dream candidates. Spawning background autonomous Dream Agent...");
                 let exe_path = std::env::current_exe().unwrap_or_else(|_| "ilhae".into());
                 let dream_prompt = "너는 백그라운드 지식 정리(Dream) 에이전트야. \
+                    [CRITICAL RULE: 절대 실제 소스코드(.ts, .rs, .py 등)나 프로젝트 파일을 수정/삭제하지 마라! 오직 지식 금고(.brain/ 또는 글로벌 메모리)의 마크다운(.md) 파일만 다루어야 한다.] \
                     사용자와 직접 소통하지 말고 즉시 `brain_memory_ops`의 `dream_preview`를 호출해서 \
                     산발된 기억 조각들과 중복 청크들을 진단해. \
                     그 후 `brain_artifact_ops`를 사용해 의미 있는 마크다운 파일(index.md 등)로 융합하고 중복을 제거한 뒤 세션을 종료해.";
@@ -795,6 +796,7 @@ pub async fn run_worker_loop(
                     match tokio::process::Command::new(exe_path)
                         .arg("exec")
                         .arg(dream_prompt)
+                        .env("ILHAE_DREAM_MODE", "1")
                         .output()
                         .await
                     {
