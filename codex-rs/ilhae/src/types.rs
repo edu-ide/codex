@@ -395,9 +395,9 @@ pub struct IlhaeAppProfileAgentDto {
     pub command: Option<String>,
     #[serde(rename = "teamMode")]
     pub team_mode: bool,
-    #[serde(rename = "dreamMode", default = "crate::settings_types::default_true")]
+    #[serde(rename = "dreamMode", default)]
     pub dream_mode: bool,
-    #[serde(rename = "embedMode", default = "crate::settings_types::default_true")]
+    #[serde(rename = "embedMode", default)]
     pub embed_mode: bool,
     #[serde(rename = "teamBackend", default)]
     pub team_backend: String,

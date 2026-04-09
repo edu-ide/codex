@@ -68,15 +68,16 @@ pub(super) struct PendingSteerCompareKey {
 impl ChatWidget {
     pub(super) fn rendered_user_message_event_from_parts(
         message: String,
-        text_elements: Vec<TextElement>,
+        _text_elements: Vec<TextElement>,
         local_images: Vec<PathBuf>,
         remote_image_urls: Vec<String>,
     ) -> RenderedUserMessageEvent {
+        let stripped_message = crate::history_cell::strip_agent_context(&message);
         RenderedUserMessageEvent {
-            message,
+            message: stripped_message,
             remote_image_urls,
             local_images,
-            text_elements,
+            text_elements: Vec::new(), // Clear to prevent deduplication failure from byte_range shifts
         }
     }
 
@@ -110,9 +111,10 @@ impl ChatWidget {
                 _ => {}
             }
         }
+        let stripped_message = crate::history_cell::strip_agent_context(&message);
 
         PendingSteerCompareKey {
-            message,
+            message: stripped_message,
             image_count,
         }
     }

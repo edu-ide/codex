@@ -92,8 +92,7 @@ macro_rules! register_artifact_tools {
                                 Ok::<String, sacp::Error>(serde_json::to_string_pretty(&artifact).unwrap_or_default())
                             }
                             Ok(None) => {
-                                let filename = brain_rs::BrainService::artifact_filename(&input.artifact_type);
-                                Ok::<String, sacp::Error>(format!("No artifact '{}' found in this session.", filename))
+                                Ok::<String, sacp::Error>(format!("No artifact '{}' found in this session.", input.artifact_type))
                             }
                             Err(e) => Err(sacp::Error::internal_error().data(format!("Get error: {}", e))),
                         }

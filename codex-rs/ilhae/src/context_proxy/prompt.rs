@@ -127,7 +127,7 @@ pub async fn handle_prompt_request(
     let context_deps = SessionPromptContextDeps {
         brain: state.infra.brain.clone(),
         settings_store: state.infra.settings_store.clone(),
-        context_prefix: state.infra.context_prefix.clone(),
+        ilhae_dir: state.infra.ilhae_dir.clone(),
         reverse_session_map: Some(state.sessions.reverse_map.clone()),
         active_session_id: Some(state.sessions.active_session_id.clone()),
     };

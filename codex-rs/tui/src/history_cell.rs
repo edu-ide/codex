@@ -295,6 +295,29 @@ fn trim_trailing_blank_lines(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>
     lines
 }
 
+pub(crate) fn strip_agent_context(text: &str) -> String {
+    let mut processed = text.to_string();
+
+    let tags_to_remove = [
+        ("<mcp_app_widget_state>", "</mcp_app_widget_state>"),
+        ("<system_directive", "</system_directive>"),
+        ("<agent_context>", "</agent_context>"),
+    ];
+
+    for (start_tag, end_tag) in tags_to_remove {
+        while let Some(start_idx) = processed.find(start_tag) {
+            if let Some(end_idx) = processed[start_idx..].find(end_tag) {
+                let full_end = start_idx + end_idx + end_tag.len();
+                processed.replace_range(start_idx..full_end, "");
+            } else {
+                break;
+            }
+        }
+    }
+
+    processed.trim().to_string()
+}
+
 impl HistoryCell for UserHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let wrap_width = width
@@ -305,6 +328,8 @@ impl HistoryCell for UserHistoryCell {
 
         let style = user_message_style();
         let element_style = style.fg(Color::Cyan);
+
+        let stripped_message = strip_agent_context(&self.message);
 
         let wrapped_remote_images = if self.remote_image_urls.is_empty() {
             None
@@ -321,14 +346,14 @@ impl HistoryCell for UserHistoryCell {
             ))
         };
 
-        let wrapped_message = if self.message.is_empty() && self.text_elements.is_empty() {
+        let wrapped_message = if stripped_message.is_empty() && self.text_elements.is_empty() {
             None
         } else if self.text_elements.is_empty() {
-            let message_without_trailing_newlines = self.message.trim_end_matches(['\r', '\n']);
+            let message_without_trailing_newlines = stripped_message.trim_end_matches(['\r', '\n']);
             let wrapped = adaptive_wrap_lines(
                 message_without_trailing_newlines
                     .split('\n')
-                    .map(|line| Line::from(line).style(style)),
+                    .map(|line| Line::from(line.to_string()).style(style)),
                 // Wrap algorithm matches textarea.rs.
                 RtOptions::new(usize::from(wrap_width))
                     .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
@@ -336,9 +361,17 @@ impl HistoryCell for UserHistoryCell {
             let wrapped = trim_trailing_blank_lines(wrapped);
             (!wrapped.is_empty()).then_some(wrapped)
         } else {
+            let shift = self.message.len().saturating_sub(stripped_message.len());
+            let adjusted_elements: Vec<_> = self.text_elements.iter().map(|e| {
+                let mut new_e = e.clone();
+                new_e.byte_range.start = new_e.byte_range.start.saturating_sub(shift);
+                new_e.byte_range.end = new_e.byte_range.end.saturating_sub(shift);
+                new_e
+            }).collect();
+
             let raw_lines = build_user_message_lines_with_elements(
-                &self.message,
-                &self.text_elements,
+                &stripped_message,
+                &adjusted_elements,
                 style,
                 element_style,
             );

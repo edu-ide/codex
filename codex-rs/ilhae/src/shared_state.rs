@@ -137,8 +137,6 @@ pub struct InfraContext {
     pub cached_config_options: Arc<RwLock<Vec<serde_json::Value>>>,
     /// Shared task pool for unassigned schedules (claim-based delegation).
     pub shared_task_pool: Arc<RwLock<Vec<crate::types::SharedTaskDto>>>,
-    /// Shared context prefix for dynamic system artifacts.
-    pub context_prefix: String,
     /// Triggers agent refresh for pre-spawn/team updates.
     pub agent_refresh_tx: tokio::sync::mpsc::UnboundedSender<()>,
 }

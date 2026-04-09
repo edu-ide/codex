@@ -128,7 +128,7 @@ pub struct PreparedSessionPromptContext {
 pub struct SessionPromptContextDeps {
     pub brain: Arc<BrainService>,
     pub settings_store: Arc<SettingsStore>,
-    pub context_prefix: String,
+    pub ilhae_dir: std::path::PathBuf,
     pub reverse_session_map: Option<Arc<Cache<String, String>>>,
     pub active_session_id: Option<Arc<RwLock<String>>>,
 }
@@ -256,9 +256,8 @@ pub async fn prepare_session_prompt_context(
         prompt_blocks.push(ContentBlock::Text(TextContent::new(
             ARTIFACT_INSTRUCTION.to_string(),
         )));
-        prompt_blocks.push(ContentBlock::Text(TextContent::new(
-            deps.context_prefix.clone(),
-        )));
+        let context_prefix = crate::config::build_context_prefix(&deps.ilhae_dir);
+        prompt_blocks.push(ContentBlock::Text(TextContent::new(context_prefix)));
     }
 
     Ok(PreparedSessionPromptContext {

@@ -781,11 +781,12 @@ pub async fn run_worker_loop(
         )
         .await;
         
-        // Spawn background LLM Dream if candidates are found
-        if let Some(out) = outcome {
-            if out.dream_duplicate_candidates > 0 || out.dream_rare_candidates > 0 {
-                info!("[HygieneLoop] Discovered dream candidates. Spawning background autonomous Dream Agent...");
-                let exe_path = std::env::current_exe().unwrap_or_else(|_| "ilhae".into());
+        // Spawn background LLM Dream if candidates are found and dream mode is enabled
+        if settings_store.get().agent.dream_mode {
+            if let Some(out) = outcome {
+                if out.dream_duplicate_candidates > 0 || out.dream_rare_candidates > 0 {
+                    info!("[HygieneLoop] Discovered dream candidates. Spawning background autonomous Dream Agent...");
+                    let exe_path = std::env::current_exe().unwrap_or_else(|_| "ilhae".into());
                 let dream_prompt = "너는 백그라운드 지식 정리(Dream) 에이전트야. \
                     [CRITICAL RULE: 절대 실제 소스코드(.ts, .rs, .py 등)나 프로젝트 파일을 수정/삭제하지 마라! 오직 지식 금고(.brain/ 또는 글로벌 메모리)의 마크다운(.md) 파일만 다루어야 한다.] \
                     사용자와 직접 소통하지 말고 즉시 `brain_memory_ops`의 `dream_preview`를 호출해서 \
@@ -814,6 +815,7 @@ pub async fn run_worker_loop(
                     }
                 });
             }
+        }
         }
 
         tokio::time::sleep(Duration::from_secs(DEFAULT_HYGIENE_POLL_INTERVAL_SECS)).await;

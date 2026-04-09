@@ -5535,6 +5535,66 @@ impl ChatWidget {
                     });
                 self.bottom_pane.drain_pending_submission_state();
             }
+            SlashCommand::Dream if !trimmed.is_empty() => {
+                let Some((prepared_args, _)) = self
+                    .bottom_pane
+                    .prepare_inline_args_submission(false)
+                else {
+                    return;
+                };
+                match prepared_args.trim().to_ascii_lowercase().as_str() {
+                    "start" => {
+                        let prompt = "<system_directive>Invoke brain_memory_ops with action 'dream_preview', then use brain_artifact_ops to consolidate knowledge.</system_directive> Please run background dream immediately.";
+                        self.submit_user_message(prompt.to_string().into());
+                    }
+                    "status" => {
+                        let prompt = "<system_directive>Invoke brain_memory_ops with action 'dream_preview' to check the current memory fragmentation and duplicate candidates. Report the status to the user without modifying files.</system_directive> What is the current memory hygiene (Dream) status?";
+                        self.submit_user_message(prompt.to_string().into());
+                    }
+                    "on" => {
+                        self.app_event_tx.send(AppEvent::SetIlhaeDreamMode { enabled: Some(true) });
+                        self.add_history_message("✅ Dream mode enabled.");
+                    }
+                    "off" => {
+                        self.app_event_tx.send(AppEvent::SetIlhaeDreamMode { enabled: Some(false) });
+                        self.add_history_message("🚫 Dream mode disabled.");
+                    }
+                    _ => {
+                        self.add_error_message("Usage: /dream [start|on|off]".to_string());
+                    }
+                }
+                self.bottom_pane.drain_pending_submission_state();
+            }
+            SlashCommand::Embed if !trimmed.is_empty() => {
+                let Some((prepared_args, _)) = self
+                    .bottom_pane
+                    .prepare_inline_args_submission(false)
+                else {
+                    return;
+                };
+                match prepared_args.trim().to_ascii_lowercase().as_str() {
+                    "start" => {
+                        let prompt = "<system_directive>Invoke brain_memory_ops with action 'index_start' to index the current workspace.</system_directive> Please build the vector index for this workspace now.";
+                        self.submit_user_message(prompt.to_string().into());
+                    }
+                    "status" => {
+                        let prompt = "<system_directive>Invoke brain_memory_ops with action 'index_status'.</system_directive> What is the current vector indexing status?";
+                        self.submit_user_message(prompt.to_string().into());
+                    }
+                    "on" => {
+                        self.app_event_tx.send(AppEvent::SetIlhaeEmbedMode { enabled: Some(true) });
+                        self.add_history_message("✅ Embed mode enabled.");
+                    }
+                    "off" => {
+                        self.app_event_tx.send(AppEvent::SetIlhaeEmbedMode { enabled: Some(false) });
+                        self.add_history_message("🚫 Embed mode disabled.");
+                    }
+                    _ => {
+                        self.add_error_message("Usage: /embed [start|status|on|off]".to_string());
+                    }
+                }
+                self.bottom_pane.drain_pending_submission_state();
+            }
             _ => self.dispatch_command(cmd),
         }
     }

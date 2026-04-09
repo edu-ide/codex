@@ -183,9 +183,10 @@ pub async fn handle_prompt_request(
                 .is_some_and(|info| info.message_count == 0));
     if should_inject_context {
         info!("Injecting context for session: {}", session_id);
+        let context_prefix = crate::config::build_context_prefix(&ilhae_dir);
         req.prompt.insert(
             0,
-            ContentBlock::Text(TextContent::new(context_prefix.clone())),
+            ContentBlock::Text(TextContent::new(context_prefix)),
         );
 
         // Inject session-specific artifact directory path so the agent writes

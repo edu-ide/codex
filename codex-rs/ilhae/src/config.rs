@@ -95,9 +95,9 @@ pub struct IlhaeProfileAgentConfig {
     pub engine_id: Option<String>,
     pub command: Option<String>,
     pub team_mode: bool,
-    #[serde(default = "crate::settings_types::default_true")]
+    #[serde(default)]
     pub dream_mode: bool,
-    #[serde(default = "crate::settings_types::default_true")]
+    #[serde(default)]
     pub embed_mode: bool,
     #[serde(default = "default_team_backend")]
     pub team_backend: String,

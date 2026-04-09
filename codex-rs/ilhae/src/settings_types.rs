@@ -185,10 +185,10 @@ pub struct AgentSettings {
     #[serde(default)]
     pub team_mode: bool,
     /// Dream mode (Background hygiene agent) on/off flag.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub dream_mode: bool,
     /// Embed mode (Right Brain vector search) on/off flag.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub embed_mode: bool,
     /// Team execution backend: local | remote | hybrid.
     #[serde(default = "default_team_backend")]
@@ -545,8 +545,8 @@ impl Default for AgentSettings {
             active_profile: None,
             a2a_endpoint: String::new(),
             team_mode: false,
-            dream_mode: true,
-            embed_mode: true,
+            dream_mode: false,
+            embed_mode: false,
             team_backend: default_team_backend(),
             team_merge_policy: default_team_merge_policy(),
             team_max_retries: default_team_max_retries(),

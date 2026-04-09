@@ -20,6 +20,8 @@ pub enum SlashCommand {
     Auto,
     Team,
     Kairos,
+    #[strum(serialize = "dream-bg")]
+    BgDream,
     Dream,
     Embed,
     Improve,
