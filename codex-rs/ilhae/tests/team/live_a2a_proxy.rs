@@ -6,17 +6,10 @@
 //!   - `~/ilhae/team.json` exists with agents on ports 4321-4324
 //!
 //! Run:
-//!   cargo test -p ilhae-proxy --test team_e2e -- --nocapture
+//!   ILHAE_RUN_TEAM_LIVE_A2A=1 cargo test --test team live_a2a_proxy -- --nocapture
 
-use std::path::PathBuf;
+use super::common::test_gate::require_team_live_a2a;
 use std::time::Duration;
-
-// ── ilhae_proxy lib crate ────────────────────────────────────────────
-use ilhae_proxy::context_proxy::team_a2a::{
-    TeamRuntimeConfig, extract_port_from_endpoint, load_team_runtime_config, parse_a2a_result,
-    wait_for_a2a_health,
-};
-use ilhae_proxy::settings_store::Settings;
 
 // ── Constants ────────────────────────────────────────────────────────
 const TEAM_ENDPOINTS: &[(&str, &str)] = &[
@@ -26,14 +19,14 @@ const TEAM_ENDPOINTS: &[(&str, &str)] = &[
     ("Creator", "http://localhost:4324"),
 ];
 
-fn ilhae_dir() -> PathBuf {
-    dirs::home_dir().unwrap().join("ilhae")
-}
-
 use super::common::a2a_test_helpers::*;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_a2a_proxy_persists_messages_to_db() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     // ── Setup: temp DB + proxy ──
     let (store, _tmp) = make_test_session_store();
 
@@ -96,13 +89,11 @@ async fn test_a2a_proxy_persists_messages_to_db() {
     // A2AServer spawns executor.execute() via tokio::spawn.
     // SSE streaming to real agent takes ~5-10s (LLM processing).
     println!("⏳ Waiting for background execute() to persist messages...");
-    let mut total_msgs = 0;
-    let mut has_agent_response = false;
     for i in 0..60 {
         tokio::time::sleep(Duration::from_millis(500)).await;
         let msgs = store.load_session_messages(&session_id).unwrap_or_default();
-        total_msgs = msgs.len();
-        has_agent_response = msgs.iter().any(|m| m.role == "assistant");
+        let total_msgs = msgs.len();
+        let has_agent_response = msgs.iter().any(|m| m.role == "assistant");
         if has_agent_response {
             println!(
                 "  ✅ Agent response appeared after {}ms ({} total)",
@@ -181,6 +172,10 @@ async fn test_a2a_proxy_persists_messages_to_db() {
 /// Test 3: Multi-turn conversation — 2 messages in same session, verify full history.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_a2a_proxy_multi_turn_conversation() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let (store, _tmp) = make_test_session_store();
     let session_id = uuid::Uuid::new_v4().to_string();
     store
@@ -313,6 +308,10 @@ async fn test_a2a_proxy_multi_turn_conversation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_a2a_proxy_persists_all_agents() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let (store, _tmp) = make_test_session_store();
 
     let session_id = uuid::Uuid::new_v4().to_string();

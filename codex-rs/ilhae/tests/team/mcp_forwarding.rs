@@ -4,6 +4,7 @@
 //!   3. DB versioning via ilhae-mcp-server
 
 use super::common::team_helpers::*;
+use super::common::test_gate::require_team_local_a2a_spawn;
 use a2a_rs::event::{EventBus, ExecutionEvent};
 use a2a_rs::executor::{AgentExecutor, RequestContext};
 use a2a_rs::types::*;
@@ -112,9 +113,12 @@ async fn send_via_executor(
 }
 
 /// 2-turn artifact versioning test via ForwardingExecutor (production path).
-#[ignore]
 #[tokio::test]
 async fn test_mcp_config_forwarding_e2e() {
+    if !require_team_local_a2a_spawn() {
+        return;
+    }
+
     println!("\n══════════════════════════════════════════════════════════");
     println!("🧪 Artifact Versioning E2E (ForwardingExecutor path)");
     println!("══════════════════════════════════════════════════════════\n");

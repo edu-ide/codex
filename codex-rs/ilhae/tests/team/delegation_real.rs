@@ -1,14 +1,18 @@
 //! Team delegation real E2E (test_01~06) — config, peer reg, delegation pipeline
 
 use super::common::team_helpers::*;
+use super::common::test_gate::require_team_local_a2a_spawn;
 use ilhae_proxy::a2a_persistence::PersistenceScheduleStore;
 
 // ─── Tests ───────────────────────────────────────────────────────────────
 
 /// Scenario 1: Load team config from real team.json
-#[ignore]
 #[tokio::test]
 async fn test_load_team_config() {
+    if !require_team_local_a2a_spawn() {
+        return;
+    }
+
     let dir = ilhae_dir();
     let team = load_team_runtime_config(&dir);
 
@@ -41,9 +45,12 @@ async fn test_load_team_config() {
 }
 
 /// Scenario 2: Generate peer registration files
-#[ignore]
 #[tokio::test]
 async fn test_peer_registration() {
+    if !require_team_local_a2a_spawn() {
+        return;
+    }
+
     let dir = ilhae_dir();
     let team = load_team_runtime_config(&dir).expect("team.json required");
 
@@ -98,11 +105,14 @@ async fn test_peer_registration() {
 /// - All messages are persisted to DB with proper agent_id
 /// - Delegation events (if the model delegates) are captured
 /// - The full proxy chain is exercised end-to-end
-#[ignore]
 #[tokio::test]
 async fn test_full_delegation_pipeline() {
+    if !require_team_local_a2a_spawn() {
+        return;
+    }
+
     use a2a_rs::client::StreamEvent;
-    use a2a_rs::proxy::{extract_text_from_stream_event, is_terminal_state};
+    use a2a_rs::proxy::extract_text_from_stream_event;
     use ilhae_proxy::CxCache;
     use ilhae_proxy::a2a_persistence::{ForwardingExecutor, build_routing_table};
     use std::sync::Arc;
@@ -258,10 +268,10 @@ async fn test_full_delegation_pipeline() {
                             task.status.state
                         );
                     }
-                    StreamEvent::ArtifactUpdate(au) => {
+                    StreamEvent::ArtifactUpdate(_) => {
                         println!("  Event#{}: ArtifactUpdate", i + 1);
                     }
-                    StreamEvent::Message(msg) => {
+                    StreamEvent::Message(_) => {
                         println!("  Event#{}: Message text='{:.80}'", i + 1, event_text);
                     }
                 }
@@ -395,9 +405,12 @@ async fn test_full_delegation_pipeline() {
 ///
 /// Uses lib crate's A2aProxy to send a simple prompt to each agent
 /// WITHOUT going through the Leader. Validates the A2A protocol works.
-#[ignore]
 #[tokio::test]
 async fn test_direct_agent_access() {
+    if !require_team_local_a2a_spawn() {
+        return;
+    }
+
     let dir = ilhae_dir();
     let team = load_team_runtime_config(&dir).expect("team.json required");
 
@@ -443,9 +456,12 @@ async fn test_direct_agent_access() {
 /// 3. Verify StreamEvent lifecycle (terminal state reached)
 /// 4. Persist assistant response to DB
 /// 5. Verify full conversation retrievable from DB
-#[ignore]
 #[tokio::test]
 async fn test_full_conversation_e2e() {
+    if !require_team_local_a2a_spawn() {
+        return;
+    }
+
     use a2a_rs::client::StreamEvent;
     use a2a_rs::proxy::{extract_text_from_stream_event, is_terminal_state};
 
@@ -519,7 +535,8 @@ async fn test_full_conversation_e2e() {
     )
     .await;
 
-    let (accumulated_text, thinking_text, event_count, terminal_state, task_id_str) = match result {
+    let (accumulated_text, thinking_text, event_count, terminal_state, _task_id_str) = match result
+    {
         Ok(Ok((text, events))) => {
             println!(
                 "✅ Step 2: A2aProxy completed — {} chars, {} events",
@@ -603,7 +620,7 @@ async fn test_full_conversation_e2e() {
                             au.artifact.name.as_deref().unwrap_or("?")
                         );
                     }
-                    StreamEvent::Message(msg) => {
+                    StreamEvent::Message(_) => {
                         println!("  Event#{}: Message text='{:.80}'", i + 1, event_text);
                     }
                 }
@@ -807,9 +824,12 @@ async fn test_full_conversation_e2e() {
 /// 4. **Full-mesh** — Researcher → Verifier direct (cross-agent communication)
 ///
 /// Each subtest validates event parsing, text extraction, and terminal state.
-#[ignore]
 #[tokio::test]
 async fn test_a2a_proxy_tri_mode_full_mesh() {
+    if !require_team_local_a2a_spawn() {
+        return;
+    }
+
     use a2a_rs::client::StreamEvent;
     use a2a_rs::proxy::{extract_text_from_stream_event, is_terminal_state};
 

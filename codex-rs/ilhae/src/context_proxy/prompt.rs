@@ -136,6 +136,15 @@ pub async fn handle_prompt_request(
         .map_err(|err| sacp::util::internal_error(err.to_string()))?;
     prepend_prompt_blocks(&mut req.prompt, prepared_context.prompt_blocks);
     let session_info = prepared_context.session_info;
+    let effective_session_id = session_info
+        .as_ref()
+        .map(|info| info.id.clone())
+        .or_else(|| state.sessions.reverse_map.get(&session_id))
+        .unwrap_or_else(|| session_id.clone());
+    state.sessions.connection_sessions.insert(
+        crate::shared_state::connection_key(&cx),
+        effective_session_id,
+    );
 
     let sid_for_instr = session_id.clone();
     let sid_for_hist = session_id.clone();

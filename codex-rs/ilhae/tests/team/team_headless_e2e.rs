@@ -10,7 +10,7 @@
 //!   - Gemini API key (via USE_CCPA or GEMINI_API_KEY)
 //!
 //! Run:
-//!   cargo test --test team team_headless_e2e -- --ignored --nocapture
+//!   ILHAE_RUN_TEAM_HEADLESS_E2E=1 cargo test --test team team_headless_e2e -- --nocapture
 //!
 //! Test Scenarios:
 //!   1. Team chat E2E — init → session/new → prompt → streaming updates → DB verify
@@ -20,6 +20,7 @@
 
 use super::common::proxy_harness::ProxyProcess;
 use super::common::team_helpers::*;
+use super::common::test_gate::require_team_headless_e2e;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
@@ -94,9 +95,12 @@ fn copy_if_exists(src: &Path, dst: &Path) {
 ///   - session/update notifications (UI reflection)
 ///   - Multi-agent messages in DB (Leader + sub-agent)
 ///   - Team session metadata (channel_id=team, multi_agent=true)
-#[ignore]
 #[test]
 fn test_team_chat_headless_e2e() {
+    if !require_team_headless_e2e() {
+        return;
+    }
+
     println!("══════════════════════════════════════════════════════════");
     println!(" Team Chat Headless E2E");
     println!("══════════════════════════════════════════════════════════");
@@ -335,9 +339,12 @@ fn test_team_chat_headless_e2e() {
 ///   - Session state maintained across turns
 ///   - All messages (4 total: 2 user + 2 assistant) persisted
 ///   - Context preserved (turn 2 references turn 1)
-#[ignore]
 #[test]
 fn test_team_multi_turn_headless() {
+    if !require_team_headless_e2e() {
+        return;
+    }
+
     println!("══════════════════════════════════════════════════════════");
     println!(" Team Multi-Turn Headless E2E");
     println!("══════════════════════════════════════════════════════════");
@@ -446,9 +453,12 @@ fn test_team_multi_turn_headless() {
     println!("══════════════════════════════════════════════════════════");
 }
 
-#[ignore]
 #[test]
 fn test_team_direct_target_tool_call_headless_e2e() {
+    if !require_team_headless_e2e() {
+        return;
+    }
+
     println!("══════════════════════════════════════════════════════════");
     println!(" Team Direct Target Tool Call Headless E2E");
     println!("══════════════════════════════════════════════════════════");
@@ -797,9 +807,12 @@ fn test_team_direct_target_tool_call_headless_e2e() {
 ///   - Delegation tool calls (delegate/delegate_background/propose) in notifications
 ///   - Sub-agent responses are collected
 ///   - Complete response in DB
-#[ignore]
 #[test]
 fn test_team_delegation_headless_e2e() {
+    if !require_team_headless_e2e() {
+        return;
+    }
+
     println!("══════════════════════════════════════════════════════════");
     println!(" Team Delegation Headless E2E");
     println!("══════════════════════════════════════════════════════════");
@@ -834,7 +847,7 @@ fn test_team_delegation_headless_e2e() {
         }),
     );
     let (resp, notifs) = proxy.read_response(id, Duration::from_secs(300));
-    let resp = resp.expect("Delegation prompt should respond within 300s");
+    let _resp = resp.expect("Delegation prompt should respond within 300s");
     println!("[2] ✅ Response received");
 
     // ── Analyze notifications ──
@@ -951,9 +964,12 @@ fn test_team_delegation_headless_e2e() {
 ///
 /// Verifies the complete chain:
 ///   spawn_agents → ProxyProcess → init → session → prompt → response → DB
-#[ignore]
 #[tokio::test]
 async fn test_team_self_contained_headless() {
+    if !require_team_headless_e2e() {
+        return;
+    }
+
     println!("══════════════════════════════════════════════════════════");
     println!(" Team Self-Contained Headless E2E");
     println!("══════════════════════════════════════════════════════════");

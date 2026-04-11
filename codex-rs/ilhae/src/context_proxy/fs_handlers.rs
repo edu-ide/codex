@@ -99,7 +99,7 @@ pub async fn handle_read_text_file(
 pub async fn handle_write_text_file(
     req: WriteTextFileRequest,
     responder: Responder<WriteTextFileResponse>,
-    _cx: ConnectionTo<Conductor>,
+    cx: ConnectionTo<Conductor>,
     state: Arc<SharedState>,
 ) -> Result<(), sacp::Error> {
     let path_display = req.path.display().to_string();
@@ -107,7 +107,11 @@ pub async fn handle_write_text_file(
 
     // ── Tool Sandbox (Security Layer) ──
     // Prevent short-lived SubAgents from executing destructive file writes
-    let active_session = state.sessions.active_session_id.read().await.clone();
+    let active_session = state
+        .sessions
+        .connection_sessions
+        .get(&crate::shared_state::connection_key(&cx))
+        .unwrap_or_default();
     if active_session.starts_with("subagent_") {
         warn!(
             "[Sandbox] SubAgent ({}) attempted to write file: {}",

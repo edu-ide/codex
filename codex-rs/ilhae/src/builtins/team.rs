@@ -448,7 +448,7 @@ pub(crate) async fn try_sync_fallback_chain(
             fallback_role
         );
         let (fallback_proxy, fallback_query, fallback_role) =
-            build_proxy_for_target(state, &fallback_agent, query).await?;
+            build_proxy_for_target(state, &fallback_agent, query, active_session_id).await?;
         match fallback_proxy
             .send_and_subscribe(&fallback_query, None, None)
             .await
@@ -520,6 +520,7 @@ pub(crate) async fn try_sync_fallback_chain(
 
 pub(crate) async fn try_background_fallback_chain(
     state: &Arc<crate::SharedState>,
+    active_session_id: Option<&str>,
     failed_role: &str,
     query: &str,
     started_at: Instant,
@@ -538,7 +539,7 @@ pub(crate) async fn try_background_fallback_chain(
             fallback_role
         );
         let (fallback_proxy, fallback_query, fallback_role) =
-            build_proxy_for_target(state, &fallback_agent, query).await?;
+            build_proxy_for_target(state, &fallback_agent, query, active_session_id).await?;
         match fallback_proxy
             .fire_and_forget(&fallback_query, None, None)
             .await
@@ -571,6 +572,7 @@ pub(crate) async fn build_proxy_for_target(
     state: &crate::SharedState,
     target_role: &TeamRoleTarget,
     actual_query: &str,
+    active_session_id: Option<&str>,
 ) -> Result<(A2aProxy, String, String), sacp::Error> {
     info!(
         "[Team-Tools] target '{}' at {} : {:?}",
@@ -583,10 +585,10 @@ pub(crate) async fn build_proxy_for_target(
     let enriched_query =
         crate::memory_provider::inject_context(actual_query, leader_cwd.as_deref());
 
-    let active_sid = state.sessions.active_session_id.read().await.clone();
-    let mcp_servers_json = if !active_sid.is_empty() {
+    let mcp_servers_json = if let Some(active_sid) = active_session_id.filter(|sid| !sid.is_empty())
+    {
         let map = &state.sessions.mcp_servers;
-        map.get(&active_sid)
+        map.get(active_sid)
             .and_then(|servers| serde_json::to_value(servers).ok())
     } else {
         None
@@ -645,17 +647,31 @@ macro_rules! with_team_server {
                     {
                         let state = state.clone();
                         async move |input: $crate::TeamDelegateInput, cx: sacp::mcp_server::McpConnectionTo<sacp::Conductor>| {
+                            let host_cx = cx.connection_to();
+                            let active_session_id =
+                                $crate::builtins::team::current_session_id_for_connection(&state, &host_cx).await;
                             let (proxy, enriched_query, role_lower) =
-                                $crate::builtins::team::setup_a2a_proxy(&state, input.query.trim(), "delegate").await?;
-                            if $crate::builtins::team::current_session_prefers_background(&state).await {
+                                $crate::builtins::team::setup_a2a_proxy(
+                                    &state,
+                                    input.query.trim(),
+                                    "delegate",
+                                    active_session_id.as_deref(),
+                                ).await?;
+                            if $crate::builtins::team::current_session_prefers_background(&state, active_session_id.as_deref()).await {
                                 tracing::info!(
                                     "[Team-Tools] {} delegate coerced to background mode due to current session intent",
                                     role_lower
                                 );
-                                return $crate::builtins::team::run_background_delegate(state.clone(), proxy, enriched_query, role_lower, cx).await;
+                                return $crate::builtins::team::run_background_delegate(
+                                    state.clone(),
+                                    proxy,
+                                    enriched_query,
+                                    role_lower,
+                                    cx,
+                                    active_session_id,
+                                ).await;
                             }
-                            let cx = cx.connection_to();
-                            let active_session_id = $crate::builtins::team::current_active_session_id(&state).await;
+                            let cx = host_cx;
                             let max_retries = $crate::builtins::team::current_team_max_retries(&state);
                             let pause_on_error = $crate::builtins::team::current_team_pause_on_error(&state);
                             let emit_responses = $crate::builtins::team::should_emit_team_response(&state, &role_lower);
@@ -797,9 +813,23 @@ macro_rules! with_team_server {
                     {
                         let state = state.clone();
                         async move |input: $crate::TeamDelegateInput, cx: sacp::mcp_server::McpConnectionTo<sacp::Conductor>| {
+                            let active_session_id =
+                                $crate::builtins::team::current_session_id_for_connection(&state, &cx.connection_to()).await;
                             let (proxy, enriched_query, role_lower) =
-                                $crate::builtins::team::setup_a2a_proxy(&state, input.query.trim(), "delegate_background").await?;
-                            $crate::builtins::team::run_background_delegate(state.clone(), proxy, enriched_query, role_lower, cx).await
+                                $crate::builtins::team::setup_a2a_proxy(
+                                    &state,
+                                    input.query.trim(),
+                                    "delegate_background",
+                                    active_session_id.as_deref(),
+                                ).await?;
+                            $crate::builtins::team::run_background_delegate(
+                                state.clone(),
+                                proxy,
+                                enriched_query,
+                                role_lower,
+                                cx,
+                                active_session_id,
+                            ).await
                         }
                     },
                     sacp::tool_fn!(),
@@ -809,10 +839,17 @@ macro_rules! with_team_server {
                     "팀 에이전트(리더 포함)에게 비동기로 보고, 제안, 피드백 전송. 응답을 대기하지 않고 즉시 종료 (Fire-and-forget).",
                     {
                         let state = state.clone();
-                        async move |input: $crate::TeamProposeInput, _cx: sacp::mcp_server::McpConnectionTo<sacp::Conductor>| {
+                        async move |input: $crate::TeamProposeInput, cx: sacp::mcp_server::McpConnectionTo<sacp::Conductor>| {
                             let query_str = format!("@{} {}", input.agent, input.message);
+                            let active_session_id =
+                                $crate::builtins::team::current_session_id_for_connection(&state, &cx.connection_to()).await;
                             let (proxy, enriched_query, role_lower) =
-                                $crate::builtins::team::setup_a2a_proxy(&state, &query_str, "propose").await?;
+                                $crate::builtins::team::setup_a2a_proxy(
+                                    &state,
+                                    &query_str,
+                                    "propose",
+                                    active_session_id.as_deref(),
+                                ).await?;
 
                             match proxy.fire_and_forget(&enriched_query, None, None).await {
                                 Ok(schedule_id) => {
@@ -835,12 +872,21 @@ macro_rules! with_team_server {
                     "저장된 Team Shared State Channel 내의 특정 식별자(key)에 JSON 값(value)을 업데이트합니다. 에이전트 간 공유되어야 하는 데이터(예: 상태, 결과, 파라미터)에 접근할 때 사용합니다.",
                     {
                         let state = state.clone();
-                        async move |input: $crate::TeamUpdateChannelInput, _cx: sacp::mcp_server::McpConnectionTo<sacp::Conductor>| {
+                        async move |input: $crate::TeamUpdateChannelInput, cx: sacp::mcp_server::McpConnectionTo<sacp::Conductor>| {
                             let parsed_value: serde_json::Value = serde_json::from_str(&input.value)
                                 .unwrap_or_else(|_| serde_json::Value::String(input.value.clone()));
+                            let Some(session_id) =
+                                $crate::builtins::team::current_session_id_for_connection(&state, &cx.connection_to()).await
+                            else {
+                                return Err(sacp::Error::internal_error().data(
+                                    "No active session context for team channel update.".to_string()
+                                ));
+                            };
 
                             let mut mem = state.team.channel_memory.write().await;
-                            mem.insert(input.key.clone(), parsed_value);
+                            mem.entry(session_id)
+                                .or_default()
+                                .insert(input.key.clone(), parsed_value);
 
                             Ok::<String, sacp::Error>(format!("Channel memory updated successfully for key: {}", input.key))
                         }
@@ -852,18 +898,25 @@ macro_rules! with_team_server {
                     "팀 간 통신을 위해 유지되는 Shared State Channel의 데이터(JSON)를 읽어옵니다. 특정 식별자(key)를 지정하여 해당 값을 확인하거나, 비워두면 채널 전체 데이터를 조회합니다.",
                     {
                         let state = state.clone();
-                        async move |input: $crate::TeamReadChannelInput, _cx: sacp::mcp_server::McpConnectionTo<sacp::Conductor>| {
+                        async move |input: $crate::TeamReadChannelInput, cx: sacp::mcp_server::McpConnectionTo<sacp::Conductor>| {
+                            let Some(session_id) =
+                                $crate::builtins::team::current_session_id_for_connection(&state, &cx.connection_to()).await
+                            else {
+                                return Err(sacp::Error::internal_error().data(
+                                    "No active session context for team channel read.".to_string()
+                                ));
+                            };
                             let mem = state.team.channel_memory.read().await;
+                            let session_mem = mem.get(&session_id).cloned().unwrap_or_default();
 
                             if let Some(ref key) = input.key {
-                                if let Some(val) = mem.get(key) {
+                                if let Some(val) = session_mem.get(key) {
                                     Ok::<String, sacp::Error>(serde_json::to_string_pretty(val).unwrap_or_default())
                                 } else {
                                     Ok::<String, sacp::Error>(format!("Key '{}' not found in channel memory", key))
                                 }
                             } else {
-                                let map_val = mem.clone();
-                                let serialized = serde_json::to_string_pretty(&map_val).unwrap_or_default();
+                                let serialized = serde_json::to_string_pretty(&session_mem).unwrap_or_default();
                                 Ok::<String, sacp::Error>(serialized)
                             }
                         }
@@ -877,7 +930,7 @@ macro_rules! with_team_server {
                         let state = state.clone();
                         async move |input: $crate::TeamSaveCheckpointInput, _cx: sacp::mcp_server::McpConnectionTo<sacp::Conductor>| {
                             let mem = state.team.channel_memory.read().await;
-                            let map_val = mem.clone();
+                            let map_val = mem.get(&input.session_id).cloned().unwrap_or_default();
                             let checkpoint_data = serde_json::to_string(&map_val).unwrap_or_else(|_| "{}".to_string());
 
                             let metadata = serde_json::json!({
@@ -909,7 +962,7 @@ macro_rules! with_team_server {
                                 Ok(Some(chk)) => {
                                     if let Ok(parsed) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&chk.checkpoint_data) {
                                         let mut mem = state.team.channel_memory.write().await;
-                                        *mem = parsed;
+                                        mem.insert(input.session_id.clone(), parsed);
                                         Ok::<String, sacp::Error>(format!("State channel successfully rolled back to version {}", input.version))
                                     } else {
                                         Err(sacp::Error::internal_error().data("Invalid JSON checkpoint map".to_string()))
@@ -931,6 +984,7 @@ pub async fn setup_a2a_proxy(
     state: &crate::SharedState,
     query_trimmed: &str,
     mode: &str,
+    active_session_id: Option<&str>,
 ) -> Result<(A2aProxy, String, String), sacp::Error> {
     let settings = state.infra.settings_store.get();
     if !settings.agent.team_mode && std::env::var("ILHAE_DREAM_MODE").is_err() {
@@ -1010,7 +1064,7 @@ pub async fn setup_a2a_proxy(
         mode, target_role.role, target_role.endpoint, actual_query
     );
 
-    build_proxy_for_target(state, &target_role, &actual_query).await
+    build_proxy_for_target(state, &target_role, &actual_query, active_session_id).await
 }
 
 pub fn background_keywords(text: &str) -> bool {
@@ -1034,22 +1088,24 @@ pub fn background_keywords(text: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
-pub async fn current_session_prefers_background(state: &crate::SharedState) -> bool {
-    let active_sid = state.sessions.active_session_id.read().await.clone();
-    if active_sid.is_empty() {
+pub async fn current_session_prefers_background(
+    state: &crate::SharedState,
+    active_session_id: Option<&str>,
+) -> bool {
+    let Some(active_sid) = active_session_id.filter(|sid| !sid.is_empty()) else {
         return false;
-    }
+    };
     {
         let map = &state.sessions.delegation_mode;
         if map
-            .get(&active_sid)
+            .get(active_sid)
             .map(|mode| mode == "background" || mode == "subscribe")
             .unwrap_or(false)
         {
             return true;
         }
     }
-    let Ok(messages) = state.infra.brain.session_load_messages(&active_sid) else {
+    let Ok(messages) = state.infra.brain.session_load_messages(active_sid) else {
         return false;
     };
     messages
@@ -1066,9 +1122,9 @@ pub async fn run_background_delegate(
     enriched_query: String,
     role_lower: String,
     cx: McpConnectionTo<Conductor>,
+    active_session_id: Option<String>,
 ) -> Result<String, sacp::Error> {
     let cx = cx.connection_to();
-    let active_session_id = current_active_session_id(&state).await;
     let max_retries = current_team_max_retries(&state);
     let pause_on_error = current_team_pause_on_error(&state);
     let started_at = Instant::now();
@@ -1284,8 +1340,14 @@ pub async fn run_background_delegate(
 
     record_team_delegation_outcome(&state, &role_lower, false, started_at).await;
     if !pause_on_error {
-        if let Some(message) =
-            try_background_fallback_chain(&state, &role_lower, &enriched_query, started_at).await?
+        if let Some(message) = try_background_fallback_chain(
+            &state,
+            active_session_id.as_deref(),
+            &role_lower,
+            &enriched_query,
+            started_at,
+        )
+        .await?
         {
             return Ok(message);
         }
@@ -1305,6 +1367,26 @@ pub async fn run_background_delegate(
 }
 
 pub async fn current_active_session_id(state: &Arc<crate::SharedState>) -> Option<String> {
+    let session_id = state.sessions.active_session_id.read().await.clone();
+    if session_id.is_empty() {
+        None
+    } else {
+        Some(session_id)
+    }
+}
+
+pub async fn current_session_id_for_connection(
+    state: &crate::SharedState,
+    cx: &ConnectionTo<Conductor>,
+) -> Option<String> {
+    if let Some(session_id) = state
+        .sessions
+        .connection_sessions
+        .get(&crate::shared_state::connection_key(cx))
+    {
+        return Some(session_id);
+    }
+
     let session_id = state.sessions.active_session_id.read().await.clone();
     if session_id.is_empty() {
         None
@@ -1493,7 +1575,8 @@ pub async fn auto_save_checkpoint(
     task_id: Option<&str>,
 ) {
     let mem = state.team.channel_memory.read().await;
-    let checkpoint_data = serde_json::to_string(&*mem).unwrap_or_else(|_| "{}".to_string());
+    let checkpoint_data = serde_json::to_string(&mem.get(session_id).cloned().unwrap_or_default())
+        .unwrap_or_else(|_| "{}".to_string());
 
     let version = format!(
         "auto-{}-{}",

@@ -10,7 +10,6 @@
 //!   3. Fallback to RALPH_LOOP_TEMPLATE when User Agent is unavailable
 
 use serde_json::json;
-use std::sync::Arc;
 
 /// Simulates the SSE buffer parsing logic from runner.rs (lines 1655-1669)
 /// to detect if the last event has an `input-required` state.

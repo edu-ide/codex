@@ -1,3 +1,4 @@
+use super::common::test_gate::require_team_local_a2a_spawn;
 use reqwest::Client;
 use std::process::Stdio;
 use std::time::Duration;
@@ -5,6 +6,10 @@ use tokio::process::Command;
 
 #[tokio::test]
 async fn test_a2a_server_startup_ignores_target_dir() {
+    if !require_team_local_a2a_spawn() {
+        return;
+    }
+
     let port = 4444;
     let endpoint = format!("http://localhost:{}", port);
 

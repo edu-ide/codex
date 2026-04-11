@@ -102,12 +102,16 @@ impl TerminalManager {
 pub async fn handle_terminal_create(
     req: CreateTerminalRequest,
     responder: Responder<CreateTerminalResponse>,
-    _cx: ConnectionTo<Conductor>,
+    cx: ConnectionTo<Conductor>,
     state: Arc<SharedState>,
 ) -> Result<(), sacp::Error> {
     // ── Tool Sandbox (Security Layer) ──
     // Prevent short-lived SubAgents from executing destructive OS commands
-    let active_session = state.sessions.active_session_id.read().await.clone();
+    let active_session = state
+        .sessions
+        .connection_sessions
+        .get(&crate::shared_state::connection_key(&cx))
+        .unwrap_or_default();
     if active_session.starts_with("subagent_") {
         warn!(
             "[Sandbox] SubAgent ({}) attempted to execute command: {}",

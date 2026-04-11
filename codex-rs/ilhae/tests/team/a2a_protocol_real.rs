@@ -8,7 +8,7 @@
 //!   - Gemini API key configured
 //!
 //! Run:
-//!   cargo test --test team a2a_protocol_real -- --ignored --nocapture
+//!   ILHAE_RUN_TEAM_LIVE_A2A=1 cargo test --test team a2a_protocol_real -- --nocapture
 //!
 //! Test Scenarios:
 //!   1. delegate sync — Leader에게 동기 요청, ForwardingExecutor 프로덕션 경로
@@ -18,8 +18,8 @@
 //!   5. SubscribeToTask — 비동기 task 후 재구독 검증
 //!   6. Push Notifications — CRUD (set/get/list/delete) 실서버 검증
 
-use super::common::a2a_test_helpers::*;
 use super::common::team_helpers::*;
+use super::common::test_gate::{require_team_live_a2a, require_team_local_a2a_spawn};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -31,9 +31,12 @@ const LEADER: &str = "http://localhost:4321";
 ///
 /// ForwardingExecutor → PersistenceScheduleStore 프로덕션 경로를 통해
 /// Leader에게 동기 요청을 보내고, 응답을 DB에 저장합니다.
-#[ignore]
 #[tokio::test]
 async fn test_delegate_sync_real() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let dir = ilhae_dir();
     let store = SessionStore::new(&dir).expect("SessionStore open failed");
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -97,9 +100,12 @@ async fn test_delegate_sync_real() {
 /// Scenario 2: Delegate Background + SubscribeToTask (실서버)
 ///
 /// fire_and_forget로 비동기 작업 실행 후, subscribe_to_task로 재구독.
-#[ignore]
 #[tokio::test]
 async fn test_delegate_background_real() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let proxy = A2aProxy::new(RESEARCHER, "researcher");
 
     // Step 1: Fire and forget
@@ -146,9 +152,12 @@ async fn test_delegate_background_real() {
 /// Scenario 3: Propose (실서버)
 ///
 /// 제안 패턴 — 응답을 proposal로 처리.
-#[ignore]
 #[tokio::test]
 async fn test_propose_real() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let dir = ilhae_dir();
     let store = SessionStore::new(&dir).expect("SessionStore open failed");
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -210,9 +219,12 @@ async fn test_propose_real() {
 /// Scenario 4: SendStreamingMessage SSE (실서버)
 ///
 /// Raw HTTP POST message/stream → SSE 스트리밍 응답 검증.
-#[ignore]
 #[tokio::test]
 async fn test_streaming_message_real() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let client = reqwest::Client::new();
 
     let payload = json!({
@@ -275,9 +287,12 @@ async fn test_streaming_message_real() {
 /// Scenario 5: SubscribeToTask raw JSON-RPC (실서버)
 ///
 /// fire_and_forget → tasks/resubscribe JSON-RPC 재구독.
-#[ignore]
 #[tokio::test]
 async fn test_subscribe_to_task_real() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let client = reqwest::Client::new();
 
     // Step 1: Fire-and-forget
@@ -357,9 +372,12 @@ async fn test_subscribe_to_task_real() {
 /// Scenario 6: Push Notifications CRUD (실서버)
 ///
 /// 실서버에 push notification config CRUD 테스트.
-#[ignore]
 #[tokio::test]
 async fn test_push_notifications_real() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let client = reqwest::Client::new();
 
     // Step 1: Create a task first
@@ -527,9 +545,12 @@ async fn test_push_notifications_real() {
 /// `spawn_team_a2a_servers`로 에이전트를 직접 스폰한 뒤
 /// pushNotifications CRUD를 실서버에서 검증합니다.
 /// 에이전트가 미리 실행 중이지 않아도 됩니다.
-#[ignore]
 #[tokio::test]
 async fn test_push_notifications_spawned() {
+    if !require_team_local_a2a_spawn() {
+        return;
+    }
+
     let dir = ilhae_dir();
     let team = load_team_runtime_config(&dir).expect("team.json required");
     let workspace_map = generate_peer_registration_files(&team, None);

@@ -29,7 +29,8 @@ impl ConnectTo<Conductor> for ToolsProxy {
         let s = self.state;
         let sub_handle;
 
-        let base_builder = Proxy.builder()
+        let base_builder = Proxy
+            .builder()
             .name("tools-proxy")
             // ═══ Built-in MCP Tools (20 tools) ═══
             .with_mcp_server({
@@ -37,10 +38,14 @@ impl ConnectTo<Conductor> for ToolsProxy {
                 let bt_settings = s.infra.settings_store.clone();
                 let notify_relay_tx = s.infra.relay_tx.clone();
                 let notif_store = s.infra.notification_store.clone();
-                let active_sid = s.sessions.active_session_id.clone();
-                
-                let builder = sacp::mcp_server::McpServer::<Conductor, _>::builder("ilhae-tools".to_string())
-                    .instructions("일해 프록시 내장 도구. 세션·메모리·크론·미션·할일·UI 알림을 관리합니다.");
+                let connection_sessions = s.sessions.connection_sessions.clone();
+
+                let builder = sacp::mcp_server::McpServer::<Conductor, _>::builder(
+                    "ilhae-tools".to_string(),
+                )
+                .instructions(
+                    "일해 프록시 내장 도구. 세션·메모리·크론·미션·할일·UI 알림을 관리합니다.",
+                );
                 sub_handle = builder.subscription_handle();
 
                 let builder = crate::register_memory_tools!(builder, brain, bt_settings);
@@ -51,9 +56,20 @@ impl ConnectTo<Conductor> for ToolsProxy {
                 );
                 let builder = crate::register_session_tools!(builder, brain, bt_settings);
                 let builder = crate::register_task_tools!(builder, brain, bt_settings);
-                let builder = crate::register_artifact_tools!(builder, brain, bt_settings, active_sid);
-                let builder = crate::register_misc_tools!(builder, brain, bt_settings, notify_relay_tx, notif_store);
-                
+                let builder = crate::register_artifact_tools!(
+                    builder,
+                    brain,
+                    bt_settings,
+                    connection_sessions
+                );
+                let builder = crate::register_misc_tools!(
+                    builder,
+                    brain,
+                    bt_settings,
+                    notify_relay_tx,
+                    notif_store
+                );
+
                 builder.build()
             });
 

@@ -4,8 +4,8 @@ use crate::SharedState;
 use crate::relay_server::RelayEvent;
 use crate::{
     AssistantBuffer, RELAY_DESKTOP_READY_TIMEOUT_MS, RelayAttachmentPayload, broadcast_event,
-    helpers::is_ilhae_native_agent_id, infer_agent_id_from_command,
-    relay_wait_timeout_from_payload, save_mobile_attachments_to_cwd,
+    helpers::{is_ilhae_native_agent_id, resolve_default_session_cwd},
+    infer_agent_id_from_command, relay_wait_timeout_from_payload, save_mobile_attachments_to_cwd,
     send_new_session_with_bootstrap,
 };
 use agent_client_protocol_schema::{ContentBlock, PromptRequest, TextContent};
@@ -54,10 +54,13 @@ pub async fn handle_chat_message(
 
     match ctx.infra.brain.session_get_raw(&db_session_id) {
         Ok(None) => {
-            let _ =
-                ctx.infra
-                    .brain
-                    .session_create(&db_session_id, "Untitled", &current_agent_id, "/");
+            let default_cwd = resolve_default_session_cwd();
+            let _ = ctx.infra.brain.session_create(
+                &db_session_id,
+                "Untitled",
+                &current_agent_id,
+                default_cwd.to_string_lossy().as_ref(),
+            );
         }
         Ok(Some(_)) => {}
         Err(e) => {

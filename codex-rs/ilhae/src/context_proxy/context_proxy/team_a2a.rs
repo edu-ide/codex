@@ -26,20 +26,27 @@ pub fn sync_user_agent_model_inline(engine: &str, model: &str, ilhae_dir: &Path)
 
     if content.contains("engine:") {
         let re = Regex::new(r"(?m)^engine:\s*.*$").unwrap();
-        content = re.replace(&content, format!("engine: {}", engine)).to_string();
+        content = re
+            .replace(&content, format!("engine: {}", engine))
+            .to_string();
     } else {
         content = content.replacen("---\n", &format!("---\nengine: {}\n", engine), 1);
     }
 
     if content.contains("model:") {
         let re = Regex::new(r"(?m)^model:\s*.*$").unwrap();
-        content = re.replace(&content, format!("model: {}", model)).to_string();
+        content = re
+            .replace(&content, format!("model: {}", model))
+            .to_string();
     } else {
         content = content.replacen("---\n", &format!("---\nmodel: {}\n", model), 1);
     }
 
     let _ = std::fs::write(&user_agent_path, content);
-    info!("[team_a2a] Synced user_agent.md -> engine: {}, model: {}", engine, model);
+    info!(
+        "[team_a2a] Synced user_agent.md -> engine: {}, model: {}",
+        engine, model
+    );
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -468,11 +475,12 @@ pub fn parse_a2a_result(result: &serde_json::Value) -> A2AResponseParsed {
         .and_then(|v| v.as_str())
         .or_else(|| result.get("context_id").and_then(|v| v.as_str()))
         .map(|s| s.to_string());
+    let task_id = schedule_id.clone();
 
     A2AResponseParsed {
         text: parse_a2a_message_text(result),
         state,
-        task_id: None,
+        task_id,
         schedule_id,
         context_id,
     }
@@ -539,13 +547,14 @@ pub fn resolve_codex_a2a_bin() -> String {
         }
     }
     if let Ok(current_exe) = std::env::current_exe()
-        && let Some(bin_dir) = current_exe.parent() {
-            let sibling = bin_dir.join("codex-ilhae");
-            if sibling.exists() {
-                info!("[TeamSpawn] Found codex A2A sibling binary: {:?}", sibling);
-                return sibling.to_string_lossy().to_string();
-            }
+        && let Some(bin_dir) = current_exe.parent()
+    {
+        let sibling = bin_dir.join("codex-ilhae");
+        if sibling.exists() {
+            info!("[TeamSpawn] Found codex A2A sibling binary: {:?}", sibling);
+            return sibling.to_string_lossy().to_string();
         }
+    }
     // Try co-located path relative to ilhae-agent directory
     if let Ok(cwd) = std::env::current_dir() {
         let mut cur: Option<&std::path::Path> = Some(cwd.as_path());
@@ -1073,5 +1082,28 @@ fn symlink_gemini_auth_to_workspace(workspace: &std::path::Path) {
                 warn!("[TeamSpawn] Failed to symlink {}: {}", dst.display(), e);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_a2a_result;
+
+    #[test]
+    fn parse_a2a_result_keeps_task_id_alias_for_schedule_id() {
+        let result = serde_json::json!({
+            "id": "task-123",
+            "status": {
+                "state": "completed",
+                "message": {
+                    "role": "agent",
+                    "parts": [{"text": "done"}]
+                }
+            }
+        });
+
+        let parsed = parse_a2a_result(&result);
+        assert_eq!(parsed.schedule_id.as_deref(), Some("task-123"));
+        assert_eq!(parsed.task_id.as_deref(), Some("task-123"));
     }
 }

@@ -6,17 +6,13 @@
 //!   - `~/ilhae/team.json` exists with agents on ports 4321-4324
 //!
 //! Run:
-//!   cargo test -p ilhae-proxy --test team_e2e -- --nocapture
+//!   ILHAE_RUN_TEAM_LIVE_A2A=1 cargo test --test team live_a2a_e2e -- --nocapture
 
-use std::path::PathBuf;
+use super::common::test_gate::require_team_live_a2a;
 use std::time::Duration;
 
 // ── ilhae_proxy lib crate ────────────────────────────────────────────
-use ilhae_proxy::context_proxy::team_a2a::{
-    TeamRuntimeConfig, extract_port_from_endpoint, load_team_runtime_config, parse_a2a_result,
-    wait_for_a2a_health,
-};
-use ilhae_proxy::settings_store::Settings;
+use ilhae_proxy::context_proxy::team_a2a::parse_a2a_result;
 
 // ── Constants ────────────────────────────────────────────────────────
 const TEAM_ENDPOINTS: &[(&str, &str)] = &[
@@ -25,10 +21,6 @@ const TEAM_ENDPOINTS: &[(&str, &str)] = &[
     ("Verifier", "http://localhost:4323"),
     ("Creator", "http://localhost:4324"),
 ];
-
-fn ilhae_dir() -> PathBuf {
-    dirs::home_dir().unwrap().join("ilhae")
-}
 
 use super::common::a2a_test_helpers::*;
 
@@ -41,6 +33,10 @@ use super::common::a2a_test_helpers::*;
 /// via A2A `message/send`. No tool-wrapping — pure A2A protocol.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_a2a_full_mesh_agent_chain() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let (store, _tmp) = make_test_session_store();
     let session_id = uuid::Uuid::new_v4().to_string();
     store
@@ -227,6 +223,10 @@ async fn test_a2a_full_mesh_agent_chain() {
 
 #[test]
 fn test_a2a_all_methods_comprehensive() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let client = reqwest::blocking::Client::new();
     let leader = "http://localhost:4321";
     let researcher = "http://localhost:4322";
@@ -747,11 +747,14 @@ fn test_a2a_all_methods_comprehensive() {
 
 #[test]
 fn test_orchestration_workflow_e2e() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let client = reqwest::blocking::Client::new();
     let leader = "http://localhost:4321";
     let researcher = "http://localhost:4322";
     let verifier = "http://localhost:4323";
-    let proxy = "http://localhost:18790";
 
     // Wait for all agents to be ready
     for (name, ep) in TEAM_ENDPOINTS {
@@ -1099,6 +1102,10 @@ fn test_orchestration_workflow_e2e() {
 
 #[test]
 fn test_a2a_tools_propose_and_spawn() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let client = reqwest::blocking::Client::new();
     let leader = "http://localhost:4321";
     let researcher = "http://localhost:4322";
@@ -1186,6 +1193,10 @@ fn test_a2a_tools_propose_and_spawn() {
 
 #[test]
 fn test_a2a_tools_workflow_brainstorm_and_plan() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let client = reqwest::blocking::Client::new();
     let leader = "http://localhost:4321";
 

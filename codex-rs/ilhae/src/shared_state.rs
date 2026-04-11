@@ -1,4 +1,5 @@
 use moka::sync::Cache;
+use sacp::{ConnectionTo, role::Role};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, atomic::AtomicU64};
@@ -47,6 +48,8 @@ pub struct SessionState {
     pub cancel_version: Arc<AtomicU64>,
     /// Client session_id → internal session_id mapping for quick context lookups.
     pub pending_history: Arc<Cache<String, String>>,
+    /// Host connection key → internal session_id mapping for tool calls.
+    pub connection_sessions: Arc<Cache<String, String>>,
     /// Currently active session ID (set when chat starts, used by MCP tools like artifact_save).
     pub active_session_id: Arc<RwLock<String>>, // active_session_id remains RwLock as it's a single value
     /// Per-session autonomous execution state (running / approval break / done).
@@ -79,10 +82,15 @@ impl SessionState {
             instructions_version: Arc::new(AtomicU64::new(1)),
             cancel_version: Arc::new(AtomicU64::new(0)),
             pending_history: build_cache(),
+            connection_sessions: build_cache(),
             active_session_id: Arc::new(RwLock::new(String::new())),
             autonomous_sessions: build_cache(),
         }
     }
+}
+
+pub fn connection_key<Counterpart: Role>(cx: &ConnectionTo<Counterpart>) -> String {
+    format!("{cx:?}")
 }
 
 // ── Sub-State: Team orchestration ────────────────────────────────────────
@@ -100,8 +108,8 @@ pub struct TeamState {
     pub delegation_metrics: crate::process_supervisor::MetricsHandle,
     /// Team communication channel (broadcast, progress, handoff).
     pub comms: TeamCommsChannel,
-    /// Shared channel memory (LangGraph-like checkpointed context for team flow).
-    pub channel_memory: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+    /// Session-scoped channel memory (LangGraph-like checkpointed context for team flow).
+    pub channel_memory: Arc<RwLock<HashMap<String, HashMap<String, serde_json::Value>>>>,
     /// Delegation event bus channel transmitter for persistence decoupling.
     pub event_tx: tokio::sync::broadcast::Sender<crate::a2a_persistence::events::DelegationEvent>,
     /// Agent process spawner (production uses RealAgentSpawner).

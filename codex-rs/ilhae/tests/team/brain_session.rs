@@ -17,10 +17,6 @@ use brain_session_rs::session_store::SessionStore;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-fn today() -> String {
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
-}
-
 /// Find a solo session .md file by short-id suffix within date folders.
 /// Filename pattern: `{HH-MM}_{title}_{sid}.md`
 fn find_solo_file(solo_dir: &std::path::Path, sid: &str) -> Option<PathBuf> {

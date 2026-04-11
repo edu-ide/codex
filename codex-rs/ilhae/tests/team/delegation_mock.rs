@@ -56,6 +56,28 @@ impl AgentExecutor for MockAgent {
         let context_id = context.context_id.clone();
         let response = format!("[{}] Processed: {}", self.role, user_text);
 
+        event_bus.publish_status_update(TaskStatusUpdateEvent {
+            task_id: task_id.clone(),
+            context_id: context_id.clone(),
+            status: TaskStatus {
+                state: TaskState::Working,
+                message: Some(Message {
+                    message_id: uuid::Uuid::new_v4().to_string(),
+                    context_id: Some(context_id.clone()),
+                    task_id: Some(task_id.clone()),
+                    role: Role::Agent,
+                    parts: vec![Part::text(&response)],
+                    metadata: None,
+                    extensions: vec![],
+                    reference_task_ids: None,
+                }),
+                timestamp: None,
+            },
+            kind: None,
+            is_final: None,
+            metadata: None,
+        });
+
         tokio::time::sleep(Duration::from_millis(20)).await;
 
         event_bus.publish(ExecutionEvent::Task(Task {
@@ -194,45 +216,20 @@ async fn test_peer_registration_files_generated() {
     // Verify workspace dirs were created for each agent
     assert_eq!(workspace_map.len(), 4, "Should have 4 workspace entries");
 
-    // Verify leader's peer files: should have researcher, verifier, creator (NOT leader)
+    // The leader delegates via team-tools, not direct peer files.
     let leader_ws = workspace_map
         .get("leader")
         .expect("leader workspace missing");
     let leader_agents_dir = leader_ws.join(".gemini").join("agents");
     assert!(
-        leader_agents_dir.join("researcher.md").exists(),
-        "Leader should have researcher.md peer file"
-    );
-    assert!(
-        leader_agents_dir.join("verifier.md").exists(),
-        "Leader should have verifier.md peer file"
-    );
-    assert!(
-        leader_agents_dir.join("creator.md").exists(),
-        "Leader should have creator.md peer file"
-    );
-    assert!(
-        !leader_agents_dir.join("leader.md").exists(),
-        "Leader should NOT have self peer file"
+        std::fs::read_dir(&leader_agents_dir)
+            .map(|entries| entries.filter_map(|e| e.ok()).count())
+            .unwrap_or(0)
+            == 0,
+        "Leader should not have direct peer files"
     );
 
-    // Verify peer file content contains dynamic description from system_prompt
-    let researcher_md = std::fs::read_to_string(leader_agents_dir.join("researcher.md")).unwrap();
-    assert!(
-        researcher_md.contains("kind: remote"),
-        "Peer file should specify kind: remote"
-    );
-    assert!(
-        researcher_md.contains(&format!("http://127.0.0.1:{}", r_port)),
-        "Peer file should contain researcher's endpoint"
-    );
-    // Dynamic description from system_prompt
-    assert!(
-        researcher_md.contains("researcher 전문가 에이전트"),
-        "Peer file should contain dynamic description from system_prompt"
-    );
-
-    // Verify researcher's peer files: should have leader, verifier, creator (NOT researcher)
+    // Verify sub-agents get peer files for the rest of the team.
     let researcher_ws = workspace_map
         .get("researcher")
         .expect("researcher workspace missing");
@@ -242,8 +239,35 @@ async fn test_peer_registration_files_generated() {
         "Researcher should have leader.md"
     );
     assert!(
+        researcher_agents_dir.join("verifier.md").exists(),
+        "Researcher should have verifier.md"
+    );
+    assert!(
+        researcher_agents_dir.join("creator.md").exists(),
+        "Researcher should have creator.md"
+    );
+    assert!(
         !researcher_agents_dir.join("researcher.md").exists(),
         "Researcher should NOT have self peer file"
+    );
+
+    // Verify peer file content contains dynamic description from system_prompt
+    let researcher_md = std::fs::read_to_string(researcher_agents_dir.join("verifier.md")).unwrap();
+    assert!(
+        researcher_md.contains("kind: remote"),
+        "Peer file should specify kind: remote"
+    );
+    assert!(
+        researcher_md.contains(&format!(
+            "http://127.0.0.1:{}/.well-known/agent.json",
+            v_port
+        )),
+        "Peer file should contain verifier agent card URL"
+    );
+    // Dynamic description from system_prompt
+    assert!(
+        researcher_md.contains("verifier 전문가 에이전트"),
+        "Peer file should contain dynamic description from system_prompt"
     );
 
     println!("✅ Peer registration files generated correctly");

@@ -1479,7 +1479,7 @@ pub async fn auto_restore_latest_checkpoint(
             >(&latest.checkpoint_data)
             {
                 let mut mem = state.team.channel_memory.write().await;
-                *mem = parsed;
+                mem.insert(active_sid.clone(), parsed);
                 info!(
                     "[Auto-Resume] Restored checkpoint '{}' into channel_memory after restart of: {:?}",
                     latest.version, restarted_roles

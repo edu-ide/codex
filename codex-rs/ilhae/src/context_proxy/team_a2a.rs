@@ -475,11 +475,12 @@ pub fn parse_a2a_result(result: &serde_json::Value) -> A2AResponseParsed {
         .and_then(|v| v.as_str())
         .or_else(|| result.get("context_id").and_then(|v| v.as_str()))
         .map(|s| s.to_string());
+    let task_id = schedule_id.clone();
 
     A2AResponseParsed {
         text: parse_a2a_message_text(result),
         state,
-        task_id: None,
+        task_id,
         schedule_id,
         context_id,
     }
@@ -1081,5 +1082,28 @@ fn symlink_gemini_auth_to_workspace(workspace: &std::path::Path) {
                 warn!("[TeamSpawn] Failed to symlink {}: {}", dst.display(), e);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_a2a_result;
+
+    #[test]
+    fn parse_a2a_result_keeps_task_id_alias_for_schedule_id() {
+        let result = serde_json::json!({
+            "id": "task-123",
+            "status": {
+                "state": "completed",
+                "message": {
+                    "role": "agent",
+                    "parts": [{"text": "done"}]
+                }
+            }
+        });
+
+        let parsed = parse_a2a_result(&result);
+        assert_eq!(parsed.schedule_id.as_deref(), Some("task-123"));
+        assert_eq!(parsed.task_id.as_deref(), Some("task-123"));
     }
 }

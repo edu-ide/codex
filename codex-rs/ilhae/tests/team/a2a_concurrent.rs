@@ -1,3 +1,4 @@
+use super::common::test_gate::require_team_local_a2a_spawn;
 use reqwest::Client;
 use std::process::Stdio;
 use std::time::Duration;
@@ -5,6 +6,10 @@ use tokio::process::Command;
 
 #[tokio::test]
 async fn test_4_concurrent_a2a_servers() {
+    if !require_team_local_a2a_spawn() {
+        return;
+    }
+
     let workspace_root = std::env::current_dir().expect("Failed to get current dir");
 
     // Simulate the true git root

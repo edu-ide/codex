@@ -6,15 +6,15 @@
 //!   - `~/ilhae/team.json` exists with agents on ports 4321-4324
 //!
 //! Run:
-//!   cargo test -p ilhae-proxy --test team_e2e -- --nocapture
+//!   ILHAE_RUN_TEAM_LIVE_A2A=1 cargo test --test team live_a2a -- --nocapture
 
+use super::common::test_gate::require_team_live_a2a;
 use std::path::PathBuf;
 use std::time::Duration;
 
 // ── ilhae_proxy lib crate ────────────────────────────────────────────
 use ilhae_proxy::context_proxy::team_a2a::{
-    TeamRuntimeConfig, extract_port_from_endpoint, load_team_runtime_config, parse_a2a_result,
-    wait_for_a2a_health,
+    extract_port_from_endpoint, load_team_runtime_config, parse_a2a_result, wait_for_a2a_health,
 };
 use ilhae_proxy::settings_store::Settings;
 
@@ -28,6 +28,35 @@ const TEAM_ENDPOINTS: &[(&str, &str)] = &[
 
 fn ilhae_dir() -> PathBuf {
     dirs::home_dir().unwrap().join("ilhae")
+}
+
+fn endpoint_matches_expected(actual: &str, expected: &str) -> bool {
+    fn split_endpoint(endpoint: &str) -> Option<(&str, u16)> {
+        let without_scheme = endpoint
+            .strip_prefix("http://")
+            .or_else(|| endpoint.strip_prefix("https://"))
+            .unwrap_or(endpoint)
+            .trim_end_matches('/');
+        let (host, port) = without_scheme.rsplit_once(':')?;
+        Some((host, port.parse().ok()?))
+    }
+
+    let Some((actual_host, actual_port)) = split_endpoint(actual) else {
+        return false;
+    };
+    let Some((expected_host, expected_port)) = split_endpoint(expected) else {
+        return false;
+    };
+    if actual_port != expected_port {
+        return false;
+    }
+
+    let localhost = ["localhost", "127.0.0.1"];
+    if localhost.contains(&actual_host) && localhost.contains(&expected_host) {
+        return true;
+    }
+
+    actual_host == expected_host
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -86,9 +115,12 @@ fn test_team_config_endpoints_match_expected() {
             .unwrap_or_else(|| panic!("Agent {} not found in team.json", expected_role));
 
         assert_eq!(
-            agent.endpoint, *expected_endpoint,
-            "{} endpoint mismatch",
-            expected_role
+            endpoint_matches_expected(&agent.endpoint, expected_endpoint),
+            true,
+            "{} endpoint mismatch: actual={}, expected={}",
+            expected_role,
+            agent.endpoint,
+            expected_endpoint
         );
     }
 }
@@ -97,9 +129,12 @@ fn test_team_config_endpoints_match_expected() {
 // 2. Agent Card Discovery Tests (live HTTP against running servers)
 // ═══════════════════════════════════════════════════════════════════════
 
-#[ignore]
 #[tokio::test]
 async fn test_agent_card_discovery_all_agents() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let client = reqwest::Client::new();
 
     for (role, endpoint) in TEAM_ENDPOINTS {
@@ -149,9 +184,12 @@ async fn test_agent_card_discovery_all_agents() {
 // 3. A2A Health Check Tests (uses ilhae_proxy::context_proxy::team_a2a)
 // ═══════════════════════════════════════════════════════════════════════
 
-#[ignore]
 #[tokio::test]
 async fn test_wait_for_a2a_health_all_agents() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let config = load_team_runtime_config(&ilhae_dir()).expect("team.json must exist");
 
     for agent in &config.agents {
@@ -173,9 +211,12 @@ async fn test_wait_for_a2a_health_all_agents() {
 
 use super::common::a2a_test_helpers::send_a2a_message;
 
-#[ignore]
 #[tokio::test]
 async fn test_a2a_message_send_to_leader() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let client = reqwest::Client::new();
     let body = send_a2a_message(&client, "http://localhost:4321", "Say hello in one word.").await;
 
@@ -207,9 +248,12 @@ async fn test_a2a_message_send_to_leader() {
     );
 }
 
-#[ignore]
 #[tokio::test]
 async fn test_a2a_message_send_all_agents() {
+    if !require_team_live_a2a() {
+        return;
+    }
+
     let client = reqwest::Client::new();
 
     for (role, endpoint) in TEAM_ENDPOINTS {

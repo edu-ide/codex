@@ -343,9 +343,9 @@ pub async fn notify_engine_state(
     };
 
     if settings.agent.embed_mode {
-        std::env::set_var("ILHAE_EMBED_MODE", "1");
+        unsafe { std::env::set_var("ILHAE_EMBED_MODE", "1") };
     } else {
-        std::env::set_var("ILHAE_EMBED_MODE", "0");
+        unsafe { std::env::set_var("ILHAE_EMBED_MODE", "0") };
     }
 
     info!(
@@ -428,23 +428,43 @@ pub fn sanitize_attachment_filename(raw: &str) -> String {
     sanitized
 }
 
-pub fn save_mobile_attachments_to_cwd(
+fn resolve_session_cwd_with_fallback(
+    session_cwd: &str,
+    fallback_root: &Path,
+) -> Result<PathBuf, String> {
+    let cwd = session_cwd.trim();
+    if cwd.is_empty() {
+        return Err("session cwd is empty".to_string());
+    }
+    if cwd == "/" {
+        return Ok(fallback_root.to_path_buf());
+    }
+    Ok(PathBuf::from(cwd))
+}
+
+pub fn resolve_default_session_cwd() -> PathBuf {
+    crate::config::resolve_ilhae_data_dir()
+}
+
+fn save_mobile_attachments_to_cwd_with_fallback(
     session_id: &str,
     session_cwd: &str,
     attachments: &[RelayAttachmentPayload],
+    fallback_root: &Path,
 ) -> Result<Vec<PathBuf>, String> {
     if attachments.is_empty() {
         return Ok(Vec::new());
     }
 
-    let cwd = session_cwd.trim();
-    if cwd.is_empty() {
-        return Err("session cwd is empty".to_string());
-    }
-
-    let upload_dir = PathBuf::from(cwd).join("ilhae-uploads").join(session_id);
-    std::fs::create_dir_all(&upload_dir)
-        .map_err(|e| format!("failed to create upload directory (cwd={}): {}", cwd, e))?;
+    let cwd = resolve_session_cwd_with_fallback(session_cwd, fallback_root)?;
+    let upload_dir = cwd.join("ilhae-uploads").join(session_id);
+    std::fs::create_dir_all(&upload_dir).map_err(|e| {
+        format!(
+            "failed to create upload directory (cwd={}): {}",
+            cwd.display(),
+            e
+        )
+    })?;
 
     let mut saved_paths = Vec::with_capacity(attachments.len());
     for attachment in attachments {
@@ -458,12 +478,27 @@ pub fn save_mobile_attachments_to_cwd(
         std::fs::write(&file_path, bytes).map_err(|e| {
             format!(
                 "failed to write attachment (cwd={}, name={}): {}",
-                cwd, normalized_name, e
+                cwd.display(),
+                normalized_name,
+                e
             )
         })?;
         saved_paths.push(file_path);
     }
     Ok(saved_paths)
+}
+
+pub fn save_mobile_attachments_to_cwd(
+    session_id: &str,
+    session_cwd: &str,
+    attachments: &[RelayAttachmentPayload],
+) -> Result<Vec<PathBuf>, String> {
+    save_mobile_attachments_to_cwd_with_fallback(
+        session_id,
+        session_cwd,
+        attachments,
+        &resolve_default_session_cwd(),
+    )
 }
 
 // ─── Session bootstrap ──────────────────────────────────────────────────
@@ -735,6 +770,7 @@ pub async fn spawn_local_a2a_server(
 mod tests {
     use super::*;
     use crate::settings_store;
+    use tempfile::tempdir;
 
     // ── infer_agent_id_from_command ──────────────────────────────
 
@@ -785,6 +821,38 @@ mod tests {
     #[test]
     fn sanitize_path_traversal() {
         assert_eq!(sanitize_attachment_filename("../../etc/passwd"), "passwd");
+    }
+
+    #[test]
+    fn resolve_session_cwd_uses_fallback_for_root() {
+        let temp = tempdir().expect("tempdir");
+        let resolved = resolve_session_cwd_with_fallback("/", temp.path()).expect("resolved cwd");
+        assert_eq!(resolved, temp.path());
+    }
+
+    #[test]
+    fn save_mobile_attachments_falls_back_when_session_cwd_is_root() {
+        let temp = tempdir().expect("tempdir");
+        let attachments = vec![RelayAttachmentPayload {
+            name: "notes.txt".to_string(),
+            mime_type: Some("text/plain".to_string()),
+            data_base64: base64::engine::general_purpose::STANDARD.encode("hello attachment"),
+        }];
+
+        let saved = save_mobile_attachments_to_cwd_with_fallback(
+            "session-1",
+            "/",
+            &attachments,
+            temp.path(),
+        )
+        .expect("attachments saved");
+
+        assert_eq!(saved.len(), 1);
+        assert!(saved[0].starts_with(temp.path().join("ilhae-uploads").join("session-1")));
+        assert_eq!(
+            std::fs::read_to_string(&saved[0]).unwrap(),
+            "hello attachment"
+        );
     }
 
     // ── is_initialize_related_error ─────────────────────────────

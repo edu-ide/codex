@@ -1,5 +1,7 @@
 //! Team Mode Tests — A2A delegation, brain sessions, persistence
 
+extern crate codex_ilhae as ilhae_proxy;
+
 #[path = "common/mod.rs"]
 mod common;
 

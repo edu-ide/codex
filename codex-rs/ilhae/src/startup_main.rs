@@ -850,7 +850,7 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
     let autonomous_sessions: Arc<
         Cache<String, context_proxy::autonomy::state::AutonomousSessionState>,
     > = build_cache();
-    let channel_memory: Arc<RwLock<HashMap<String, serde_json::Value>>> =
+    let channel_memory: Arc<RwLock<HashMap<String, HashMap<String, serde_json::Value>>>> =
         Arc::new(RwLock::new(HashMap::new()));
     let session_turn_seq: Arc<Cache<String, u64>> = build_cache();
     let session_id_map: Arc<Cache<String, String>> = build_cache();
@@ -1503,6 +1503,7 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
         instructions_version: instructions_version.clone(),
         cancel_version: cancel_version.clone(),
         pending_history: pending_history.clone(),
+        connection_sessions: build_cache(),
         active_session_id: active_session_id.clone(),
         autonomous_sessions: autonomous_sessions.clone(),
     };

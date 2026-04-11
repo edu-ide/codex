@@ -6,6 +6,7 @@
 //! team delegation and that the Brain Session Writer persists the results
 //! accurately to the isolated `~/ilhae/brain/sessions/team/` folder.
 
+use super::common::test_gate::require_team_proxy_e2e;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
@@ -23,7 +24,7 @@ struct ProxyProcess {
 
 impl ProxyProcess {
     fn spawn() -> Self {
-        let temp_home = TempDir::new().expect("temp home").into_path();
+        let temp_home = TempDir::new().expect("temp home").keep();
         let ilhae_dir = temp_home.join("ilhae");
         let gemini_dir = temp_home.join(".gemini");
         std::fs::create_dir_all(&ilhae_dir).unwrap();
@@ -98,7 +99,7 @@ impl ProxyProcess {
             }
         });
 
-        let mut child_stderr = child.stderr.take().unwrap();
+        let child_stderr = child.stderr.take().unwrap();
         let log_file_clone2 = log_file.clone();
         std::thread::spawn(move || {
             let mut writer = std::fs::OpenOptions::new()
@@ -185,6 +186,10 @@ impl Drop for ProxyProcess {
 
 #[test]
 fn real_proxy_team_e2e_persistence() {
+    if !require_team_proxy_e2e() {
+        return;
+    }
+
     println!("═══════════════════════════════════════════════════");
     println!(" Real Proxy Team Mode E2E");
     println!("═══════════════════════════════════════════════════");
