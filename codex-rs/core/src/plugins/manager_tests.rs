@@ -8,6 +8,7 @@ use crate::config_loader::ConfigRequirementsToml;
 use crate::plugins::LoadedPlugin;
 use crate::plugins::MarketplacePluginInstallPolicy;
 use crate::plugins::PluginLoadOutcome;
+use crate::plugins::marketplace_install_root;
 use crate::plugins::test_support::TEST_CURATED_PLUGIN_SHA;
 use crate::plugins::test_support::write_curated_plugin_sha_with as write_curated_plugin_sha;
 use crate::plugins::test_support::write_file;
@@ -30,17 +31,34 @@ use wiremock::matchers::query_param;
 
 const MAX_CAPABILITY_SUMMARY_DESCRIPTION_LEN: usize = 1024;
 
-fn write_plugin(root: &Path, dir_name: &str, manifest_name: &str) {
+fn write_plugin_with_version(
+    root: &Path,
+    dir_name: &str,
+    manifest_name: &str,
+    manifest_version: Option<&str>,
+) {
     let plugin_root = root.join(dir_name);
     fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
     fs::create_dir_all(plugin_root.join("skills")).unwrap();
+    let version = manifest_version
+        .map(|manifest_version| format!(r#","version":"{manifest_version}""#))
+        .unwrap_or_default();
     fs::write(
         plugin_root.join(".codex-plugin/plugin.json"),
-        format!(r#"{{"name":"{manifest_name}"}}"#),
+        format!(r#"{{"name":"{manifest_name}"{version}}}"#),
     )
     .unwrap();
     fs::write(plugin_root.join("skills/SKILL.md"), "skill").unwrap();
     fs::write(plugin_root.join(".mcp.json"), r#"{"mcpServers":{}}"#).unwrap();
+}
+
+fn write_plugin(root: &Path, dir_name: &str, manifest_name: &str) {
+    write_plugin_with_version(
+        root,
+        dir_name,
+        manifest_name,
+        /*manifest_version*/ None,
+    );
 }
 
 fn plugin_config_toml(enabled: bool, plugins_feature_enabled: bool) -> String {
@@ -956,6 +974,60 @@ async fn install_plugin_updates_config_with_relative_path_and_plugin_key() {
 }
 
 #[tokio::test]
+async fn install_plugin_uses_manifest_version_for_non_curated_plugins() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_root = tmp.path().join("repo");
+    fs::create_dir_all(repo_root.join(".git")).unwrap();
+    fs::create_dir_all(repo_root.join(".agents/plugins")).unwrap();
+    write_plugin_with_version(
+        &repo_root,
+        "sample-plugin",
+        "sample-plugin",
+        Some("1.2.3-beta+7"),
+    );
+    fs::write(
+        repo_root.join(".agents/plugins/marketplace.json"),
+        r#"{
+  "name": "debug",
+  "plugins": [
+    {
+      "name": "sample-plugin",
+      "source": {
+        "source": "local",
+        "path": "./sample-plugin"
+      }
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+
+    let result = PluginsManager::new(tmp.path().to_path_buf())
+        .install_plugin(PluginInstallRequest {
+            plugin_name: "sample-plugin".to_string(),
+            marketplace_path: AbsolutePathBuf::try_from(
+                repo_root.join(".agents/plugins/marketplace.json"),
+            )
+            .unwrap(),
+        })
+        .await
+        .unwrap();
+
+    let installed_path = tmp
+        .path()
+        .join("plugins/cache/debug/sample-plugin/1.2.3-beta+7");
+    assert_eq!(
+        result,
+        PluginInstallOutcome {
+            plugin_id: PluginId::new("sample-plugin".to_string(), "debug".to_string()).unwrap(),
+            plugin_version: "1.2.3-beta+7".to_string(),
+            installed_path: AbsolutePathBuf::try_from(installed_path).unwrap(),
+            auth_policy: MarketplacePluginAuthPolicy::OnInstall,
+        }
+    );
+}
+
+#[tokio::test]
 async fn uninstall_plugin_removes_cache_and_config_entry() {
     let tmp = tempfile::tempdir().unwrap();
     write_plugin(
@@ -1431,6 +1503,174 @@ plugins = true
             }],
         }
     );
+}
+
+#[tokio::test]
+async fn list_marketplaces_includes_installed_marketplace_roots() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marketplace_root = marketplace_install_root(tmp.path()).join("debug");
+    let plugin_root = marketplace_root.join("plugins/sample");
+
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+
+[marketplaces.debug]
+last_updated = "2026-04-10T12:34:56Z"
+source_type = "git"
+source = "/tmp/debug"
+"#,
+    );
+    fs::create_dir_all(marketplace_root.join(".agents/plugins")).unwrap();
+    fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
+    fs::write(
+        marketplace_root.join(".agents/plugins/marketplace.json"),
+        r#"{
+  "name": "debug",
+  "plugins": [
+    {
+      "name": "sample",
+      "source": {
+        "source": "local",
+        "path": "./plugins/sample"
+      }
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"sample"}"#,
+    )
+    .unwrap();
+    let config = load_config(tmp.path(), tmp.path()).await;
+    let marketplaces = PluginsManager::new(tmp.path().to_path_buf())
+        .list_marketplaces_for_config(&config, &[])
+        .unwrap()
+        .marketplaces;
+
+    let marketplace = marketplaces
+        .into_iter()
+        .find(|marketplace| marketplace.name == "debug")
+        .expect("installed marketplace should be listed");
+
+    assert_eq!(
+        marketplace.path,
+        AbsolutePathBuf::try_from(marketplace_root.join(".agents/plugins/marketplace.json"))
+            .unwrap()
+    );
+    assert_eq!(marketplace.plugins.len(), 1);
+    assert_eq!(marketplace.plugins[0].id, "sample@debug");
+    assert_eq!(
+        marketplace.plugins[0].source,
+        MarketplacePluginSource::Local {
+            path: AbsolutePathBuf::try_from(plugin_root).unwrap(),
+        }
+    );
+}
+
+#[tokio::test]
+async fn list_marketplaces_uses_config_when_known_registry_is_malformed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marketplace_root = marketplace_install_root(tmp.path()).join("debug");
+    let plugin_root = marketplace_root.join("plugins/sample");
+    let registry_path = tmp.path().join(".tmp/known_marketplaces.json");
+
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+
+[marketplaces.debug]
+last_updated = "2026-04-10T12:34:56Z"
+source_type = "git"
+source = "/tmp/debug"
+"#,
+    );
+    fs::create_dir_all(marketplace_root.join(".agents/plugins")).unwrap();
+    fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
+    fs::write(
+        marketplace_root.join(".agents/plugins/marketplace.json"),
+        r#"{
+  "name": "debug",
+  "plugins": [
+    {
+      "name": "sample",
+      "source": {
+        "source": "local",
+        "path": "./plugins/sample"
+      }
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"sample"}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(registry_path.parent().unwrap()).unwrap();
+    fs::write(registry_path, "{not valid json").unwrap();
+
+    let config = load_config(tmp.path(), tmp.path()).await;
+    let marketplaces = PluginsManager::new(tmp.path().to_path_buf())
+        .list_marketplaces_for_config(&config, &[])
+        .unwrap()
+        .marketplaces;
+
+    let marketplace = marketplaces
+        .into_iter()
+        .find(|marketplace| marketplace.name == "debug")
+        .expect("configured marketplace should be discovered");
+
+    assert_eq!(marketplace.plugins[0].id, "sample@debug");
+}
+
+#[tokio::test]
+async fn list_marketplaces_ignores_installed_roots_missing_from_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marketplace_root = marketplace_install_root(tmp.path()).join("debug");
+    let plugin_root = marketplace_root.join("plugins/sample");
+
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+"#,
+    );
+    fs::create_dir_all(marketplace_root.join(".agents/plugins")).unwrap();
+    fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
+    fs::write(
+        marketplace_root.join(".agents/plugins/marketplace.json"),
+        r#"{
+  "name": "debug",
+  "plugins": [
+    {
+      "name": "sample",
+      "source": {
+        "source": "local",
+        "path": "./plugins/sample"
+      }
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"sample"}"#,
+    )
+    .unwrap();
+    let config = load_config(tmp.path(), tmp.path()).await;
+    let marketplaces = PluginsManager::new(tmp.path().to_path_buf())
+        .list_marketplaces_for_config(&config, &[])
+        .unwrap()
+        .marketplaces;
+
+    assert!(marketplaces.is_empty());
 }
 
 #[tokio::test]
@@ -2208,7 +2448,7 @@ fn refresh_curated_plugin_cache_reinstalls_missing_configured_plugin_with_curren
 }
 
 #[test]
-fn configured_curated_plugin_ids_from_codex_home_reads_latest_user_config() {
+fn curated_plugin_ids_from_config_keys_reads_latest_codex_home_user_config() {
     let tmp = tempfile::tempdir().unwrap();
     write_file(
         &tmp.path().join(CONFIG_TOML_FILE),
@@ -2224,10 +2464,14 @@ enabled = true
     );
 
     assert_eq!(
-        configured_curated_plugin_ids_from_codex_home(tmp.path())
-            .into_iter()
-            .map(|plugin_id| plugin_id.as_key())
-            .collect::<Vec<_>>(),
+        curated_plugin_ids_from_config_keys(configured_plugins_from_codex_home(
+            tmp.path(),
+            "failed to read user config while refreshing curated plugin cache",
+            "failed to parse user config while refreshing curated plugin cache",
+        ))
+        .into_iter()
+        .map(|plugin_id| plugin_id.as_key())
+        .collect::<Vec<_>>(),
         vec!["slack@openai-curated".to_string()]
     );
 
@@ -2239,7 +2483,11 @@ plugins = true
     );
 
     assert_eq!(
-        configured_curated_plugin_ids_from_codex_home(tmp.path()),
+        curated_plugin_ids_from_config_keys(configured_plugins_from_codex_home(
+            tmp.path(),
+            "failed to read user config while refreshing curated plugin cache",
+            "failed to parse user config while refreshing curated plugin cache",
+        )),
         Vec::<PluginId>::new()
     );
 }
@@ -2263,6 +2511,212 @@ fn refresh_curated_plugin_cache_returns_false_when_configured_plugins_are_curren
     assert!(
         !refresh_curated_plugin_cache(tmp.path(), TEST_CURATED_PLUGIN_SHA, &[plugin_id])
             .expect("cache refresh should be a no-op when configured plugins are current")
+    );
+}
+
+#[test]
+fn refresh_non_curated_plugin_cache_replaces_existing_local_version_with_manifest_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_root = tmp.path().join("repo");
+    fs::create_dir_all(repo_root.join(".git")).unwrap();
+    fs::create_dir_all(repo_root.join(".agents/plugins")).unwrap();
+    write_plugin_with_version(&repo_root, "sample-plugin", "sample-plugin", Some("1.2.3"));
+    write_file(
+        &repo_root.join(".agents/plugins/marketplace.json"),
+        r#"{
+  "name": "debug",
+  "plugins": [
+    {
+      "name": "sample-plugin",
+      "source": {
+        "source": "local",
+        "path": "./sample-plugin"
+      }
+    }
+  ]
+}"#,
+    );
+    write_plugin(
+        &tmp.path().join("plugins/cache/debug"),
+        "sample-plugin/local",
+        "sample-plugin",
+    );
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+
+[plugins."sample-plugin@debug"]
+enabled = true
+"#,
+    );
+
+    assert!(
+        refresh_non_curated_plugin_cache(
+            tmp.path(),
+            &[AbsolutePathBuf::try_from(repo_root).unwrap()],
+        )
+        .expect("cache refresh should succeed")
+    );
+
+    assert!(
+        !tmp.path()
+            .join("plugins/cache/debug/sample-plugin/local")
+            .exists()
+    );
+    assert!(
+        tmp.path()
+            .join("plugins/cache/debug/sample-plugin/1.2.3")
+            .is_dir()
+    );
+}
+
+#[test]
+fn refresh_non_curated_plugin_cache_reinstalls_missing_configured_plugin_with_manifest_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_root = tmp.path().join("repo");
+    fs::create_dir_all(repo_root.join(".git")).unwrap();
+    fs::create_dir_all(repo_root.join(".agents/plugins")).unwrap();
+    write_plugin_with_version(&repo_root, "sample-plugin", "sample-plugin", Some("1.2.3"));
+    write_file(
+        &repo_root.join(".agents/plugins/marketplace.json"),
+        r#"{
+  "name": "debug",
+  "plugins": [
+    {
+      "name": "sample-plugin",
+      "source": {
+        "source": "local",
+        "path": "./sample-plugin"
+      }
+    }
+  ]
+}"#,
+    );
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+
+[plugins."sample-plugin@debug"]
+enabled = true
+"#,
+    );
+
+    assert!(
+        refresh_non_curated_plugin_cache(
+            tmp.path(),
+            &[AbsolutePathBuf::try_from(repo_root).unwrap()],
+        )
+        .expect("cache refresh should reinstall missing configured plugin")
+    );
+
+    assert!(
+        tmp.path()
+            .join("plugins/cache/debug/sample-plugin/1.2.3")
+            .is_dir()
+    );
+}
+
+#[test]
+fn refresh_non_curated_plugin_cache_returns_false_when_configured_plugins_are_current() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_root = tmp.path().join("repo");
+    fs::create_dir_all(repo_root.join(".git")).unwrap();
+    fs::create_dir_all(repo_root.join(".agents/plugins")).unwrap();
+    write_plugin_with_version(&repo_root, "sample-plugin", "sample-plugin", Some("1.2.3"));
+    write_file(
+        &repo_root.join(".agents/plugins/marketplace.json"),
+        r#"{
+  "name": "debug",
+  "plugins": [
+    {
+      "name": "sample-plugin",
+      "source": {
+        "source": "local",
+        "path": "./sample-plugin"
+      }
+    }
+  ]
+}"#,
+    );
+    write_plugin_with_version(
+        &tmp.path().join("plugins/cache/debug"),
+        "sample-plugin/1.2.3",
+        "sample-plugin",
+        Some("1.2.3"),
+    );
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+
+[plugins."sample-plugin@debug"]
+enabled = true
+"#,
+    );
+
+    assert!(
+        !refresh_non_curated_plugin_cache(
+            tmp.path(),
+            &[AbsolutePathBuf::try_from(repo_root).unwrap()],
+        )
+        .expect("cache refresh should be a no-op when configured plugins are current")
+    );
+}
+
+#[test]
+fn refresh_non_curated_plugin_cache_ignores_invalid_unconfigured_plugin_versions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_root = tmp.path().join("repo");
+    fs::create_dir_all(repo_root.join(".git")).unwrap();
+    fs::create_dir_all(repo_root.join(".agents/plugins")).unwrap();
+    write_plugin_with_version(&repo_root, "sample-plugin", "sample-plugin", Some("1.2.3"));
+    write_plugin_with_version(&repo_root, "broken-plugin", "broken-plugin", Some("   "));
+    write_file(
+        &repo_root.join(".agents/plugins/marketplace.json"),
+        r#"{
+  "name": "debug",
+  "plugins": [
+    {
+      "name": "sample-plugin",
+      "source": {
+        "source": "local",
+        "path": "./sample-plugin"
+      }
+    },
+    {
+      "name": "broken-plugin",
+      "source": {
+        "source": "local",
+        "path": "./broken-plugin"
+      }
+    }
+  ]
+}"#,
+    );
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+
+[plugins."sample-plugin@debug"]
+enabled = true
+"#,
+    );
+
+    assert!(
+        refresh_non_curated_plugin_cache(
+            tmp.path(),
+            &[AbsolutePathBuf::try_from(repo_root).unwrap()],
+        )
+        .expect("cache refresh should ignore unrelated invalid plugin manifests")
+    );
+
+    assert!(
+        tmp.path()
+            .join("plugins/cache/debug/sample-plugin/1.2.3")
+            .is_dir()
     );
 }
 

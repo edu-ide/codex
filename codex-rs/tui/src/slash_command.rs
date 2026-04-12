@@ -47,8 +47,8 @@ pub enum SlashCommand {
     Collab,
     Agent,
     // Undo,
-    Diff,
     Copy,
+    Diff,
     Mention,
     Help,
     Status,
@@ -96,8 +96,8 @@ impl SlashCommand {
             SlashCommand::Fork => "fork the current chat",
             // SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
+            SlashCommand::Copy => "copy last response as markdown",
             SlashCommand::Diff => "show git diff (including untracked files)",
-            SlashCommand::Copy => "copy the latest Codex output to your clipboard",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Help => "show available slash commands",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
@@ -201,6 +201,7 @@ impl SlashCommand {
                 | SlashCommand::Rename
                 | SlashCommand::Plan
                 | SlashCommand::Fast
+                | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
         )
     }

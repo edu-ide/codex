@@ -27,6 +27,7 @@ use crate::tools::router::ToolCallSource;
 use crate::tools::router::ToolRouterParams;
 use crate::unified_exec::resolve_max_tokens;
 use codex_features::Feature;
+use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use codex_tools::collect_code_mode_tool_definitions;
 use codex_utils_output_truncation::TruncationPolicy;
@@ -257,16 +258,13 @@ async fn build_nested_router(exec: &ExecContext) -> ToolRouter {
         .read()
         .await
         .list_all_tools()
-        .await
-        .into_iter()
-        .map(|(name, tool_info)| (name, tool_info.tool))
-        .collect();
+        .await;
 
     ToolRouter::from_config(
         &nested_tools_config,
         ToolRouterParams {
+            deferred_mcp_tools: None,
             mcp_tools: Some(mcp_tools),
-            app_tools: None,
             discoverable_tools: None,
             dynamic_tools: exec.turn.dynamic_tools.as_slice(),
         },
@@ -286,27 +284,29 @@ async fn call_nested_tool(
         )));
     }
 
-    let payload =
-        if let Some((server, tool)) = exec.session.parse_mcp_tool_name(&tool_name, &None).await {
-            match serialize_function_tool_arguments(&tool_name, input) {
-                Ok(raw_arguments) => ToolPayload::Mcp {
-                    server,
-                    tool,
-                    raw_arguments,
-                },
-                Err(error) => return Err(FunctionCallError::RespondToModel(error)),
-            }
-        } else {
-            match build_nested_tool_payload(tool_runtime.find_spec(&tool_name), &tool_name, input) {
-                Ok(payload) => payload,
-                Err(error) => return Err(FunctionCallError::RespondToModel(error)),
-            }
-        };
+    let payload = if let Some(tool_info) = exec
+        .session
+        .resolve_mcp_tool_info(&tool_name, /*namespace*/ None)
+        .await
+    {
+        match serialize_function_tool_arguments(&tool_name, input) {
+            Ok(raw_arguments) => ToolPayload::Mcp {
+                server: tool_info.server_name,
+                tool: tool_info.tool.name.to_string(),
+                raw_arguments,
+            },
+            Err(error) => return Err(FunctionCallError::RespondToModel(error)),
+        }
+    } else {
+        match build_nested_tool_payload(tool_runtime.find_spec(&tool_name), &tool_name, input) {
+            Ok(payload) => payload,
+            Err(error) => return Err(FunctionCallError::RespondToModel(error)),
+        }
+    };
 
     let call = ToolCall {
-        tool_name: tool_name.clone(),
+        tool_name: ToolName::plain(tool_name.clone()),
         call_id: format!("{PUBLIC_TOOL_NAME}-{}", uuid::Uuid::new_v4()),
-        tool_namespace: None,
         payload,
     };
     let result = tool_runtime

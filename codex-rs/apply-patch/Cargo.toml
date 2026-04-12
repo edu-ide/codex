@@ -1,52 +1,33 @@
-[[bin]]
-name = "apply_patch"
-path = "src/main.rs"
-
 [package]
 name = "codex-apply-patch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "codex_apply_patch"
 path = "src/lib.rs"
 
+[[bin]]
+name = "apply_patch"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 
-[package.version]
-workspace = true
+[dependencies]
+anyhow = { workspace = true }
+codex-exec-server = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+similar = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+tree-sitter = { workspace = true }
+tree-sitter-bash = { workspace = true }
 
-[package.edition]
-workspace = true
-
-[package.license]
-workspace = true
-
-[dependencies.anyhow]
-workspace = true
-
-[dependencies.similar]
-workspace = true
-
-[dependencies.thiserror]
-version = "2.0.17"
-
-[dependencies.tree-sitter]
-workspace = true
-
-[dependencies.tree-sitter-bash]
-workspace = true
-
-[dev-dependencies.assert_cmd]
-workspace = true
-
-[dev-dependencies.assert_matches]
-workspace = true
-
-[dev-dependencies.codex-utils-cargo-bin]
-workspace = true
-
-[dev-dependencies.pretty_assertions]
-workspace = true
-
-[dev-dependencies.tempfile]
-workspace = true
+[dev-dependencies]
+assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
+codex-utils-cargo-bin = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

@@ -1,5 +1,8 @@
 [package]
 name = "codex-arg0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "codex_arg0"
@@ -8,39 +11,15 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[package.version]
-workspace = true
-
-[package.edition]
-workspace = true
-
-[package.license]
-workspace = true
-
-[dependencies.anyhow]
-workspace = true
-
-[dependencies.codex-apply-patch]
-workspace = true
-
-[dependencies.codex-linux-sandbox]
-workspace = true
-
-[dependencies.codex-sandboxing]
-workspace = true
-
-[dependencies.codex-shell-escalation]
-workspace = true
-
-[dependencies.codex-utils-home-dir]
-workspace = true
-
-[dependencies.dotenvy]
-workspace = true
-
-[dependencies.tempfile]
-workspace = true
-
-[dependencies.tokio]
-version = "1"
-features = [ "rt-multi-thread",]
+[dependencies]
+anyhow = { workspace = true }
+codex-apply-patch = { workspace = true }
+codex-exec-server = { workspace = true }
+codex-linux-sandbox = { workspace = true }
+codex-sandboxing = { workspace = true }
+codex-shell-escalation = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-home-dir = { workspace = true }
+dotenvy = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

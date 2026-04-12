@@ -1,96 +1,40 @@
 [package]
 name = "codex-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+codex-client = { workspace = true }
+codex-protocol = { workspace = true }
+codex-utils-rustls-provider = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+reqwest = { workspace = true, features = ["json", "stream"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "sync", "time"] }
+tokio-tungstenite = { workspace = true }
+tungstenite = { workspace = true }
+tracing = { workspace = true }
+eventsource-stream = { workspace = true }
+regex-lite = { workspace = true }
+tokio-util = { workspace = true, features = ["codec", "io"] }
+url = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+assert_matches = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
+wiremock = { workspace = true }
+reqwest = { workspace = true }
 
 [lints]
-workspace = true
-
-[package.version]
-workspace = true
-
-[package.edition]
-workspace = true
-
-[package.license]
-workspace = true
-
-[dependencies.async-trait]
-workspace = true
-
-[dependencies.bytes]
-workspace = true
-
-[dependencies.codex-client]
-workspace = true
-
-[dependencies.codex-protocol]
-workspace = true
-
-[dependencies.codex-utils-rustls-provider]
-workspace = true
-
-[dependencies.futures]
-version = "0.3"
-default-features = false
-
-[dependencies.http]
-workspace = true
-
-[dependencies.serde]
-version = "1"
-features = [ "derive",]
-
-[dependencies.serde_json]
-workspace = true
-
-[dependencies.thiserror]
-version = "2.0.17"
-
-[dependencies.tokio]
-version = "1"
-features = [ "macros", "net", "rt", "sync", "time",]
-
-[dependencies.tokio-tungstenite]
-workspace = true
-
-[dependencies.tungstenite]
-workspace = true
-
-[dependencies.tracing]
-version = "0.1.44"
-
-[dependencies.eventsource-stream]
-workspace = true
-
-[dependencies.regex-lite]
-workspace = true
-
-[dependencies.tokio-util]
-version = "0.7.18"
-features = [ "codec",]
-
-[dependencies.url]
-version = "2"
-
-[dev-dependencies.anyhow]
-workspace = true
-
-[dev-dependencies.assert_matches]
-workspace = true
-
-[dev-dependencies.pretty_assertions]
-workspace = true
-
-[dev-dependencies.tokio-test]
-workspace = true
-
-[dev-dependencies.wiremock]
-workspace = true
-
-[dev-dependencies.reqwest]
-workspace = true
-
-[dependencies.base64]
-workspace = true
-
-[dependencies.chrono]
 workspace = true

@@ -25,6 +25,12 @@ use codex_tools::SpawnAgentToolOptions;
 use codex_tools::ToolSearchAppInfo;
 use codex_tools::ToolSuggestEntry;
 use codex_tools::ViewImageToolOptions;
+use codex_tools::ToolHandlerKind;
+use codex_tools::ToolNamespace;
+use codex_tools::ToolRegistryPlanDeferredTool;
+use codex_tools::ToolRegistryPlanParams;
+use codex_tools::ToolUserShellType;
+use codex_tools::ToolsConfig;
 use codex_tools::WaitAgentTimeoutOptions;
 use codex_tools::augment_tool_spec_for_code_mode;
 use codex_tools::create_apply_patch_freeform_tool;
@@ -300,8 +306,8 @@ pub(crate) fn build_specs(
 
 pub(crate) fn build_specs_with_discoverable_tools(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<String, rmcp::model::Tool>>,
-    app_tools: Option<HashMap<String, ToolInfo>>,
+    mcp_tools: Option<HashMap<String, ToolInfo>>,
+    deferred_mcp_tools: Option<HashMap<String, ToolInfo>>,
     discoverable_tools: Option<Vec<DiscoverableTool>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> ToolRegistryBuilder {

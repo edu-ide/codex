@@ -4,6 +4,7 @@ use crate::app_command::AppCommandView;
 use crate::app_event::AppEvent;
 use crate::app_event::ExitMode;
 use crate::app_event::FeedbackCategory;
+use crate::app_event::RateLimitRefreshOrigin;
 use crate::app_event::RealtimeAudioDeviceKind;
 #[cfg(target_os = "windows")]
 use crate::app_event::WindowsSandboxEnableMode;
@@ -35,6 +36,16 @@ use crate::history_cell;
 use crate::history_cell::HistoryCell;
 #[cfg(not(debug_assertions))]
 use crate::history_cell::UpdateAvailableHistoryCell;
+use crate::legacy_core::append_message_history_entry;
+use crate::legacy_core::config::Config;
+use crate::legacy_core::config::ConfigBuilder;
+use crate::legacy_core::config::ConfigOverrides;
+use crate::legacy_core::config::edit::ConfigEdit;
+use crate::legacy_core::config::edit::ConfigEditsBuilder;
+use crate::legacy_core::config_loader::ConfigLayerStackOrdering;
+use crate::legacy_core::lookup_message_history_entry;
+#[cfg(target_os = "windows")]
+use crate::legacy_core::windows_sandbox::WindowsSandboxLevelExt;
 use crate::model_catalog::ModelCatalog;
 use crate::model_migration::ModelMigrationOutcome;
 use crate::model_migration::migration_copy_for_models;
@@ -48,6 +59,7 @@ use crate::read_session_model;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::Renderable;
 use crate::resume_picker::SessionSelection;
+use crate::resume_picker::SessionTarget;
 use crate::slash_command::built_in_slash_commands;
 #[cfg(test)]
 use crate::test_support::PathBufExt;
@@ -67,6 +79,7 @@ use codex_app_server_protocol::GetAccountRateLimitsResponse;
 use codex_app_server_protocol::ListMcpServerStatusParams;
 use codex_app_server_protocol::ListMcpServerStatusResponse;
 use codex_app_server_protocol::McpServerStatus;
+use codex_app_server_protocol::McpServerStatusDetail;
 use codex_app_server_protocol::PluginInstallParams;
 use codex_app_server_protocol::PluginInstallResponse;
 use codex_app_server_protocol::PluginListParams;
@@ -82,20 +95,13 @@ use codex_app_server_protocol::SkillsListResponse;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadRollbackResponse;
+use codex_app_server_protocol::ThreadStartSource;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnError as AppServerTurnError;
 use codex_app_server_protocol::TurnStatus;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::ModelAvailabilityNuxConfig;
-use codex_core::config::Config;
-use codex_core::config::ConfigBuilder;
-use codex_core::config::ConfigOverrides;
-use codex_core::config::edit::ConfigEdit;
-use codex_core::config::edit::ConfigEditsBuilder;
-use codex_core::config_loader::ConfigLayerStackOrdering;
-use codex_core::message_history;
-#[cfg(target_os = "windows")]
-use codex_core::windows_sandbox::WindowsSandboxLevelExt;
+use codex_exec_server::EnvironmentManager;
 use codex_features::Feature;
 use codex_ilhae::BootstrappedIlhaeRuntime;
 use codex_ilhae::capabilities::EngineCapabilityProfile;
@@ -325,12 +331,14 @@ fn session_summary(
     thread_id: Option<ThreadId>,
     thread_name: Option<String>,
 ) -> Option<SessionSummary> {
-    if token_usage.is_zero() {
+    let usage_line = (!token_usage.is_zero()).then(|| FinalOutput::from(token_usage).to_string());
+    let resume_command =
+        crate::legacy_core::util::resume_command(thread_name.as_deref(), thread_id);
+
+    if usage_line.is_none() && resume_command.is_none() {
         return None;
     }
 
-    let usage_line = FinalOutput::from(token_usage).to_string();
-    let resume_command = codex_core::util::resume_command(thread_name.as_deref(), thread_id);
     Some(SessionSummary {
         usage_line,
         resume_command,
@@ -483,7 +491,7 @@ fn emit_project_config_warnings(app_event_tx: &AppEventSender, config: &Config) 
 
 fn emit_system_bwrap_warning(app_event_tx: &AppEventSender, config: &Config) {
     let Some(message) =
-        codex_core::config::system_bwrap_warning(config.permissions.sandbox_policy.get())
+        crate::legacy_core::config::system_bwrap_warning(config.permissions.sandbox_policy.get())
     else {
         return;
     };
@@ -495,7 +503,7 @@ fn emit_system_bwrap_warning(app_event_tx: &AppEventSender, config: &Config) {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SessionSummary {
-    usage_line: String,
+    usage_line: Option<String>,
     resume_command: Option<String>,
 }
 
@@ -986,6 +994,7 @@ pub(crate) struct App {
     pub(crate) backtrack_render_pending: bool,
     pub(crate) feedback: codex_feedback::CodexFeedback,
     feedback_audience: FeedbackAudience,
+    environment_manager: Arc<EnvironmentManager>,
     remote_app_server_url: Option<String>,
     remote_app_server_auth_token: Option<String>,
     /// Set when the user confirms an update; propagated on exit.
@@ -1033,7 +1042,7 @@ fn normalize_harness_overrides_for_cwd(
 
     let mut normalized = Vec::with_capacity(overrides.additional_writable_roots.len());
     for root in overrides.additional_writable_roots.drain(..) {
-        let absolute = AbsolutePathBuf::resolve_path_against_base(root, base_cwd)?;
+        let absolute = AbsolutePathBuf::resolve_path_against_base(root, base_cwd);
         normalized.push(absolute.into_path_buf());
     }
     overrides.additional_writable_roots = normalized;
@@ -1188,7 +1197,7 @@ impl App {
     pub fn chatwidget_init_for_forked_or_resumed_thread(
         &self,
         tui: &mut tui::Tui,
-        cfg: codex_core::config::Config,
+        cfg: crate::legacy_core::config::Config,
     ) -> crate::chatwidget::ChatWidgetInit {
         crate::chatwidget::ChatWidgetInit {
             config: cfg,
@@ -1803,6 +1812,21 @@ impl App {
         self.active_thread_id.or(self.chat_widget.thread_id())
     }
 
+    fn ignore_same_thread_resume(
+        &mut self,
+        target_session: &crate::resume_picker::SessionTarget,
+    ) -> bool {
+        if self.active_thread_id != Some(target_session.thread_id) {
+            return false;
+        };
+
+        self.chat_widget.add_info_message(
+            format!("Already viewing {}.", target_session.display_label()),
+            /*hint*/ None,
+        );
+        true
+    }
+
     /// Mirrors the visible thread into the contextual footer row.
     ///
     /// The footer sometimes shows ambient context instead of an instructional hint. In multi-agent
@@ -2012,8 +2036,8 @@ impl App {
         Ok(())
     }
 
-    /// Spawn a background task that fetches the full MCP server inventory from the
-    /// app-server via paginated RPCs, then delivers the result back through
+    /// Spawn a background task that fetches MCP server status from the app-server
+    /// via paginated RPCs, then delivers the result back through
     /// `AppEvent::McpInventoryLoaded`.
     ///
     /// The spawned task is fire-and-forget: no `JoinHandle` is stored, so a stale
@@ -2037,7 +2061,18 @@ impl App {
         });
     }
 
-    fn refresh_rate_limits(&mut self, app_server: &AppServerSession, request_id: u64) {
+    /// Spawns a background task to fetch account rate limits and deliver the
+    /// result as a `RateLimitsLoaded` event.
+    ///
+    /// The `origin` is forwarded to the completion handler so it can distinguish
+    /// a startup prefetch (which only updates cached snapshots and schedules a
+    /// frame) from a `/status`-triggered refresh (which must finalize the
+    /// corresponding status card).
+    fn refresh_rate_limits(
+        &mut self,
+        app_server: &AppServerSession,
+        origin: RateLimitRefreshOrigin,
+    ) {
         let Some(request_handle) = app_server.request_handle() else {
             self.chat_widget.add_error_message(
                 "Rate limits are unavailable for the current backend.".to_string(),
@@ -2049,7 +2084,7 @@ impl App {
             let result = fetch_account_rate_limits(request_handle)
                 .await
                 .map_err(|err| err.to_string());
-            app_event_tx.send(AppEvent::RateLimitsLoaded { request_id, result });
+            app_event_tx.send(AppEvent::RateLimitsLoaded { origin, result });
         });
     }
 
@@ -2156,6 +2191,7 @@ impl App {
         app_server: &AppServerSession,
         category: FeedbackCategory,
         reason: Option<String>,
+        turn_id: Option<String>,
         include_logs: bool,
     ) {
         let Some(request_handle) = app_server.request_handle() else {
@@ -2176,6 +2212,7 @@ impl App {
             rollout_path,
             category,
             reason,
+            turn_id,
             include_logs,
         );
         tokio::spawn(async move {
@@ -2301,7 +2338,9 @@ impl App {
 
         self.chat_widget
             .add_to_history(history_cell::new_mcp_tools_output_from_statuses(
-                &config, &statuses,
+                &config,
+                &statuses,
+                McpServerStatusDetail::ToolsAndAuthOnly,
             ));
     }
 
@@ -2332,8 +2371,7 @@ impl App {
                 let text = text.clone();
                 let config = self.chat_widget.config_ref().clone();
                 tokio::spawn(async move {
-                    if let Err(err) =
-                        message_history::append_entry(&text, &thread_id, &config).await
+                    if let Err(err) = append_message_history_entry(&text, &thread_id, &config).await
                     {
                         tracing::warn!(
                             thread_id = %thread_id,
@@ -2351,7 +2389,7 @@ impl App {
                 let app_event_tx = self.app_event_tx.clone();
                 tokio::spawn(async move {
                     let entry_opt = tokio::task::spawn_blocking(move || {
-                        message_history::lookup(log_id, offset, &config)
+                        lookup_message_history_entry(log_id, offset, &config)
                     })
                     .await
                     .unwrap_or_else(|err| {
@@ -3509,6 +3547,7 @@ impl App {
         &mut self,
         tui: &mut tui::Tui,
         app_server: &mut AppServerSession,
+        session_start_source: Option<ThreadStartSource>,
     ) {
         // Start a fresh in-memory session while preserving resumability via persisted rollout
         // history.
@@ -3530,7 +3569,10 @@ impl App {
             }
         }
         self.config = config.clone();
-        match app_server.start_thread(&config).await {
+        match app_server
+            .start_thread_with_session_start_source(&config, session_start_source)
+            .await
+        {
             Ok(started) => {
                 if let Err(err) = self
                     .replace_chat_widget_with_app_server_thread(tui, app_server, started)
@@ -3540,7 +3582,10 @@ impl App {
                         "Failed to attach to fresh app-server thread: {err}"
                     ));
                 } else if let Some(summary) = summary {
-                    let mut lines: Vec<Line<'static>> = vec![summary.usage_line.clone().into()];
+                    let mut lines: Vec<Line<'static>> = Vec::new();
+                    if let Some(usage_line) = summary.usage_line {
+                        lines.push(usage_line.into());
+                    }
                     if let Some(command) = summary.resume_command {
                         let spans = vec!["To continue this session, run ".into(), command.cyan()];
                         lines.push(spans.into());
@@ -3803,13 +3848,17 @@ impl App {
         should_prompt_windows_sandbox_nux_at_startup: bool,
         remote_app_server_url: Option<String>,
         remote_app_server_auth_token: Option<String>,
+        environment_manager: Arc<EnvironmentManager>,
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
         let (app_event_tx, mut app_event_rx) = unbounded_channel();
         let app_event_tx = AppEventSender::new(app_event_tx);
         emit_project_config_warnings(&app_event_tx, &config);
         emit_system_bwrap_warning(&app_event_tx, &config);
-        tui.set_notification_method(config.tui_notification_method);
+        tui.set_notification_settings(
+            config.tui_notifications.method,
+            config.tui_notifications.condition,
+        );
 
         let harness_overrides =
             normalize_harness_overrides_for_cwd(harness_overrides, &config.cwd)?;
@@ -3848,9 +3897,9 @@ impl App {
         let feedback_audience = bootstrap.feedback_audience;
         let auth_mode = bootstrap.auth_mode;
         let has_chatgpt_account = bootstrap.has_chatgpt_account;
+        let requires_openai_auth = bootstrap.requires_openai_auth;
         let status_account_display = bootstrap.status_account_display.clone();
         let initial_plan_type = bootstrap.plan_type;
-        let startup_rate_limit_snapshots = bootstrap.rate_limit_snapshots;
         let session_telemetry = SessionTelemetry::new(
             ThreadId::new(),
             model.as_str(),
@@ -3984,9 +4033,6 @@ impl App {
             }
         };
 
-        for snapshot in startup_rate_limit_snapshots {
-            chat_widget.on_rate_limit_snapshot(Some(snapshot));
-        }
         chat_widget
             .maybe_prompt_windows_sandbox_enable(should_prompt_windows_sandbox_nux_at_startup);
 
@@ -4018,6 +4064,7 @@ impl App {
             backtrack_render_pending: false,
             feedback: feedback.clone(),
             feedback_audience,
+            environment_manager,
             remote_app_server_url,
             remote_app_server_auth_token,
             pending_update_action: None,
@@ -4094,6 +4141,11 @@ impl App {
         tokio::pin!(tui_events);
 
         tui.frame_requester().schedule_frame();
+        // Kick off a non-blocking rate-limit prefetch so the first `/status`
+        // already has data, without delaying the initial frame render.
+        if requires_openai_auth && has_chatgpt_account {
+            app.refresh_rate_limits(&app_server, RateLimitRefreshOrigin::StartupPrefetch);
+        }
 
         let mut listen_for_app_server_events = true;
         let mut waiting_for_initial_session_configured = wait_for_initial_session_configured;
@@ -4150,10 +4202,15 @@ impl App {
                         }
                         AppRunControl::Continue
                     }
-                    Some(event) = tui_events.next() => {
-                        match app.handle_tui_event(tui, &mut app_server, event).await {
-                            Ok(control) => control,
-                            Err(err) => break Err(err),
+                    event = tui_events.next() => {
+                        if let Some(event) = event {
+                            match app.handle_tui_event(tui, &mut app_server, event).await {
+                                Ok(control) => control,
+                                Err(err) => break Err(err),
+                            }
+                        } else {
+                            tracing::warn!("terminal input stream closed; shutting down active thread");
+                            app.handle_exit_mode(&mut app_server, ExitMode::ShutdownFirst).await
                         }
                     }
                     app_server_event = app_server.next_event(), if listen_for_app_server_events => {
@@ -4269,6 +4326,108 @@ impl App {
         Ok(AppRunControl::Continue)
     }
 
+    async fn resume_target_session(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+        target_session: SessionTarget,
+    ) -> Result<AppRunControl> {
+        if self.ignore_same_thread_resume(&target_session) {
+            tui.frame_requester().schedule_frame();
+            return Ok(AppRunControl::Continue);
+        }
+
+        let current_cwd = self.config.cwd.to_path_buf();
+        let resume_cwd = if self.remote_app_server_url.is_some() {
+            current_cwd.clone()
+        } else {
+            match crate::resolve_cwd_for_resume_or_fork(
+                tui,
+                &self.config,
+                &current_cwd,
+                target_session.thread_id,
+                target_session.path.as_deref(),
+                CwdPromptAction::Resume,
+                /*allow_prompt*/ true,
+            )
+            .await?
+            {
+                crate::ResolveCwdOutcome::Continue(Some(cwd)) => cwd,
+                crate::ResolveCwdOutcome::Continue(None) => current_cwd.clone(),
+                crate::ResolveCwdOutcome::Exit => {
+                    return Ok(AppRunControl::Exit(ExitReason::UserRequested));
+                }
+            }
+        };
+
+        let mut resume_config = match self
+            .rebuild_config_for_resume_or_fallback(&current_cwd, resume_cwd)
+            .await
+        {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                self.chat_widget.add_error_message(format!(
+                    "Failed to rebuild configuration for resume: {err}"
+                ));
+                return Ok(AppRunControl::Continue);
+            }
+        };
+        self.apply_runtime_policy_overrides(&mut resume_config);
+
+        let summary = session_summary(
+            self.chat_widget.token_usage(),
+            self.chat_widget.thread_id(),
+            self.chat_widget.thread_name(),
+        );
+        match app_server
+            .resume_thread(resume_config.clone(), target_session.thread_id)
+            .await
+        {
+            Ok(resumed) => {
+                self.shutdown_current_thread(app_server).await;
+                self.config = resume_config;
+                tui.set_notification_settings(
+                    self.config.tui_notifications.method,
+                    self.config.tui_notifications.condition,
+                );
+                self.file_search
+                    .update_search_dir(self.config.cwd.to_path_buf());
+                match self
+                    .replace_chat_widget_with_app_server_thread(tui, app_server, resumed)
+                    .await
+                {
+                    Ok(()) => {
+                        if let Some(summary) = summary {
+                            let mut lines: Vec<Line<'static>> = Vec::new();
+                            if let Some(usage_line) = summary.usage_line {
+                                lines.push(usage_line.into());
+                            }
+                            if let Some(command) = summary.resume_command {
+                                let spans =
+                                    vec!["To continue this session, run ".into(), command.cyan()];
+                                lines.push(spans.into());
+                            }
+                            self.chat_widget.add_plain_history_lines(lines);
+                        }
+                    }
+                    Err(err) => {
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to attach to resumed app-server thread: {err}"
+                        ));
+                    }
+                }
+            }
+            Err(err) => {
+                let path_display = target_session.display_label();
+                self.chat_widget.add_error_message(format!(
+                    "Failed to resume session from {path_display}: {err}"
+                ));
+            }
+        }
+
+        Ok(AppRunControl::Continue)
+    }
+
     async fn handle_event(
         &mut self,
         tui: &mut tui::Tui,
@@ -4277,15 +4436,21 @@ impl App {
     ) -> Result<AppRunControl> {
         match event {
             AppEvent::NewSession => {
-                self.start_fresh_session_with_summary_hint(tui, app_server)
-                    .await;
+                self.start_fresh_session_with_summary_hint(
+                    tui, app_server, /*session_start_source*/ None,
+                )
+                .await;
             }
             AppEvent::ClearUi => {
                 self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
                 self.reset_app_ui_state_after_clear();
 
-                self.start_fresh_session_with_summary_hint(tui, app_server)
-                    .await;
+                self.start_fresh_session_with_summary_hint(
+                    tui,
+                    app_server,
+                    Some(ThreadStartSource::Clear),
+                )
+                .await;
             }
             AppEvent::OpenResumePicker => {
                 let picker_app_server = match crate::start_session_lookup_runtime_for_picker(
@@ -4297,6 +4462,7 @@ impl App {
                         },
                         None => crate::AppServerTarget::Embedded,
                     },
+                    self.environment_manager.clone(),
                 )
                 .await
                 {
@@ -4318,88 +4484,13 @@ impl App {
                 .await?
                 {
                     SessionSelection::Resume(target_session) => {
-                        let current_cwd = self.config.cwd.to_path_buf();
-                        let resume_cwd = if self.remote_app_server_url.is_some() {
-                            current_cwd.clone()
-                        } else {
-                            match crate::resolve_cwd_for_resume_or_fork(
-                                tui,
-                                &self.config,
-                                &current_cwd,
-                                target_session.thread_id,
-                                target_session.path.as_deref(),
-                                CwdPromptAction::Resume,
-                                /*allow_prompt*/ true,
-                            )
+                        match self
+                            .resume_target_session(tui, app_server, target_session)
                             .await?
-                            {
-                                crate::ResolveCwdOutcome::Continue(Some(cwd)) => cwd,
-                                crate::ResolveCwdOutcome::Continue(None) => current_cwd.clone(),
-                                crate::ResolveCwdOutcome::Exit => {
-                                    return Ok(AppRunControl::Exit(ExitReason::UserRequested));
-                                }
-                            }
-                        };
-                        let mut resume_config = match self
-                            .rebuild_config_for_resume_or_fallback(&current_cwd, resume_cwd)
-                            .await
                         {
-                            Ok(cfg) => cfg,
-                            Err(err) => {
-                                self.chat_widget.add_error_message(format!(
-                                    "Failed to rebuild configuration for resume: {err}"
-                                ));
-                                return Ok(AppRunControl::Continue);
-                            }
-                        };
-                        self.apply_runtime_policy_overrides(&mut resume_config);
-                        let summary = session_summary(
-                            self.chat_widget.token_usage(),
-                            self.chat_widget.thread_id(),
-                            self.chat_widget.thread_name(),
-                        );
-                        match app_server
-                            .resume_thread(resume_config.clone(), target_session.thread_id)
-                            .await
-                        {
-                            Ok(resumed) => {
-                                self.shutdown_current_thread(app_server).await;
-                                self.config = resume_config;
-                                tui.set_notification_method(self.config.tui_notification_method);
-                                self.file_search
-                                    .update_search_dir(self.config.cwd.to_path_buf());
-                                match self
-                                    .replace_chat_widget_with_app_server_thread(
-                                        tui, app_server, resumed,
-                                    )
-                                    .await
-                                {
-                                    Ok(()) => {
-                                        if let Some(summary) = summary {
-                                            let mut lines: Vec<Line<'static>> =
-                                                vec![summary.usage_line.clone().into()];
-                                            if let Some(command) = summary.resume_command {
-                                                let spans = vec![
-                                                    "To continue this session, run ".into(),
-                                                    command.cyan(),
-                                                ];
-                                                lines.push(spans.into());
-                                            }
-                                            self.chat_widget.add_plain_history_lines(lines);
-                                        }
-                                    }
-                                    Err(err) => {
-                                        self.chat_widget.add_error_message(format!(
-                                            "Failed to attach to resumed app-server thread: {err}"
-                                        ));
-                                    }
-                                }
-                            }
-                            Err(err) => {
-                                let path_display = target_session.display_label();
-                                self.chat_widget.add_error_message(format!(
-                                    "Failed to resume session from {path_display}: {err}"
-                                ));
+                            AppRunControl::Continue => {}
+                            AppRunControl::Exit(reason) => {
+                                return Ok(AppRunControl::Exit(reason));
                             }
                         }
                     }
@@ -4410,6 +4501,26 @@ impl App {
 
                 // Leaving alt-screen may blank the inline viewport; force a redraw either way.
                 tui.frame_requester().schedule_frame();
+            }
+            AppEvent::ResumeSessionByIdOrName(id_or_name) => {
+                match crate::lookup_session_target_with_app_server(
+                    app_server,
+                    self.config.codex_home.as_path(),
+                    &id_or_name,
+                )
+                .await?
+                {
+                    Some(target_session) => {
+                        return self
+                            .resume_target_session(tui, app_server, target_session)
+                            .await;
+                    }
+                    None => {
+                        self.chat_widget.add_error_message(format!(
+                            "No saved chat found matching '{id_or_name}'."
+                        ));
+                    }
+                }
             }
             AppEvent::ForkCurrentSession => {
                 if !self.backend_capabilities.supports_fork {
@@ -4441,8 +4552,10 @@ impl App {
                             {
                                 Ok(()) => {
                                     if let Some(summary) = summary {
-                                        let mut lines: Vec<Line<'static>> =
-                                            vec![summary.usage_line.clone().into()];
+                                        let mut lines: Vec<Line<'static>> = Vec::new();
+                                        if let Some(usage_line) = summary.usage_line {
+                                            lines.push(usage_line.into());
+                                        }
                                         if let Some(command) = summary.resume_command {
                                             let spans = vec![
                                                 "To continue this session, run ".into(),
@@ -4730,21 +4843,30 @@ impl App {
             AppEvent::FileSearchResult { query, matches } => {
                 self.chat_widget.apply_file_search_result(query, matches);
             }
-            AppEvent::RefreshRateLimits { request_id } => {
-                self.refresh_rate_limits(app_server, request_id);
+            AppEvent::RefreshRateLimits { origin } => {
+                self.refresh_rate_limits(app_server, origin);
             }
-            AppEvent::RateLimitsLoaded { request_id, result } => match result {
+            AppEvent::RateLimitsLoaded { origin, result } => match result {
                 Ok(snapshots) => {
                     for snapshot in snapshots {
                         self.chat_widget.on_rate_limit_snapshot(Some(snapshot));
                     }
-                    self.chat_widget
-                        .finish_status_rate_limit_refresh(request_id);
+                    match origin {
+                        RateLimitRefreshOrigin::StartupPrefetch => {
+                            tui.frame_requester().schedule_frame();
+                        }
+                        RateLimitRefreshOrigin::StatusCommand { request_id } => {
+                            self.chat_widget
+                                .finish_status_rate_limit_refresh(request_id);
+                        }
+                    }
                 }
                 Err(err) => {
                     tracing::warn!("account/rateLimits/read failed during TUI refresh: {err}");
-                    self.chat_widget
-                        .finish_status_rate_limit_refresh(request_id);
+                    if let RateLimitRefreshOrigin::StatusCommand { request_id } = origin {
+                        self.chat_widget
+                            .finish_status_rate_limit_refresh(request_id);
+                    }
                 }
             },
             AppEvent::ConnectorsLoaded { result, is_final } => {
@@ -4843,6 +4965,15 @@ impl App {
             AppEvent::OpenRealtimeAudioDeviceSelection { kind } => {
                 self.chat_widget.open_realtime_audio_device_selection(kind);
             }
+            AppEvent::RealtimeWebrtcOfferCreated { result } => {
+                self.chat_widget.on_realtime_webrtc_offer_created(result);
+            }
+            AppEvent::RealtimeWebrtcEvent(event) => {
+                self.chat_widget.on_realtime_webrtc_event(event);
+            }
+            AppEvent::RealtimeWebrtcLocalAudioLevel(peak) => {
+                self.chat_widget.on_realtime_webrtc_local_audio_level(peak);
+            }
             AppEvent::OpenReasoningPopup { model } => {
                 self.chat_widget.open_reasoning_popup(model);
             }
@@ -4885,9 +5016,10 @@ impl App {
             AppEvent::SubmitFeedback {
                 category,
                 reason,
+                turn_id,
                 include_logs,
             } => {
-                self.submit_feedback(app_server, category, reason, include_logs);
+                self.submit_feedback(app_server, category, reason, turn_id, include_logs);
             }
             AppEvent::FeedbackSubmitted {
                 origin_thread_id,
@@ -4939,8 +5071,9 @@ impl App {
 
                     // If the elevated setup already ran on this machine, don't prompt for
                     // elevation again - just flip the config to use the elevated path.
-                    if codex_core::windows_sandbox::sandbox_setup_is_complete(codex_home.as_path())
-                    {
+                    if crate::legacy_core::windows_sandbox::sandbox_setup_is_complete(
+                        codex_home.as_path(),
+                    ) {
                         tx.send(AppEvent::EnableWindowsSandboxForAgentMode {
                             preset,
                             mode: WindowsSandboxEnableMode::Elevated,
@@ -4952,7 +5085,7 @@ impl App {
                     self.windows_sandbox.setup_started_at = Some(Instant::now());
                     let session_telemetry = self.session_telemetry.clone();
                     tokio::task::spawn_blocking(move || {
-                        let result = codex_core::windows_sandbox::run_elevated_setup(
+                        let result = crate::legacy_core::windows_sandbox::run_elevated_setup(
                             &policy,
                             policy_cwd.as_path(),
                             command_cwd.as_path(),
@@ -4975,7 +5108,7 @@ impl App {
                                 let mut code_tag: Option<String> = None;
                                 let mut message_tag: Option<String> = None;
                                 if let Some((code, message)) =
-                                    codex_core::windows_sandbox::elevated_setup_failure_details(
+                                    crate::legacy_core::windows_sandbox::elevated_setup_failure_details(
                                         &err,
                                     )
                                 {
@@ -4990,7 +5123,7 @@ impl App {
                                     tags.push(("message", message));
                                 }
                                 session_telemetry.counter(
-                                    codex_core::windows_sandbox::elevated_setup_failure_metric_name(
+                                    crate::legacy_core::windows_sandbox::elevated_setup_failure_metric_name(
                                         &err,
                                     ),
                                     /*inc*/ 1,
@@ -5025,13 +5158,15 @@ impl App {
 
                     self.chat_widget.show_windows_sandbox_setup_status();
                     tokio::task::spawn_blocking(move || {
-                        if let Err(err) = codex_core::windows_sandbox::run_legacy_setup_preflight(
-                            &policy,
-                            policy_cwd.as_path(),
-                            command_cwd.as_path(),
-                            &env_map,
-                            codex_home.as_path(),
-                        ) {
+                        if let Err(err) =
+                            crate::legacy_core::windows_sandbox::run_legacy_setup_preflight(
+                                &policy,
+                                policy_cwd.as_path(),
+                                command_cwd.as_path(),
+                                &env_map,
+                                codex_home.as_path(),
+                            )
+                        {
                             session_telemetry.counter(
                                 "codex.windows_sandbox.legacy_setup_preflight_failed",
                                 /*inc*/ 1,
@@ -5072,7 +5207,7 @@ impl App {
 
                     tokio::task::spawn_blocking(move || {
                         let requested_path = PathBuf::from(path);
-                        let event = match codex_core::windows_sandbox_read_grants::grant_read_root_non_elevated(
+                        let event = match crate::legacy_core::grant_read_root_non_elevated(
                             &policy,
                             policy_cwd.as_path(),
                             command_cwd.as_path(),
@@ -5844,7 +5979,7 @@ impl App {
             }
             AppEvent::StatusLineSetup { items } => {
                 let ids = items.iter().map(ToString::to_string).collect::<Vec<_>>();
-                let edit = codex_core::config::edit::status_line_items_edit(&ids);
+                let edit = crate::legacy_core::config::edit::status_line_items_edit(&ids);
                 let apply_result = ConfigEditsBuilder::new(&self.config.codex_home)
                     .with_edits([edit])
                     .apply()
@@ -5870,7 +6005,7 @@ impl App {
             }
             AppEvent::TerminalTitleSetup { items } => {
                 let ids = items.iter().map(ToString::to_string).collect::<Vec<_>>();
-                let edit = codex_core::config::edit::terminal_title_items_edit(&ids);
+                let edit = crate::legacy_core::config::edit::terminal_title_items_edit(&ids);
                 let apply_result = ConfigEditsBuilder::new(&self.config.codex_home)
                     .with_edits([edit])
                     .apply()
@@ -5896,7 +6031,7 @@ impl App {
                 self.chat_widget.cancel_terminal_title_setup();
             }
             AppEvent::SyntaxThemeSelected { name } => {
-                let edit = codex_core::config::edit::syntax_theme_edit(&name);
+                let edit = crate::legacy_core::config::edit::syntax_theme_edit(&name);
                 let apply_result = ConfigEditsBuilder::new(&self.config.codex_home)
                     .with_edits([edit])
                     .apply()
@@ -5991,7 +6126,6 @@ impl App {
             }
         }
         self.handle_backtrack_rollback_succeeded(num_turns);
-        self.chat_widget.handle_thread_rolled_back();
     }
 
     fn handle_thread_event_now(&mut self, event: ThreadBufferedEvent) {
@@ -6404,8 +6538,9 @@ impl App {
     }
 }
 
-/// Collect every MCP server status from the app-server by walking the paginated
-/// `mcpServerStatus/list` RPC until no `next_cursor` is returned.
+/// Collect every MCP server status needed for `/mcp` from the app-server by
+/// walking the paginated `mcpServerStatus/list` RPC until no `next_cursor` is
+/// returned.
 ///
 /// All pages are eagerly gathered into a single `Vec` so the caller can render
 /// the inventory atomically. Each page requests up to 100 entries.
@@ -6423,6 +6558,7 @@ async fn fetch_all_mcp_server_statuses(
                 params: ListMcpServerStatusParams {
                     cursor: cursor.clone(),
                     limit: Some(100),
+                    detail: Some(McpServerStatusDetail::ToolsAndAuthOnly),
                 },
             })
             .await
@@ -6523,6 +6659,7 @@ fn build_feedback_upload_params(
     rollout_path: Option<PathBuf>,
     category: FeedbackCategory,
     reason: Option<String>,
+    turn_id: Option<String>,
     include_logs: bool,
 ) -> FeedbackUploadParams {
     let extra_log_files = if include_logs {
@@ -6530,12 +6667,14 @@ fn build_feedback_upload_params(
     } else {
         None
     };
+    let tags = turn_id.map(|turn_id| BTreeMap::from([(String::from("turn_id"), turn_id)]));
     FeedbackUploadParams {
         classification: crate::bottom_pane::feedback_classification(category).to_string(),
         reason,
         thread_id: origin_thread_id.map(|thread_id| thread_id.to_string()),
         include_logs,
         extra_log_files,
+        tags,
     }
 }
 
@@ -6609,6 +6748,7 @@ mod tests {
     use crate::chatwidget::create_initial_user_message;
     use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
     use crate::chatwidget::tests::set_chatgpt_auth;
+    use crate::chatwidget::tests::set_fast_mode_test_catalog;
     use crate::file_search::FileSearchManager;
     use crate::history_cell::AgentMessageCell;
     use crate::history_cell::HistoryCell;
@@ -6617,6 +6757,8 @@ mod tests {
     use crate::multi_agents::AgentPickerThreadEntry;
     use assert_matches::assert_matches;
 
+    use crate::legacy_core::config::ConfigBuilder;
+    use crate::legacy_core::config::ConfigOverrides;
     use codex_app_server_protocol::AdditionalFileSystemPermissions;
     use codex_app_server_protocol::AdditionalNetworkPermissions;
     use codex_app_server_protocol::AdditionalPermissionProfile;
@@ -6657,8 +6799,6 @@ mod tests {
     use codex_app_server_protocol::TurnStatus;
     use codex_app_server_protocol::UserInput as AppServerUserInput;
     use codex_config::types::ModelAvailabilityNuxConfig;
-    use codex_core::config::ConfigBuilder;
-    use codex_core::config::ConfigOverrides;
     use codex_otel::SessionTelemetry;
     use codex_protocol::ThreadId;
     use codex_protocol::config_types::CollaborationMode;
@@ -6886,6 +7026,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ignore_same_thread_resume_reports_noop_for_current_thread() {
+        let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+        let thread_id = ThreadId::new();
+        let session = test_thread_session(thread_id, PathBuf::from("/tmp/project"));
+        app.chat_widget.handle_thread_session(session.clone());
+        app.thread_event_channels.insert(
+            thread_id,
+            ThreadEventChannel::new_with_session(
+                THREAD_EVENT_CHANNEL_CAPACITY,
+                session,
+                Vec::new(),
+            ),
+        );
+        app.activate_thread_channel(thread_id).await;
+        while app_event_rx.try_recv().is_ok() {}
+
+        let ignored = app.ignore_same_thread_resume(&crate::resume_picker::SessionTarget {
+            path: Some(PathBuf::from("/tmp/project")),
+            thread_id,
+        });
+
+        assert!(ignored);
+        let cell = match app_event_rx.try_recv() {
+            Ok(AppEvent::InsertHistoryCell(cell)) => cell,
+            other => panic!("expected info message after same-thread resume, saw {other:?}"),
+        };
+        let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 80));
+        assert!(rendered.contains("Already viewing /tmp/project."));
+    }
+
+    #[tokio::test]
+    async fn ignore_same_thread_resume_allows_reattaching_displayed_inactive_thread() {
+        let mut app = make_test_app().await;
+        let thread_id = ThreadId::new();
+        let session = test_thread_session(thread_id, PathBuf::from("/tmp/project"));
+        app.chat_widget.handle_thread_session(session);
+
+        let ignored = app.ignore_same_thread_resume(&crate::resume_picker::SessionTarget {
+            path: Some(PathBuf::from("/tmp/project")),
+            thread_id,
+        });
+
+        assert!(!ignored);
+        assert!(app.transcript_cells.is_empty());
+    }
+
+    #[tokio::test]
     async fn enqueue_primary_thread_session_replays_buffered_approval_after_attach() -> Result<()> {
         let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
         let thread_id = ThreadId::new();
@@ -6941,7 +7128,7 @@ mod tests {
         let thread_id = ThreadId::new();
         let initial_prompt = "follow-up after replay".to_string();
         let config = app.config.clone();
-        let model = codex_core::test_support::get_model_offline(config.model.as_deref());
+        let model = crate::legacy_core::test_support::get_model_offline(config.model.as_deref());
         app.chat_widget = ChatWidget::new_with_app_event(ChatWidgetInit {
             config,
             frame_requester: crate::tui::FrameRequester::test_dummy(),
@@ -9445,15 +9632,17 @@ guardian_approval = true
         target_os = "windows",
         ignore = "snapshot path rendering differs on Windows"
     )]
-    async fn clear_ui_header_shows_fast_status_only_for_gpt54() {
+    async fn clear_ui_header_shows_fast_status_for_fast_capable_models() {
         let mut app = make_test_app().await;
         app.config.cwd = PathBuf::from("/tmp/project").abs();
         app.chat_widget.set_model("gpt-5.4");
+        set_fast_mode_test_catalog(&mut app.chat_widget);
         app.chat_widget
             .set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
         app.chat_widget
             .set_service_tier(Some(codex_protocol::config_types::ServiceTier::Fast));
         set_chatgpt_auth(&mut app.chat_widget);
+        set_fast_mode_test_catalog(&mut app.chat_widget);
 
         let rendered = app
             .clear_ui_header_lines_with_version(/*width*/ 80, "<VERSION>")
@@ -9467,14 +9656,14 @@ guardian_approval = true
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert_snapshot!("clear_ui_header_fast_status_gpt54_only", rendered);
+        assert_snapshot!("clear_ui_header_fast_status_fast_capable_models", rendered);
     }
 
     async fn make_test_app() -> App {
         let (chat_widget, app_event_tx, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
         let config = chat_widget.config_ref().clone();
         let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
-        let model = codex_core::test_support::get_model_offline(config.model.as_deref());
+        let model = crate::legacy_core::test_support::get_model_offline(config.model.as_deref());
         let session_telemetry = test_session_telemetry(&config, model.as_str());
 
         App {
@@ -9501,6 +9690,7 @@ guardian_approval = true
             backtrack_render_pending: false,
             feedback: codex_feedback::CodexFeedback::new(),
             feedback_audience: FeedbackAudience::External,
+            environment_manager: Arc::new(EnvironmentManager::new(/*exec_server_url*/ None)),
             remote_app_server_url: None,
             remote_app_server_auth_token: None,
             pending_update_action: None,
@@ -9528,7 +9718,7 @@ guardian_approval = true
         let (chat_widget, app_event_tx, rx, op_rx) = make_chatwidget_manual_with_sender().await;
         let config = chat_widget.config_ref().clone();
         let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
-        let model = codex_core::test_support::get_model_offline(config.model.as_deref());
+        let model = crate::legacy_core::test_support::get_model_offline(config.model.as_deref());
         let session_telemetry = test_session_telemetry(&config, model.as_str());
 
         (
@@ -9556,6 +9746,9 @@ guardian_approval = true
                 backtrack_render_pending: false,
                 feedback: codex_feedback::CodexFeedback::new(),
                 feedback_audience: FeedbackAudience::External,
+                environment_manager: Arc::new(EnvironmentManager::new(
+                    /*exec_server_url*/ None,
+                )),
                 remote_app_server_url: None,
                 remote_app_server_auth_token: None,
                 pending_update_action: None,
@@ -9631,13 +9824,19 @@ guardian_approval = true
             items,
             status,
             error: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
         }
     }
 
     fn turn_started_notification(thread_id: ThreadId, turn_id: &str) -> ServerNotification {
         ServerNotification::TurnStarted(TurnStartedNotification {
             thread_id: thread_id.to_string(),
-            turn: test_turn(turn_id, TurnStatus::InProgress, Vec::new()),
+            turn: Turn {
+                started_at: Some(0),
+                ..test_turn(turn_id, TurnStatus::InProgress, Vec::new())
+            },
         })
     }
 
@@ -9648,7 +9847,11 @@ guardian_approval = true
     ) -> ServerNotification {
         ServerNotification::TurnCompleted(TurnCompletedNotification {
             thread_id: thread_id.to_string(),
-            turn: test_turn(turn_id, status, Vec::new()),
+            turn: Turn {
+                completed_at: Some(0),
+                duration_ms: Some(1),
+                ..test_turn(turn_id, status, Vec::new())
+            },
         })
     }
 
@@ -9897,12 +10100,21 @@ guardian_approval = true
             Some(rollout_path.clone()),
             FeedbackCategory::SafetyCheck,
             Some("needs follow-up".to_string()),
+            Some("turn-123".to_string()),
             /*include_logs*/ true,
         );
 
         assert_eq!(params.classification, "safety_check");
         assert_eq!(params.reason, Some("needs follow-up".to_string()));
         assert_eq!(params.thread_id, Some(thread_id.to_string()));
+        assert_eq!(
+            params
+                .tags
+                .as_ref()
+                .and_then(|tags| tags.get("turn_id"))
+                .map(String::as_str),
+            Some("turn-123")
+        );
         assert_eq!(params.include_logs, true);
         assert_eq!(params.extra_log_files, Some(vec![rollout_path]));
     }
@@ -9914,12 +10126,14 @@ guardian_approval = true
             Some(PathBuf::from("/tmp/rollout.jsonl")),
             FeedbackCategory::GoodResult,
             /*reason*/ None,
+            /*turn_id*/ None,
             /*include_logs*/ false,
         );
 
         assert_eq!(params.classification, "good_result");
         assert_eq!(params.reason, None);
         assert_eq!(params.thread_id, None);
+        assert_eq!(params.tags, None);
         assert_eq!(params.include_logs, false);
         assert_eq!(params.extra_log_files, None);
     }
@@ -10061,7 +10275,8 @@ guardian_approval = true
     }
 
     fn test_session_telemetry(config: &Config, model: &str) -> SessionTelemetry {
-        let model_info = codex_core::test_support::construct_model_info_offline(model, config);
+        let model_info =
+            crate::legacy_core::test_support::construct_model_info_offline(model, config);
         SessionTelemetry::new(
             ThreadId::new(),
             model,
@@ -10090,7 +10305,7 @@ guardian_approval = true
     }
 
     fn all_model_presets() -> Vec<ModelPreset> {
-        codex_core::test_support::all_model_presets().clone()
+        crate::legacy_core::test_support::all_model_presets().clone()
     }
 
     fn model_availability_nux_config(shown_count: &[(&str, u32)]) -> ModelAvailabilityNuxConfig {
@@ -10892,6 +11107,9 @@ guardian_approval = true
                         }],
                         status: TurnStatus::Completed,
                         error: None,
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
                     },
                     Turn {
                         id: "turn-2".to_string(),
@@ -10912,6 +11130,9 @@ guardian_approval = true
                         ],
                         status: TurnStatus::Completed,
                         error: None,
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
                     },
                 ],
                 events: Vec::new(),
@@ -11344,7 +11565,7 @@ guardian_approval = true
     }
 
     #[tokio::test]
-    async fn session_summary_skip_zero_usage() {
+    async fn session_summary_skips_when_no_usage_or_resume_hint() {
         assert!(
             session_summary(
                 TokenUsage::default(),
@@ -11369,7 +11590,7 @@ guardian_approval = true
             session_summary(usage, Some(conversation), /*thread_name*/ None).expect("summary");
         assert_eq!(
             summary.usage_line,
-            "Token usage: total=12 input=10 output=2"
+            Some("Token usage: total=12 input=10 output=2".to_string())
         );
         assert_eq!(
             summary.resume_command,
@@ -11389,6 +11610,13 @@ guardian_approval = true
 
         let summary = session_summary(usage, Some(conversation), Some("my-session".to_string()))
             .expect("summary");
+        assert_eq!(
+            summary.resume_command,
+            Some("codex resume my-session".to_string())
+        );
+    }
+}
+ct("summary");
         assert_eq!(
             summary.resume_command,
             Some("codex resume my-session".to_string())

@@ -13,7 +13,7 @@ use codex_tools::AdditionalProperties;
 use codex_tools::CommandToolOptions;
 use codex_features::Feature;
 use codex_features::Features;
-use codex_mcp::mcp::CODEX_APPS_MCP_SERVER_NAME;
+use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager::model_info::with_config_overrides;
 use codex_protocol::config_types::WebSearchMode;
@@ -48,6 +48,7 @@ use codex_tools::create_wait_agent_tool_v2;
 use codex_tools::create_write_stdin_tool;
 use codex_tools::mcp_tool_to_deferred_responses_api_tool;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use core_test_support::assert_regex_match;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::path::PathBuf;
@@ -65,6 +66,20 @@ fn mcp_tool(name: &str, description: &str, input_schema: serde_json::Value) -> r
         execution: None,
         icons: None,
         meta: None,
+    }
+}
+
+fn mcp_tool_info(tool: rmcp::model::Tool) -> ToolInfo {
+    ToolInfo {
+        server_name: "test_server".to_string(),
+        callable_name: tool.name.to_string(),
+        callable_namespace: "mcp__test_server__".to_string(),
+        server_instructions: None,
+        tool,
+        connector_id: None,
+        connector_name: None,
+        plugin_display_names: Vec::new(),
+        connector_description: None,
     }
 }
 
@@ -279,6 +294,22 @@ fn unified_exec_is_blocked_for_windows_sandboxed_policies_only() {
         &SandboxPolicy::DangerFullAccess,
         WindowsSandboxLevel::Disabled,
     ));
+
+/// Builds the tool registry builder while collecting tool specs for later serialization.
+fn build_specs(
+    config: &ToolsConfig,
+    mcp_tools: Option<HashMap<String, ToolInfo>>,
+    deferred_mcp_tools: Option<HashMap<String, ToolInfo>>,
+    dynamic_tools: &[DynamicToolSpec],
+) -> ToolRegistryBuilder {
+    build_specs_with_discoverable_tools(
+        config,
+        mcp_tools,
+        deferred_mcp_tools,
+        /*discoverable_tools*/ None,
+        dynamic_tools,
+    )
+>>>>>>> upstream/main
 }
 
 #[test]
@@ -291,6 +322,7 @@ fn model_provided_unified_exec_is_blocked_for_windows_sandboxed_policies() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::new_workspace_write_policy(),
@@ -896,6 +928,7 @@ fn get_memory_requires_feature_flag() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -904,7 +937,7 @@ fn get_memory_requires_feature_flag() {
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
@@ -1074,6 +1107,7 @@ fn assert_model_tools(
         model_info: &model_info,
         available_models: &available_models,
         features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode,
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -1083,7 +1117,7 @@ fn assert_model_tools(
         &tools_config,
         ToolRouterParams {
             mcp_tools: None,
-            app_tools: None,
+            deferred_mcp_tools: None,
             discoverable_tools: None,
             dynamic_tools: &[],
         },
@@ -1573,6 +1607,7 @@ fn test_build_specs_default_shell_present() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Live),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -1581,7 +1616,7 @@ fn test_build_specs_default_shell_present() {
     let (tools, _) = build_specs(
         &tools_config,
         Some(HashMap::new()),
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
@@ -1607,6 +1642,7 @@ fn shell_zsh_fork_prefers_shell_command_over_unified_exec() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Live),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -1658,6 +1694,7 @@ fn shell_zsh_fork_prefers_shell_command_over_unified_exec() {
 }
 
 #[test]
+<<<<<<< HEAD
 #[ignore]
 fn test_parallel_support_flags() {
     let config = test_config();
@@ -2165,6 +2202,7 @@ fn tool_suggest_requires_apps_and_plugins_features() {
             model_info: &model_info,
             available_models: &available_models,
             features: &features,
+            image_generation_tool_auth_allowed: true,
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
             sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -2173,7 +2211,7 @@ fn tool_suggest_requires_apps_and_plugins_features() {
         let (tools, _) = build_specs_with_discoverable_tools(
             &tools_config,
             /*mcp_tools*/ None,
-            /*app_tools*/ None,
+            /*deferred_mcp_tools*/ None,
             discoverable_tools.clone(),
             &[],
         )
@@ -2189,7 +2227,7 @@ fn tool_suggest_requires_apps_and_plugins_features() {
 }
 
 #[test]
-fn search_tool_description_handles_no_enabled_apps() {
+fn search_tool_description_handles_no_enabled_mcp_tools() {
     let model_info = search_capable_model_info();
     let mut features = Features::with_defaults();
     features.enable(Feature::Apps);
@@ -2199,6 +2237,7 @@ fn search_tool_description_handles_no_enabled_apps() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -2218,7 +2257,7 @@ fn search_tool_description_handles_no_enabled_apps() {
     };
 
     assert!(description.contains("None currently enabled."));
-    assert!(!description.contains("{{app_descriptions}}"));
+    assert!(!description.contains("{{source_descriptions}}"));
 }
 
 #[test]
@@ -2232,6 +2271,7 @@ fn search_tool_description_falls_back_to_connector_name_without_description() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -2271,7 +2311,7 @@ fn search_tool_description_falls_back_to_connector_name_without_description() {
 }
 
 #[test]
-fn search_tool_registers_namespaced_app_tool_aliases() {
+fn search_tool_registers_namespaced_mcp_tool_aliases() {
     let model_info = search_capable_model_info();
     let mut features = Features::with_defaults();
     features.enable(Feature::Apps);
@@ -2281,6 +2321,7 @@ fn search_tool_registers_namespaced_app_tool_aliases() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -2325,15 +2366,31 @@ fn search_tool_registers_namespaced_app_tool_aliases() {
                     plugin_display_names: Vec::new(),
                 },
             ),
+            (
+                "mcp__rmcp__echo".to_string(),
+                ToolInfo {
+                    server_name: "rmcp".to_string(),
+                    callable_name: "echo".to_string(),
+                    callable_namespace: "mcp__rmcp__".to_string(),
+                    server_instructions: None,
+                    tool: mcp_tool("echo", "Echo", serde_json::json!({"type": "object"})),
+                    connector_id: None,
+                    connector_name: None,
+                    connector_description: None,
+                    plugin_display_names: Vec::new(),
+                },
+            ),
         ])),
         &[],
     )
     .build();
 
-    let alias = tool_handler_key("_create_event", Some("mcp__codex_apps__calendar"));
+    let app_alias = ToolName::namespaced("mcp__codex_apps__calendar", "_create_event");
+    let mcp_alias = ToolName::namespaced("mcp__rmcp__", "echo");
 
-    assert!(registry.has_handler(TOOL_SEARCH_TOOL_NAME, /*namespace*/ None));
-    assert!(registry.has_handler(alias.as_str(), /*namespace*/ None));
+    assert!(registry.has_handler(&ToolName::plain(TOOL_SEARCH_TOOL_NAME)));
+    assert!(registry.has_handler(&app_alias));
+    assert!(registry.has_handler(&mcp_alias));
 }
 
 #[test]
@@ -2452,6 +2509,7 @@ fn test_mcp_tool_property_missing_type_defaults_to_string() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -2462,7 +2520,7 @@ fn test_mcp_tool_property_missing_type_defaults_to_string() {
         &tools_config,
         Some(HashMap::from([(
             "dash/search".to_string(),
-            mcp_tool(
+            mcp_tool_info(mcp_tool(
                 "search",
                 "Search docs",
                 serde_json::json!({
@@ -2471,9 +2529,9 @@ fn test_mcp_tool_property_missing_type_defaults_to_string() {
                         "query": {"description": "search query"}
                     }
                 }),
-            ),
+            )),
         )])),
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
@@ -2483,16 +2541,15 @@ fn test_mcp_tool_property_missing_type_defaults_to_string() {
         tool.spec,
         ToolSpec::Function(ResponsesApiTool {
             name: "dash/search".to_string(),
-            parameters: JsonSchema::Object {
-                properties: BTreeMap::from([(
+            parameters: JsonSchema::object(
+                /*properties*/
+                BTreeMap::from([(
                     "query".to_string(),
-                    JsonSchema::String {
-                        description: Some("search query".to_string())
-                    }
+                    JsonSchema::string(Some("search query".to_string())),
                 )]),
-                required: None,
-                additional_properties: None,
-            },
+                /*required*/ None,
+                /*additional_properties*/ None
+            ),
             description: "Search docs".to_string(),
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
@@ -2502,7 +2559,7 @@ fn test_mcp_tool_property_missing_type_defaults_to_string() {
 }
 
 #[test]
-fn test_mcp_tool_integer_normalized_to_number() {
+fn test_mcp_tool_preserves_integer_schema() {
     let config = test_config();
     let model_info = construct_model_info_offline("gpt-5-codex", &config);
     let mut features = Features::with_defaults();
@@ -2512,6 +2569,7 @@ fn test_mcp_tool_integer_normalized_to_number() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -2522,16 +2580,16 @@ fn test_mcp_tool_integer_normalized_to_number() {
         &tools_config,
         Some(HashMap::from([(
             "dash/paginate".to_string(),
-            mcp_tool(
+            mcp_tool_info(mcp_tool(
                 "paginate",
                 "Pagination",
                 serde_json::json!({
                     "type": "object",
                     "properties": {"page": {"type": "integer"}}
                 }),
-            ),
+            )),
         )])),
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
@@ -2541,14 +2599,15 @@ fn test_mcp_tool_integer_normalized_to_number() {
         tool.spec,
         ToolSpec::Function(ResponsesApiTool {
             name: "dash/paginate".to_string(),
-            parameters: JsonSchema::Object {
-                properties: BTreeMap::from([(
+            parameters: JsonSchema::object(
+                /*properties*/
+                BTreeMap::from([(
                     "page".to_string(),
-                    JsonSchema::Number { description: None }
+                    JsonSchema::integer(/*description*/ None),
                 )]),
-                required: None,
-                additional_properties: None,
-            },
+                /*required*/ None,
+                /*additional_properties*/ None
+            ),
             description: "Pagination".to_string(),
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
@@ -2569,6 +2628,7 @@ fn test_mcp_tool_array_without_items_gets_default_string_items() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -2579,16 +2639,16 @@ fn test_mcp_tool_array_without_items_gets_default_string_items() {
         &tools_config,
         Some(HashMap::from([(
             "dash/tags".to_string(),
-            mcp_tool(
+            mcp_tool_info(mcp_tool(
                 "tags",
                 "Tags",
                 serde_json::json!({
                     "type": "object",
                     "properties": {"tags": {"type": "array"}}
                 }),
-            ),
+            )),
         )])),
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
@@ -2598,17 +2658,18 @@ fn test_mcp_tool_array_without_items_gets_default_string_items() {
         tool.spec,
         ToolSpec::Function(ResponsesApiTool {
             name: "dash/tags".to_string(),
-            parameters: JsonSchema::Object {
-                properties: BTreeMap::from([(
+            parameters: JsonSchema::object(
+                /*properties*/
+                BTreeMap::from([(
                     "tags".to_string(),
-                    JsonSchema::Array {
-                        items: Box::new(JsonSchema::String { description: None }),
-                        description: None
-                    }
+                    JsonSchema::array(
+                        JsonSchema::string(/*description*/ None),
+                        /*description*/ None,
+                    ),
                 )]),
-                required: None,
-                additional_properties: None,
-            },
+                /*required*/ None,
+                /*additional_properties*/ None
+            ),
             description: "Tags".to_string(),
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
@@ -2628,6 +2689,7 @@ fn test_mcp_tool_anyof_defaults_to_string() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -2638,7 +2700,7 @@ fn test_mcp_tool_anyof_defaults_to_string() {
         &tools_config,
         Some(HashMap::from([(
             "dash/value".to_string(),
-            mcp_tool(
+            mcp_tool_info(mcp_tool(
                 "value",
                 "AnyOf Value",
                 serde_json::json!({
@@ -2647,9 +2709,9 @@ fn test_mcp_tool_anyof_defaults_to_string() {
                         "value": {"anyOf": [{"type": "string"}, {"type": "number"}]}
                     }
                 }),
-            ),
+            )),
         )])),
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
@@ -2659,14 +2721,21 @@ fn test_mcp_tool_anyof_defaults_to_string() {
         tool.spec,
         ToolSpec::Function(ResponsesApiTool {
             name: "dash/value".to_string(),
-            parameters: JsonSchema::Object {
-                properties: BTreeMap::from([(
+            parameters: JsonSchema::object(
+                /*properties*/
+                BTreeMap::from([(
                     "value".to_string(),
-                    JsonSchema::String { description: None }
+                    JsonSchema::any_of(
+                        vec![
+                            JsonSchema::string(/*description*/ None),
+                            JsonSchema::number(/*description*/ None),
+                        ],
+                        /*description*/ None,
+                    ),
                 )]),
-                required: None,
-                additional_properties: None,
-            },
+                /*required*/ None,
+                /*additional_properties*/ None
+            ),
             description: "AnyOf Value".to_string(),
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
@@ -2686,6 +2755,7 @@ fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
         sandbox_policy: &SandboxPolicy::DangerFullAccess,
@@ -2695,7 +2765,7 @@ fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
         &tools_config,
         Some(HashMap::from([(
             "test_server/do_something_cool".to_string(),
-            mcp_tool(
+            mcp_tool_info(mcp_tool(
                 "do_something_cool",
                 "Do something cool",
                 serde_json::json!({
@@ -2721,9 +2791,9 @@ fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
                         }
                     }
                 }),
-            ),
+            )),
         )])),
-        /*app_tools*/ None,
+        /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
@@ -2733,50 +2803,51 @@ fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
         tool.spec,
         ToolSpec::Function(ResponsesApiTool {
             name: "test_server/do_something_cool".to_string(),
-            parameters: JsonSchema::Object {
-                properties: BTreeMap::from([
+            parameters: JsonSchema::object(
+                /*properties*/
+                BTreeMap::from([
                     (
                         "string_argument".to_string(),
-                        JsonSchema::String { description: None }
+                        JsonSchema::string(/*description*/ None),
                     ),
                     (
                         "number_argument".to_string(),
-                        JsonSchema::Number { description: None }
+                        JsonSchema::number(/*description*/ None),
                     ),
                     (
                         "object_argument".to_string(),
-                        JsonSchema::Object {
-                            properties: BTreeMap::from([
+                        JsonSchema::object(
+                            BTreeMap::from([
                                 (
                                     "string_property".to_string(),
-                                    JsonSchema::String { description: None }
+                                    JsonSchema::string(/*description*/ None),
                                 ),
                                 (
                                     "number_property".to_string(),
-                                    JsonSchema::Number { description: None }
+                                    JsonSchema::number(/*description*/ None),
                                 ),
                             ]),
-                            required: Some(vec![
+                            Some(vec![
                                 "string_property".to_string(),
                                 "number_property".to_string(),
                             ]),
-                            additional_properties: Some(
-                                JsonSchema::Object {
-                                    properties: BTreeMap::from([(
+                            Some(
+                                JsonSchema::object(
+                                    BTreeMap::from([(
                                         "addtl_prop".to_string(),
-                                        JsonSchema::String { description: None }
-                                    ),]),
-                                    required: Some(vec!["addtl_prop".to_string(),]),
-                                    additional_properties: Some(false.into()),
-                                }
-                                .into()
+                                        JsonSchema::string(/*description*/ None),
+                                    )]),
+                                    Some(vec!["addtl_prop".to_string()]),
+                                    Some(false.into()),
+                                )
+                                .into(),
                             ),
-                        },
+                        ),
                     ),
                 ]),
-                required: None,
-                additional_properties: None,
-            },
+                /*required*/ None,
+                /*additional_properties*/ None
+            ),
             description: "Do something cool".to_string(),
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
