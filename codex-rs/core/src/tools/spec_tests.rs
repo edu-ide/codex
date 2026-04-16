@@ -21,6 +21,7 @@ use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
+use codex_tools::AdditionalProperties;
 use codex_tools::ConfiguredToolSpec;
 use codex_tools::DiscoverablePluginInfo;
 use codex_tools::DiscoverableTool;
@@ -83,6 +84,25 @@ fn mcp_tool_info(tool: rmcp::model::Tool) -> ToolInfo {
     }
 }
 
+fn mcp_tool_info_with_display_name(display_name: &str, tool: rmcp::model::Tool) -> ToolInfo {
+    let (callable_namespace, callable_name) = display_name
+        .rsplit_once('/')
+        .map(|(namespace, callable_name)| (format!("{namespace}/"), callable_name.to_string()))
+        .unwrap_or_else(|| ("".to_string(), display_name.to_string()));
+
+    ToolInfo {
+        server_name: "test_server".to_string(),
+        callable_name,
+        callable_namespace,
+        server_instructions: None,
+        tool,
+        connector_id: None,
+        connector_name: None,
+        plugin_display_names: Vec::new(),
+        connector_description: None,
+    }
+}
+
 fn discoverable_connector(id: &str, name: &str, description: &str) -> DiscoverableTool {
     let slug = name.replace(' ', "-").to_lowercase();
     DiscoverableTool::Connector(Box::new(AppInfo {
@@ -102,8 +122,8 @@ fn discoverable_connector(id: &str, name: &str, description: &str) -> Discoverab
     }))
 }
 
-fn search_capable_model_info() -> ModelInfo {
-    let config = test_config();
+async fn search_capable_model_info() -> ModelInfo {
+    let config = test_config().await;
     let mut model_info = construct_model_info_offline("gpt-5-codex", &config);
     model_info.supports_search_tool = true;
     model_info
@@ -125,8 +145,11 @@ fn deferred_responses_api_tool_serializes_with_defer_loading() {
     );
 
     let serialized = serde_json::to_value(ToolSpec::Function(
-        mcp_tool_to_deferred_responses_api_tool("mcp__codex_apps__lookup_order".to_string(), &tool)
-            .expect("convert deferred tool"),
+        mcp_tool_to_deferred_responses_api_tool(
+            &ToolName::namespaced("mcp__codex_apps__", "lookup_order"),
+            &tool,
+        )
+        .expect("convert deferred tool"),
     ))
     .expect("serialize deferred tool");
 
@@ -134,7 +157,7 @@ fn deferred_responses_api_tool_serializes_with_defer_loading() {
         serialized,
         serde_json::json!({
             "type": "function",
-            "name": "mcp__codex_apps__lookup_order",
+            "name": "lookup_order",
             "description": "Look up an order",
             "strict": false,
             "defer_loading": true,
@@ -260,8 +283,8 @@ fn strip_descriptions_tool(spec: &mut ToolSpec) {
     }
 }
 
-fn model_info_from_models_json(slug: &str) -> ModelInfo {
-    let config = test_config();
+async fn model_info_from_models_json(slug: &str) -> ModelInfo {
+    let config = test_config().await;
     let response = bundled_models_response()
         .unwrap_or_else(|err| panic!("bundled models.json should parse: {err}"));
     let model = response
@@ -302,19 +325,36 @@ fn build_specs(
     deferred_mcp_tools: Option<HashMap<String, ToolInfo>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> ToolRegistryBuilder {
+    build_specs_with_unavailable_tools(
+        config,
+        mcp_tools,
+        deferred_mcp_tools,
+        Vec::new(),
+        dynamic_tools,
+    )
+}
+
+fn build_specs_with_unavailable_tools(
+    config: &ToolsConfig,
+    mcp_tools: Option<HashMap<String, ToolInfo>>,
+    deferred_mcp_tools: Option<HashMap<String, ToolInfo>>,
+    unavailable_called_tools: Vec<ToolName>,
+    dynamic_tools: &[DynamicToolSpec],
+) -> ToolRegistryBuilder {
     build_specs_with_discoverable_tools(
         config,
         mcp_tools,
         deferred_mcp_tools,
+        unavailable_called_tools,
         /*discoverable_tools*/ None,
         dynamic_tools,
     )
 >>>>>>> upstream/main
 }
 
-#[test]
-fn model_provided_unified_exec_is_blocked_for_windows_sandboxed_policies() {
-    let mut model_info = model_info_from_models_json("gpt-5-codex");
+#[tokio::test]
+async fn model_provided_unified_exec_is_blocked_for_windows_sandboxed_policies() {
+    let mut model_info = model_info_from_models_json("gpt-5-codex").await;
     model_info.shell_type = ConfigShellToolType::UnifiedExec;
     let features = Features::with_defaults();
     let available_models = Vec::new();
@@ -1100,8 +1140,8 @@ fn assert_model_tools(
     web_search_mode: Option<WebSearchMode>,
     expected_tools: &[&str],
 ) {
-    let _config = test_config();
-    let model_info = model_info_from_models_json(model_slug);
+    let _config = test_config().await;
+    let model_info = model_info_from_models_json(model_slug).await;
     let available_models = Vec::new();
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &model_info,
@@ -1118,6 +1158,8 @@ fn assert_model_tools(
         ToolRouterParams {
             mcp_tools: None,
             deferred_mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: std::collections::HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: &[],
         },
@@ -1130,7 +1172,7 @@ fn assert_model_tools(
     assert_eq!(&tool_names, &expected_tools,);
 }
 
-fn assert_default_model_tools(
+async fn assert_default_model_tools(
     model_slug: &str,
     features: &Features,
     web_search_mode: Option<WebSearchMode>,
@@ -1143,7 +1185,7 @@ fn assert_default_model_tools(
         vec![shell_tool]
     };
     expected.extend(expected_tail);
-    assert_model_tools(model_slug, features, web_search_mode, &expected);
+    assert_model_tools(model_slug, features, web_search_mode, &expected).await;
 }
 
 #[test]
@@ -1404,11 +1446,12 @@ fn test_build_specs_gpt5_codex_default() {
             "wait_agent",
             "close_agent",
         ],
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_build_specs_gpt51_codex_default() {
+#[tokio::test]
+async fn test_build_specs_gpt51_codex_default() {
     let features = Features::with_defaults();
     assert_default_model_tools(
         "gpt-5.1-codex",
@@ -1427,11 +1470,12 @@ fn test_build_specs_gpt51_codex_default() {
             "wait_agent",
             "close_agent",
         ],
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_build_specs_gpt5_codex_unified_exec_web_search() {
+#[tokio::test]
+async fn test_build_specs_gpt5_codex_unified_exec_web_search() {
     let mut features = Features::with_defaults();
     features.enable(Feature::UnifiedExec);
     assert_model_tools(
@@ -1452,11 +1496,12 @@ fn test_build_specs_gpt5_codex_unified_exec_web_search() {
             "wait_agent",
             "close_agent",
         ],
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_build_specs_gpt51_codex_unified_exec_web_search() {
+#[tokio::test]
+async fn test_build_specs_gpt51_codex_unified_exec_web_search() {
     let mut features = Features::with_defaults();
     features.enable(Feature::UnifiedExec);
     assert_model_tools(
@@ -1477,11 +1522,12 @@ fn test_build_specs_gpt51_codex_unified_exec_web_search() {
             "wait_agent",
             "close_agent",
         ],
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_gpt_5_1_codex_max_defaults() {
+#[tokio::test]
+async fn test_gpt_5_1_codex_max_defaults() {
     let features = Features::with_defaults();
     assert_default_model_tools(
         "gpt-5.1-codex-max",
@@ -1500,11 +1546,12 @@ fn test_gpt_5_1_codex_max_defaults() {
             "wait_agent",
             "close_agent",
         ],
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_codex_5_1_mini_defaults() {
+#[tokio::test]
+async fn test_codex_5_1_mini_defaults() {
     let features = Features::with_defaults();
     assert_default_model_tools(
         "gpt-5.1-codex-mini",
@@ -1523,11 +1570,12 @@ fn test_codex_5_1_mini_defaults() {
             "wait_agent",
             "close_agent",
         ],
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_gpt_5_defaults() {
+#[tokio::test]
+async fn test_gpt_5_defaults() {
     let features = Features::with_defaults();
     assert_default_model_tools(
         "gpt-5",
@@ -1545,11 +1593,12 @@ fn test_gpt_5_defaults() {
             "wait_agent",
             "close_agent",
         ],
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_gpt_5_1_defaults() {
+#[tokio::test]
+async fn test_gpt_5_1_defaults() {
     let features = Features::with_defaults();
     assert_default_model_tools(
         "gpt-5.1",
@@ -1568,11 +1617,12 @@ fn test_gpt_5_1_defaults() {
             "wait_agent",
             "close_agent",
         ],
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_gpt_5_1_codex_max_unified_exec_web_search() {
+#[tokio::test]
+async fn test_gpt_5_1_codex_max_unified_exec_web_search() {
     let mut features = Features::with_defaults();
     features.enable(Feature::UnifiedExec);
     assert_model_tools(
@@ -1593,12 +1643,13 @@ fn test_gpt_5_1_codex_max_unified_exec_web_search() {
             "wait_agent",
             "close_agent",
         ],
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_build_specs_default_shell_present() {
-    let config = test_config();
+#[tokio::test]
+async fn test_build_specs_default_shell_present() {
+    let config = test_config().await;
     let model_info = construct_model_info_offline("o3", &config);
     let mut features = Features::with_defaults();
     features.enable(Feature::UnifiedExec);
@@ -1629,9 +1680,9 @@ fn test_build_specs_default_shell_present() {
     assert_contains_tool_names(&tools, &subset);
 }
 
-#[test]
-fn shell_zsh_fork_prefers_shell_command_over_unified_exec() {
-    let config = test_config();
+#[tokio::test]
+async fn shell_zsh_fork_prefers_shell_command_over_unified_exec() {
+    let config = test_config().await;
     let model_info = construct_model_info_offline("o3", &config);
     let mut features = Features::with_defaults();
     features.enable(Feature::UnifiedExec);
@@ -2180,9 +2231,9 @@ fn tool_suggest_can_be_registered_without_search_tool() {
     ));
 }
 
-#[test]
-fn tool_suggest_requires_apps_and_plugins_features() {
-    let model_info = search_capable_model_info();
+#[tokio::test]
+async fn tool_suggest_requires_apps_and_plugins_features() {
+    let model_info = search_capable_model_info().await;
     let discoverable_tools = Some(vec![discoverable_connector(
         "connector_2128aebfecb84f64a069897515042a44",
         "Google Calendar",
@@ -2212,6 +2263,7 @@ fn tool_suggest_requires_apps_and_plugins_features() {
             &tools_config,
             /*mcp_tools*/ None,
             /*deferred_mcp_tools*/ None,
+            Vec::new(),
             discoverable_tools.clone(),
             &[],
         )
@@ -2226,9 +2278,9 @@ fn tool_suggest_requires_apps_and_plugins_features() {
     }
 }
 
-#[test]
-fn search_tool_description_handles_no_enabled_mcp_tools() {
-    let model_info = search_capable_model_info();
+#[tokio::test]
+async fn search_tool_description_handles_no_enabled_mcp_tools() {
+    let model_info = search_capable_model_info().await;
     let mut features = Features::with_defaults();
     features.enable(Feature::Apps);
     features.enable(Feature::ToolSearch);
@@ -2260,9 +2312,9 @@ fn search_tool_description_handles_no_enabled_mcp_tools() {
     assert!(!description.contains("{{source_descriptions}}"));
 }
 
-#[test]
-fn search_tool_description_falls_back_to_connector_name_without_description() {
-    let model_info = search_capable_model_info();
+#[tokio::test]
+async fn search_tool_description_falls_back_to_connector_name_without_description() {
+    let model_info = search_capable_model_info().await;
     let mut features = Features::with_defaults();
     features.enable(Feature::Apps);
     features.enable(Feature::ToolSearch);
@@ -2310,9 +2362,9 @@ fn search_tool_description_falls_back_to_connector_name_without_description() {
     assert!(!description.contains("- Calendar:"));
 }
 
-#[test]
-fn search_tool_registers_namespaced_mcp_tool_aliases() {
-    let model_info = search_capable_model_info();
+#[tokio::test]
+async fn search_tool_registers_namespaced_mcp_tool_aliases() {
+    let model_info = search_capable_model_info().await;
     let mut features = Features::with_defaults();
     features.enable(Feature::Apps);
     features.enable(Feature::ToolSearch);
@@ -2520,27 +2572,30 @@ fn test_mcp_tool_property_missing_type_defaults_to_string() {
         &tools_config,
         Some(HashMap::from([(
             "dash/search".to_string(),
-            mcp_tool_info(mcp_tool(
-                "search",
-                "Search docs",
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"description": "search query"}
-                    }
-                }),
-            )),
+            mcp_tool_info_with_display_name(
+                "dash/search",
+                mcp_tool(
+                    "search",
+                    "Search docs",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "query": {"description": "search query"}
+                        }
+                    }),
+                ),
+            ),
         )])),
         /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
 
-    let tool = find_tool(&tools, "dash/search");
+    let tool = find_namespace_function_tool(&tools, "dash/", "search");
     assert_eq!(
-        tool.spec,
-        ToolSpec::Function(ResponsesApiTool {
-            name: "dash/search".to_string(),
+        *tool,
+        ResponsesApiTool {
+            name: "search".to_string(),
             parameters: JsonSchema::object(
                 /*properties*/
                 BTreeMap::from([(
@@ -2554,13 +2609,13 @@ fn test_mcp_tool_property_missing_type_defaults_to_string() {
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             defer_loading: None,
-        })
+        }
     );
 }
 
-#[test]
-fn test_mcp_tool_preserves_integer_schema() {
-    let config = test_config();
+#[tokio::test]
+async fn test_mcp_tool_preserves_integer_schema() {
+    let config = test_config().await;
     let model_info = construct_model_info_offline("gpt-5-codex", &config);
     let mut features = Features::with_defaults();
     features.enable(Feature::UnifiedExec);
@@ -2580,25 +2635,28 @@ fn test_mcp_tool_preserves_integer_schema() {
         &tools_config,
         Some(HashMap::from([(
             "dash/paginate".to_string(),
-            mcp_tool_info(mcp_tool(
-                "paginate",
-                "Pagination",
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {"page": {"type": "integer"}}
-                }),
-            )),
+            mcp_tool_info_with_display_name(
+                "dash/paginate",
+                mcp_tool(
+                    "paginate",
+                    "Pagination",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {"page": {"type": "integer"}}
+                    }),
+                ),
+            ),
         )])),
         /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
 
-    let tool = find_tool(&tools, "dash/paginate");
+    let tool = find_namespace_function_tool(&tools, "dash/", "paginate");
     assert_eq!(
-        tool.spec,
-        ToolSpec::Function(ResponsesApiTool {
-            name: "dash/paginate".to_string(),
+        *tool,
+        ResponsesApiTool {
+            name: "paginate".to_string(),
             parameters: JsonSchema::object(
                 /*properties*/
                 BTreeMap::from([(
@@ -2612,13 +2670,13 @@ fn test_mcp_tool_preserves_integer_schema() {
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             defer_loading: None,
-        })
+        }
     );
 }
 
-#[test]
-fn test_mcp_tool_array_without_items_gets_default_string_items() {
-    let config = test_config();
+#[tokio::test]
+async fn test_mcp_tool_array_without_items_gets_default_string_items() {
+    let config = test_config().await;
     let model_info = construct_model_info_offline("gpt-5-codex", &config);
     let mut features = Features::with_defaults();
     features.enable(Feature::UnifiedExec);
@@ -2639,25 +2697,28 @@ fn test_mcp_tool_array_without_items_gets_default_string_items() {
         &tools_config,
         Some(HashMap::from([(
             "dash/tags".to_string(),
-            mcp_tool_info(mcp_tool(
-                "tags",
-                "Tags",
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {"tags": {"type": "array"}}
-                }),
-            )),
+            mcp_tool_info_with_display_name(
+                "dash/tags",
+                mcp_tool(
+                    "tags",
+                    "Tags",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {"tags": {"type": "array"}}
+                    }),
+                ),
+            ),
         )])),
         /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
 
-    let tool = find_tool(&tools, "dash/tags");
+    let tool = find_namespace_function_tool(&tools, "dash/", "tags");
     assert_eq!(
-        tool.spec,
-        ToolSpec::Function(ResponsesApiTool {
-            name: "dash/tags".to_string(),
+        *tool,
+        ResponsesApiTool {
+            name: "tags".to_string(),
             parameters: JsonSchema::object(
                 /*properties*/
                 BTreeMap::from([(
@@ -2674,13 +2735,13 @@ fn test_mcp_tool_array_without_items_gets_default_string_items() {
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             defer_loading: None,
-        })
+        }
     );
 }
 
-#[test]
-fn test_mcp_tool_anyof_defaults_to_string() {
-    let config = test_config();
+#[tokio::test]
+async fn test_mcp_tool_anyof_defaults_to_string() {
+    let config = test_config().await;
     let model_info = construct_model_info_offline("gpt-5-codex", &config);
     let mut features = Features::with_defaults();
     features.enable(Feature::UnifiedExec);
@@ -2700,27 +2761,30 @@ fn test_mcp_tool_anyof_defaults_to_string() {
         &tools_config,
         Some(HashMap::from([(
             "dash/value".to_string(),
-            mcp_tool_info(mcp_tool(
-                "value",
-                "AnyOf Value",
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "value": {"anyOf": [{"type": "string"}, {"type": "number"}]}
-                    }
-                }),
-            )),
+            mcp_tool_info_with_display_name(
+                "dash/value",
+                mcp_tool(
+                    "value",
+                    "AnyOf Value",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "value": {"anyOf": [{"type": "string"}, {"type": "number"}]}
+                        }
+                    }),
+                ),
+            ),
         )])),
         /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
 
-    let tool = find_tool(&tools, "dash/value");
+    let tool = find_namespace_function_tool(&tools, "dash/", "value");
     assert_eq!(
-        tool.spec,
-        ToolSpec::Function(ResponsesApiTool {
-            name: "dash/value".to_string(),
+        *tool,
+        ResponsesApiTool {
+            name: "value".to_string(),
             parameters: JsonSchema::object(
                 /*properties*/
                 BTreeMap::from([(
@@ -2740,13 +2804,13 @@ fn test_mcp_tool_anyof_defaults_to_string() {
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             defer_loading: None,
-        })
+        }
     );
 }
 
-#[test]
-fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
-    let config = test_config();
+#[tokio::test]
+async fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
+    let config = test_config().await;
     let model_info = construct_model_info_offline("gpt-5-codex", &config);
     let mut features = Features::with_defaults();
     features.enable(Feature::UnifiedExec);
@@ -2765,12 +2829,14 @@ fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
         &tools_config,
         Some(HashMap::from([(
             "test_server/do_something_cool".to_string(),
-            mcp_tool_info(mcp_tool(
-                "do_something_cool",
-                "Do something cool",
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
+            mcp_tool_info_with_display_name(
+                "test_server/do_something_cool",
+                mcp_tool(
+                    "do_something_cool",
+                    "Do something cool",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
                         "string_argument": {"type": "string"},
                         "number_argument": {"type": "number"},
                         "object_argument": {
@@ -2787,22 +2853,23 @@ fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
                                 },
                                 "required": ["addtl_prop"],
                                 "additionalProperties": false
+                                }
                             }
                         }
-                    }
-                }),
-            )),
+                    }),
+                ),
+            ),
         )])),
         /*deferred_mcp_tools*/ None,
         &[],
     )
     .build();
 
-    let tool = find_tool(&tools, "test_server/do_something_cool");
+    let tool = find_namespace_function_tool(&tools, "test_server/", "do_something_cool");
     assert_eq!(
-        tool.spec,
-        ToolSpec::Function(ResponsesApiTool {
-            name: "test_server/do_something_cool".to_string(),
+        *tool,
+        ResponsesApiTool {
+            name: "do_something_cool".to_string(),
             parameters: JsonSchema::object(
                 /*properties*/
                 BTreeMap::from([
@@ -2852,7 +2919,7 @@ fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
             strict: false,
             output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             defer_loading: None,
-        })
+        }
     );
 }
 
@@ -2956,7 +3023,8 @@ fn code_mode_only_restricts_model_tools_to_exec_tools() {
         &features,
         Some(WebSearchMode::Live),
         &["exec", "wait"],
-    );
+    )
+    .await;
 }
 
 #[test]

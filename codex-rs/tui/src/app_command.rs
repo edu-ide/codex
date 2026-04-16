@@ -127,11 +127,6 @@ impl AppCommand {
         Self(Op::RealtimeConversationAudio(params))
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn realtime_conversation_text(params: ConversationTextParams) -> Self {
-        Self(Op::RealtimeConversationText(params))
-    }
-
     pub(crate) fn realtime_conversation_close() -> Self {
         Self(Op::RealtimeConversationClose)
     }

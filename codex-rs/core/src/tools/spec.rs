@@ -26,8 +26,10 @@ use codex_tools::ToolSearchSourceInfo;
 use codex_tools::ToolSuggestEntry;
 use codex_tools::ViewImageToolOptions;
 use codex_tools::ToolHandlerKind;
+use codex_tools::ToolName;
 use codex_tools::ToolNamespace;
 use codex_tools::ToolRegistryPlanDeferredTool;
+use codex_tools::ToolRegistryPlanMcpTool;
 use codex_tools::ToolRegistryPlanParams;
 use codex_tools::ToolsConfig;
 use codex_tools::WaitAgentTimeoutOptions;
@@ -289,6 +291,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     config: &ToolsConfig,
     mcp_tools: Option<HashMap<String, ToolInfo>>,
     deferred_mcp_tools: Option<HashMap<String, ToolInfo>>,
+    unavailable_called_tools: Vec<ToolName>,
     discoverable_tools: Option<Vec<DiscoverableTool>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> ToolRegistryBuilder {
@@ -311,6 +314,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::TestSyncHandler;
     use crate::tools::handlers::ToolSearchHandler;
     use crate::tools::handlers::ToolSuggestHandler;
+    use crate::tools::handlers::UnavailableToolHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
     use crate::tools::handlers::WebSearchHandler;

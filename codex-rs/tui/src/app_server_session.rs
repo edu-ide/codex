@@ -63,6 +63,9 @@ use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadLoadedListResponse;
+use codex_app_server_protocol::ThreadMemoryMode;
+use codex_app_server_protocol::ThreadMemoryModeSetParams;
+use codex_app_server_protocol::ThreadMemoryModeSetResponse;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadSortKey;
@@ -184,7 +187,8 @@ pub(crate) struct ThreadSessionState {
     pub(crate) approval_policy: AskForApproval,
     pub(crate) approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
     pub(crate) sandbox_policy: SandboxPolicy,
-    pub(crate) cwd: PathBuf,
+    pub(crate) cwd: AbsolutePathBuf,
+    pub(crate) instruction_source_paths: Vec<AbsolutePathBuf>,
     pub(crate) reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
     pub(crate) history_log_id: u64,
     pub(crate) history_entry_count: u64,
@@ -2685,6 +2689,39 @@ impl AppServerSession {
         Ok(())
     }
 
+    pub(crate) async fn thread_memory_mode_set(
+        &mut self,
+        thread_id: ThreadId,
+        mode: ThreadMemoryMode,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadMemoryModeSetResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadMemoryModeSet {
+                request_id,
+                params: ThreadMemoryModeSetParams {
+                    thread_id: thread_id.to_string(),
+                    mode,
+                },
+            })
+            .await
+            .wrap_err("thread/memoryMode/set failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn memory_reset(&mut self) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: MemoryResetResponse = self
+            .client
+            .request_typed(ClientRequest::MemoryReset {
+                request_id,
+                params: None,
+            })
+            .await
+            .wrap_err("memory/reset failed in TUI")?;
+        Ok(())
+    }
+
     pub(crate) async fn thread_unsubscribe(&mut self, thread_id: ThreadId) -> Result<()> {
         let request_id = self.next_request_id();
         let _: ThreadUnsubscribeResponse = self
@@ -2831,6 +2868,7 @@ impl AppServerSession {
                 request_id,
                 params: ThreadRealtimeStartParams {
                     thread_id: thread_id.to_string(),
+                    output_modality: params.output_modality,
                     prompt: params.prompt,
                     session_id: params.session_id,
                     voice: params.voice,
@@ -2948,16 +2986,6 @@ pub(crate) fn status_account_display_from_auth_mode(
             })
         }
         None => None,
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn feedback_audience_from_account_email(
-    account_email: Option<&str>,
-) -> FeedbackAudience {
-    match account_email {
-        Some(email) if email.ends_with("@openai.com") => FeedbackAudience::OpenAiEmployee,
-        Some(_) | None => FeedbackAudience::External,
     }
 }
 
@@ -3168,6 +3196,7 @@ async fn thread_session_state_from_thread_start_response(
         response.approvals_reviewer.to_core(),
         response.sandbox.to_core(),
         response.cwd.clone(),
+        response.instruction_sources.clone(),
         response.reasoning_effort,
         config,
     )
@@ -3190,6 +3219,7 @@ async fn thread_session_state_from_thread_resume_response(
         response.approvals_reviewer.to_core(),
         response.sandbox.to_core(),
         response.cwd.clone(),
+        response.instruction_sources.clone(),
         response.reasoning_effort,
         config,
     )
@@ -3212,6 +3242,7 @@ async fn thread_session_state_from_thread_fork_response(
         response.approvals_reviewer.to_core(),
         response.sandbox.to_core(),
         response.cwd.clone(),
+        response.instruction_sources.clone(),
         response.reasoning_effort,
         config,
     )
@@ -3252,7 +3283,8 @@ async fn thread_session_state_from_thread_response(
     approval_policy: AskForApproval,
     approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
     sandbox_policy: SandboxPolicy,
-    cwd: PathBuf,
+    cwd: AbsolutePathBuf,
+    instruction_source_paths: Vec<AbsolutePathBuf>,
     reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
     config: &Config,
 ) -> Result<ThreadSessionState, String> {
@@ -3277,6 +3309,7 @@ async fn thread_session_state_from_thread_response(
         approvals_reviewer,
         sandbox_policy,
         cwd,
+        instruction_source_paths,
         reasoning_effort,
         history_log_id,
         history_entry_count,
@@ -3340,6 +3373,8 @@ mod tests {
     use codex_app_server_protocol::ThreadStatus;
     use codex_app_server_protocol::Turn;
     use codex_app_server_protocol::TurnStatus;
+    use codex_utils_absolute_path::test_support::PathBufExt;
+    use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -3466,7 +3501,7 @@ mod tests {
                 updated_at: 2,
                 status: ThreadStatus::Idle,
                 path: None,
-                cwd: PathBuf::from("/tmp/project"),
+                cwd: test_path_buf("/tmp/project").abs(),
                 cli_version: "0.0.0".to_string(),
                 source: codex_protocol::protocol::SessionSource::Cli.into(),
                 agent_nickname: None,
@@ -3503,7 +3538,8 @@ mod tests {
             model: "gpt-5.4".to_string(),
             model_provider: "openai".to_string(),
             service_tier: None,
-            cwd: PathBuf::from("/tmp/project"),
+            cwd: test_path_buf("/tmp/project").abs(),
+            instruction_sources: vec![test_path_buf("/tmp/project/AGENTS.md").abs()],
             approval_policy: codex_protocol::protocol::AskForApproval::Never.into(),
             approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::User,
             sandbox: codex_protocol::protocol::SandboxPolicy::new_read_only_policy().into(),
@@ -3514,6 +3550,10 @@ mod tests {
             .await
             .expect("resume response should map");
         assert_eq!(started.session.forked_from_id, Some(forked_from_id));
+        assert_eq!(
+            started.session.instruction_source_paths,
+            response.instruction_sources
+        );
         assert_eq!(started.turns.len(), 1);
         assert_eq!(started.turns[0], response.thread.turns[0]);
     }
@@ -3542,7 +3582,8 @@ mod tests {
             AskForApproval::Never,
             codex_protocol::config_types::ApprovalsReviewer::User,
             SandboxPolicy::new_read_only_policy(),
-            PathBuf::from("/tmp/project"),
+            test_path_buf("/tmp/project").abs(),
+            Vec::new(),
             /*reasoning_effort*/ None,
             &config,
         )
@@ -3571,7 +3612,8 @@ mod tests {
             AskForApproval::Never,
             codex_protocol::config_types::ApprovalsReviewer::User,
             SandboxPolicy::new_read_only_policy(),
-            PathBuf::from("/tmp/project"),
+            test_path_buf("/tmp/project").abs(),
+            Vec::new(),
             /*reasoning_effort*/ None,
             &config,
         )
