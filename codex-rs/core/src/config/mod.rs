@@ -1,3 +1,4 @@
+use codex_model_provider_info::{OPENAI_PROVIDER_ID, OLLAMA_OSS_PROVIDER_ID};
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config_loader::CloudRequirementsLoader;

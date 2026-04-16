@@ -9,9 +9,9 @@ use crate::tools::registry::AnyToolResult;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::build_specs_with_discoverable_tools;
-use crate::tools::spec::ToolsConfig;
+use codex_tools::ToolsConfig;
 use codex_protocol::CommandMeta;
-use codex_mcp::mcp_connection_manager::ToolInfo;
+use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseItem;
@@ -21,8 +21,6 @@ use codex_tools::ConfiguredToolSpec;
 use codex_tools::DiscoverableTool;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
-use rmcp::model::Tool;
-use codex_tools::ToolsConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::instrument;
@@ -115,7 +113,7 @@ impl ToolRouter {
         H: ToolHandler + 'static,
     {
         self.registry
-            .register_with_namespace(name, handler, meta, namespace);
+            .register_with_namespace(codex_tools::ToolName::plain(name), handler, meta, namespace);
     }
 
     pub fn deregister_tool(&mut self, name: impl Into<String>, namespace: Option<&str>) -> bool {

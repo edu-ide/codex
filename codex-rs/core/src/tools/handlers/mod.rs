@@ -22,6 +22,7 @@ mod tool_search;
 mod tool_suggest;
 pub(crate) mod unified_exec;
 mod view_image;
+pub(crate) mod web_search;
 
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
@@ -61,6 +62,7 @@ pub use tool_search::ToolSearchHandler;
 pub use tool_suggest::ToolSuggestHandler;
 pub use unified_exec::UnifiedExecHandler;
 pub use view_image::ViewImageHandler;
+pub use web_search::WebSearchHandler;
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where

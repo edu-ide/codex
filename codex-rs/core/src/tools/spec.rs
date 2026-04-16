@@ -7,9 +7,9 @@ use crate::tools::handlers::agent_jobs::BatchJobHandler;
 use crate::tools::handlers::multi_agents_common::DEFAULT_WAIT_TIMEOUT_MS;
 use crate::tools::handlers::multi_agents_common::MAX_WAIT_TIMEOUT_MS;
 use crate::tools::handlers::multi_agents_common::MIN_WAIT_TIMEOUT_MS;
-use crate::tools::registry::{ToolRegistryBuilder, tool_handler_key};
-use codex_mcp::mcp::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp::mcp_connection_manager::ToolInfo;
+use crate::tools::registry::ToolRegistryBuilder;
+use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
+use codex_mcp::ToolInfo;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::openai_models::ApplyPatchToolType;
@@ -22,14 +22,13 @@ use codex_tools::DiscoverableToolType;
 use codex_tools::ResponsesApiTool;
 use codex_tools::ShellToolOptions;
 use codex_tools::SpawnAgentToolOptions;
-use codex_tools::ToolSearchAppInfo;
+use codex_tools::ToolSearchSourceInfo;
 use codex_tools::ToolSuggestEntry;
 use codex_tools::ViewImageToolOptions;
 use codex_tools::ToolHandlerKind;
 use codex_tools::ToolNamespace;
 use codex_tools::ToolRegistryPlanDeferredTool;
 use codex_tools::ToolRegistryPlanParams;
-use codex_tools::ToolUserShellType;
 use codex_tools::ToolsConfig;
 use codex_tools::WaitAgentTimeoutOptions;
 use codex_tools::augment_tool_spec_for_code_mode;
@@ -85,7 +84,6 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 pub type JsonSchema = codex_tools::JsonSchema;
-pub(crate) use codex_tools::ToolsConfig;
 pub(crate) use codex_tools::ToolsConfigParams;
 
 #[cfg(test)]
@@ -156,25 +154,21 @@ fn llama_server_tool_spec(tool: &ToolSpec) -> Option<ToolSpec> {
 }
 
 fn create_local_shell_json_tool() -> ToolSpec {
-    let mut properties = BTreeMap::from([
+    let properties = BTreeMap::from([
         (
             "command".to_string(),
-            JsonSchema::Array {
-                items: Box::new(JsonSchema::String { description: None }),
-                description: Some("The command to execute.".to_string()),
-            },
+            JsonSchema::array(
+                JsonSchema::string(None),
+                Some("The command to execute.".to_string()),
+            ),
         ),
         (
             "workdir".to_string(),
-            JsonSchema::String {
-                description: Some("The working directory to execute the command in.".to_string()),
-            },
+            JsonSchema::string(Some("The working directory to execute the command in.".to_string())),
         ),
         (
             "timeout_ms".to_string(),
-            JsonSchema::Number {
-                description: Some("The timeout for the command in milliseconds.".to_string()),
-            },
+            JsonSchema::number(Some("The timeout for the command in milliseconds.".to_string())),
         ),
     ]);
 
@@ -185,11 +179,11 @@ fn create_local_shell_json_tool() -> ToolSpec {
                 .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::Object {
+        parameters: JsonSchema::object(
             properties,
-            required: Some(vec!["command".to_string()]),
-            additional_properties: Some(false.into()),
-        },
+            Some(vec!["command".to_string()]),
+            Some(codex_tools::AdditionalProperties::Boolean(false)),
+        ),
         output_schema: None,
     })
 }
@@ -198,19 +192,15 @@ fn create_js_repl_json_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "code".to_string(),
-            JsonSchema::String {
-                description: Some(
-                    "Raw JavaScript source to execute in the persistent Node kernel.".to_string(),
-                ),
-            },
+            codex_tools::JsonSchema::string(Some(
+                "Raw JavaScript source to execute in the persistent Node kernel.".to_string(),
+            )),
         ),
         (
             "timeout_ms".to_string(),
-            JsonSchema::Number {
-                description: Some(
-                    "Optional timeout override in milliseconds for this execution.".to_string(),
-                ),
-            },
+            codex_tools::JsonSchema::number(Some(
+                "Optional timeout override in milliseconds for this execution.".to_string(),
+            )),
         ),
     ]);
 
@@ -221,11 +211,11 @@ fn create_js_repl_json_tool() -> ToolSpec {
                 .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::Object {
+        parameters: codex_tools::JsonSchema::object(
             properties,
-            required: Some(vec!["code".to_string()]),
-            additional_properties: Some(false.into()),
-        },
+            Some(vec!["code".to_string()]),
+            Some(codex_tools::AdditionalProperties::Boolean(false)),
+        ),
         output_schema: None,
     })
 }
@@ -233,26 +223,17 @@ fn create_self_check_tool() -> ToolSpec {
     let mut properties = BTreeMap::new();
     properties.insert(
         "status".to_string(),
-        JsonSchema::String {
-            description: Some("The evaluation status ('passed', 'failed', 'blocked').".to_string()),
-        },
+        codex_tools::JsonSchema::string(Some("The evaluation status ('passed', 'failed', 'blocked').".to_string())),
     );
     properties.insert(
         "errors_encountered".to_string(),
-        JsonSchema::Array {
-            items: Box::new(JsonSchema::String { description: None }),
-            description: Some(
-                "Any errors or failures you encountered during this step.".to_string(),
-            ),
-        },
+        codex_tools::JsonSchema::array(codex_tools::JsonSchema::string(None), Some("Any errors or failures you encountered during this step.".to_string())),
     );
     properties.insert(
         "mitigation_plan".to_string(),
-        JsonSchema::String {
-            description: Some(
+        codex_tools::JsonSchema::string(Some(
                 "Proposed strategy to recover, retry, or ask for user help.".to_string(),
-            ),
-        },
+            )),
     );
 
     ToolSpec::Function(ResponsesApiTool {
@@ -260,11 +241,11 @@ fn create_self_check_tool() -> ToolSpec {
         description: "Run an autonomous self-check to evaluate success, mitigate errors, and trigger tool-call retries. This harness provides autonomous error recovery feedback.".to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::Object {
+        parameters: codex_tools::JsonSchema::object(
             properties,
-            required: Some(vec!["status".to_string()]),
-            additional_properties: Some(false.into()),
-        },
+            Some(vec!["status".to_string()]),
+            Some(codex_tools::AdditionalProperties::Boolean(false)),
+        ),
         output_schema: None,
     })
 }
@@ -332,6 +313,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::ToolSuggestHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    use crate::tools::handlers::WebSearchHandler;
     use crate::tools::handlers::multi_agents::CloseAgentHandler;
     use crate::tools::handlers::multi_agents::ResumeAgentHandler;
     use crate::tools::handlers::multi_agents::SendInputHandler;
@@ -381,7 +363,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
         let (nested_specs, _) = build_specs_with_discoverable_tools(
             &nested_config,
             mcp_tools.clone(),
-            app_tools.clone(),
+            deferred_mcp_tools.clone(),
             /*discoverable_tools*/ None,
             dynamic_tools,
         )
@@ -389,13 +371,12 @@ pub(crate) fn build_specs_with_discoverable_tools(
         let mut enabled_tools = nested_specs
             .into_iter()
             .filter_map(|spec| tool_spec_to_code_mode_tool_definition(&spec.spec))
-            .map(|tool| (tool.name, tool.description))
             .collect::<Vec<_>>();
-        enabled_tools.sort_by(|left, right| left.0.cmp(&right.0));
-        enabled_tools.dedup_by(|left, right| left.0 == right.0);
+        enabled_tools.sort_by(|left, right| left.name.cmp(&right.name));
+        enabled_tools.dedup_by(|left, right| left.name == right.name);
         push_tool_spec(
             &mut builder,
-            create_code_mode_tool(&enabled_tools, config.code_mode_only_enabled),
+            create_code_mode_tool(&enabled_tools, &BTreeMap::new(), config.code_mode_only_enabled),
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
         );
@@ -682,7 +663,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
         );
     }
 
-    if config.request_user_input {
+    if config.default_mode_request_user_input {
         push_tool_spec(
             &mut builder,
             create_request_user_input_tool(request_user_input_tool_description(
@@ -762,13 +743,13 @@ pub(crate) fn build_specs_with_discoverable_tools(
     );
 
     if config.search_tool
-        && let Some(app_tools) = app_tools
+        && let Some(deferred_mcp_tools) = deferred_mcp_tools
     {
-        let search_tool_handler = Arc::new(ToolSearchHandler::new(app_tools.clone()));
+        let search_tool_handler = Arc::new(ToolSearchHandler::new(deferred_mcp_tools.clone()));
         push_tool_spec(
             &mut builder,
             create_tool_search_tool(
-                &tool_search_app_infos(&app_tools),
+                &tool_search_source_infos(&deferred_mcp_tools),
                 TOOL_SEARCH_DEFAULT_LIMIT,
             ),
             /*supports_parallel_tool_calls*/ true,
@@ -792,9 +773,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
             },
         );
 
-        for tool in app_tools.values() {
+        for tool in deferred_mcp_tools.values() {
             let alias_name =
-                tool_handler_key(tool.tool_name.as_str(), Some(tool.tool_namespace.as_str()));
+                codex_tools::ToolName { name: tool.callable_name.clone(), namespace: Some(tool.callable_namespace.clone()) }.display();
 
             builder.register_handler(
                 alias_name.clone(),
@@ -974,43 +955,35 @@ pub(crate) fn build_specs_with_discoverable_tools(
         );
     }
 
-    let external_web_access = match config.web_search_mode {
-        Some(WebSearchMode::Cached) => Some(false),
-        Some(WebSearchMode::Live) => Some(true),
-        Some(WebSearchMode::Disabled) | None => None,
-    };
+    let web_search_tool = codex_tools::create_web_search_tool(codex_tools::WebSearchToolOptions {
+        web_search_mode: config.web_search_mode,
+        web_search_config: config.web_search_config.as_ref(),
+        web_search_tool_type: config.web_search_tool_type,
+    });
 
-    if let Some(external_web_access) = external_web_access {
-        let search_content_types = match config.web_search_tool_type {
-            WebSearchToolType::Text => None,
-            WebSearchToolType::TextAndImage => Some(
-                WEB_SEARCH_CONTENT_TYPES
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect(),
-            ),
-        };
-
+    if let Some(tool) = web_search_tool {
         push_tool_spec(
             &mut builder,
-            ToolSpec::WebSearch {
-                external_web_access: Some(external_web_access),
-                filters: config
-                    .web_search_config
-                    .as_ref()
-                    .and_then(|cfg| cfg.filters.clone().map(Into::into)),
-                user_location: config
-                    .web_search_config
-                    .as_ref()
-                    .and_then(|cfg| cfg.user_location.clone().map(Into::into)),
-                search_context_size: config
-                    .web_search_config
-                    .as_ref()
-                    .and_then(|cfg| cfg.search_context_size),
-                search_content_types,
-            },
-            /*supports_parallel_tool_calls*/ false,
+            tool,
+            /*supports_parallel_tool_calls*/ true,
             config.code_mode_enabled,
+        );
+        builder.register_handler(
+            "web_search",
+            std::sync::Arc::new(WebSearchHandler::new(config.web_search_config.clone())),
+            CommandMeta {
+                name: "web_search".to_string(),
+                help_text: "Perform a web search using DuckDuckGo or SearXNG.".to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: true,
+                category: CommandCategory::System,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
         );
     }
 
@@ -1058,6 +1031,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 create_spawn_agent_tool_v2(SpawnAgentToolOptions {
                     available_models: &config.available_models,
                     agent_type_description: config.agent_type_description.clone(),
+                    hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
+                    include_usage_hint: config.spawn_agent_usage_hint,
+                    usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
                 }),
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
@@ -1204,6 +1180,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 create_spawn_agent_tool_v1(SpawnAgentToolOptions {
                     available_models: &config.available_models,
                     agent_type_description: config.agent_type_description.clone(),
+                    hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
+                    include_usage_hint: config.spawn_agent_usage_hint,
+                    usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
                 }),
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
@@ -1377,7 +1356,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     }
 
     if let Some(mcp_tools) = mcp_tools {
-        let mut entries: Vec<(String, rmcp::model::Tool)> = mcp_tools.into_iter().collect();
+        let mut entries: Vec<(String, rmcp::model::Tool)> = mcp_tools.into_iter().map(|(k, v)| (k, v.tool)).collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 
         for (name, tool) in entries.into_iter() {
@@ -1459,7 +1438,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     builder
 }
 
-fn tool_search_app_infos(app_tools: &HashMap<String, ToolInfo>) -> Vec<ToolSearchAppInfo> {
+fn tool_search_source_infos(app_tools: &HashMap<String, ToolInfo>) -> Vec<ToolSearchSourceInfo> {
     app_tools
         .values()
         .filter(|tool| tool.server_name == CODEX_APPS_MCP_SERVER_NAME)
@@ -1468,15 +1447,15 @@ fn tool_search_app_infos(app_tools: &HashMap<String, ToolInfo>) -> Vec<ToolSearc
                 .connector_name
                 .as_deref()
                 .map(str::trim)
-                .filter(|connector_name| !connector_name.is_empty())?
+                .filter(|connector_name: &&str| !connector_name.is_empty())?
                 .to_string();
             let description = tool
                 .connector_description
                 .as_deref()
                 .map(str::trim)
-                .filter(|connector_description| !connector_description.is_empty())
+                .filter(|connector_description: &&str| !connector_description.is_empty())
                 .map(str::to_string);
-            Some(ToolSearchAppInfo { name, description })
+            Some(ToolSearchSourceInfo { name, description })
         })
         .collect()
 }

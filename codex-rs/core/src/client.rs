@@ -1604,7 +1604,7 @@ where
                 Ok(ResponseEvent::OutputItemDone(item)) => {
                     items_added.push(item.clone());
                     if tx_event
-                        .send(Ok(ResponseEvent::OutputItemDone(item)))
+                        .send(Ok::<_, codex_protocol::error::CodexErr>(ResponseEvent::OutputItemDone(item)))
                         .await
                         .is_err()
                     {
@@ -1631,7 +1631,7 @@ where
                         });
                     }
                     if tx_event
-                        .send(Ok(ResponseEvent::Completed {
+                        .send(Ok::<_, codex_protocol::error::CodexErr>(ResponseEvent::Completed {
                             response_id,
                             token_usage,
                         }))
@@ -1642,7 +1642,7 @@ where
                     }
                 }
                 Ok(event) => {
-                    if tx_event.send(Ok(event)).await.is_err() {
+                    if tx_event.send(Ok::<_, codex_protocol::error::CodexErr>(event)).await.is_err() {
                         return;
                     }
                 }
@@ -1652,7 +1652,7 @@ where
                         session_telemetry.see_event_completed_failed(&mapped);
                         logged_error = true;
                     }
-                    if tx_event.send(Err(mapped)).await.is_err() {
+                    if tx_event.send(Err::<ResponseEvent, _>(mapped)).await.is_err() {
                         return;
                     }
                 }

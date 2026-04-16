@@ -187,7 +187,7 @@ pub async fn load_config_layers_state(
     // Add a layer for $CODEX_HOME/config.toml if it exists. Note if the file
     // exists, but is malformed, then this error should be propagated to the
     // user.
-    let user_file = AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home)?;
+    let user_file = AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home);
     let ilhae_runtime = std::env::var("ILHAE_RUNTIME").ok().as_deref() == Some("1");
     let user_layer = if ilhae_runtime {
         ConfigLayerEntry::new(

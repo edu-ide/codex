@@ -214,7 +214,7 @@ impl ToolRegistry {
         name: &str,
         namespace: Option<&str>,
     ) -> Option<&CommandMeta> {
-        self.metas.get(&tool_handler_key(name, namespace))
+        self.metas.get(&match namespace { Some(ns) => codex_tools::ToolName::namespaced(ns, name.to_string()), None => codex_tools::ToolName::plain(name.to_string()) }.display())
     }
 
     pub fn list_metadata(&self) -> Vec<CommandMeta> {
@@ -227,7 +227,7 @@ impl ToolRegistry {
     where
         H: ToolHandler + 'static,
     {
-        self.register_with_namespace(name, handler, meta, None);
+        self.register_with_namespace(codex_tools::ToolName::plain(name.into()), handler, meta, None);
     }
 
     pub fn register_with_namespace<H>(
@@ -239,9 +239,12 @@ impl ToolRegistry {
     ) where
         H: ToolHandler + 'static,
     {
-        let name = name.into();
+        let mut name = name.into();
+        if let Some(ns) = namespace {
+            name.namespace = Some(ns.to_string());
+        }
         let display_name = name.display();
-        let key = tool_handler_key(&name.to_string(), namespace);
+        let key = name.display();
         let handler: Arc<dyn AnyToolHandler> = handler;
         if self.handlers.insert(name, handler).is_some() {
             warn!("overwriting handler for tool {display_name}");
@@ -273,7 +276,7 @@ impl ToolRegistry {
         for name in names {
             let name = name.into();
             let display_name = name.display();
-            let key = tool_handler_key(&name.to_string(), namespace);
+            let key = name.display();
             if self
                 .handlers
                 .insert(name, Arc::clone(&handler))
@@ -286,9 +289,13 @@ impl ToolRegistry {
     }
 
     pub fn deregister(&mut self, name: impl Into<String>, namespace: Option<&str>) -> bool {
-        let key = tool_handler_key(&name.into(), namespace);
+        let name_str = name.into();
+        let key = match namespace {
+            Some(ns) => codex_tools::ToolName::namespaced(ns, &name_str),
+            None => codex_tools::ToolName::plain(&name_str),
+        };
         let removed_handler = self.handlers.remove(&key).is_some();
-        let removed_meta = self.metas.remove(&key).is_some();
+        let removed_meta = self.metas.remove(&key.display()).is_some();
 
         removed_handler || removed_meta
     }
@@ -593,7 +600,7 @@ impl ToolRegistryBuilder {
     {
         let name = name.into();
         let display_name = name.display();
-        let key = tool_handler_key(&name.to_string(), namespace);
+        let key = name.display();
         let handler: Arc<dyn AnyToolHandler> = handler;
         if self.handlers.insert(name, handler).is_some() {
             warn!("overwriting handler for tool {display_name}");
@@ -625,7 +632,7 @@ impl ToolRegistryBuilder {
         for name in names {
             let name = name.into();
             let display_name = name.display();
-            let key = tool_handler_key(&name.to_string(), namespace);
+            let key = name.display();
             if self
                 .handlers
                 .insert(name, Arc::clone(&handler))

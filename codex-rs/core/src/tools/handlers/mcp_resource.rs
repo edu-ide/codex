@@ -262,9 +262,10 @@ async fn handle_list_resources(
 
     let payload_result: Result<ListResourcesPayload, FunctionCallError> = async {
         if let Some(server_name) = server.clone() {
-            let params = cursor.clone().map(|value| PaginatedRequestParams {
-                meta: None,
-                cursor: Some(value),
+            let params = cursor.clone().map(|value| {
+                let mut p = PaginatedRequestParams::default();
+                p.cursor = Some(value);
+                p
             });
             let result = session
                 .list_resources(&server_name, params)
@@ -366,9 +367,10 @@ async fn handle_list_resource_templates(
 
     let payload_result: Result<ListResourceTemplatesPayload, FunctionCallError> = async {
         if let Some(server_name) = server.clone() {
-            let params = cursor.clone().map(|value| PaginatedRequestParams {
-                meta: None,
-                cursor: Some(value),
+            let params = cursor.clone().map(|value| {
+                let mut p = PaginatedRequestParams::default();
+                p.cursor = Some(value);
+                p
             });
             let result = session
                 .list_resource_templates(&server_name, params)
@@ -474,10 +476,7 @@ async fn handle_read_resource(
         let result = session
             .read_resource(
                 &server,
-                ReadResourceRequestParams {
-                    meta: None,
-                    uri: uri.clone(),
-                },
+                ReadResourceRequestParams::new(uri.clone()),
             )
             .await
             .map_err(|err| {

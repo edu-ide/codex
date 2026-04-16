@@ -161,12 +161,27 @@ impl WebSearchLocation {
     }
 }
 
+#[derive(
+    Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq, Display, JsonSchema, TS,
+)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum WebSearchEngine {
+    #[default]
+    Auto,
+    Searxng,
+    Duckduckgo,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq, JsonSchema, TS)]
 #[schemars(deny_unknown_fields)]
 pub struct WebSearchToolConfig {
     pub context_size: Option<WebSearchContextSize>,
     pub allowed_domains: Option<Vec<String>>,
     pub location: Option<WebSearchLocation>,
+    pub searxng_url: Option<String>,
+    pub use_duckduckgo_fallback: Option<bool>,
+    pub engine: Option<WebSearchEngine>,
 }
 
 impl WebSearchToolConfig {
@@ -183,6 +198,9 @@ impl WebSearchToolConfig {
                 (None, Some(other_location)) => Some(other_location.clone()),
                 (None, None) => None,
             },
+            searxng_url: other.searxng_url.clone().or_else(|| self.searxng_url.clone()),
+            use_duckduckgo_fallback: other.use_duckduckgo_fallback.or(self.use_duckduckgo_fallback),
+            engine: other.engine.or(self.engine),
         }
     }
 }
@@ -220,6 +238,9 @@ pub struct WebSearchConfig {
     pub filters: Option<WebSearchFilters>,
     pub user_location: Option<WebSearchUserLocation>,
     pub search_context_size: Option<WebSearchContextSize>,
+    pub searxng_url: Option<String>,
+    pub use_duckduckgo_fallback: Option<bool>,
+    pub engine: Option<WebSearchEngine>,
 }
 
 impl From<WebSearchLocation> for WebSearchUserLocation {
@@ -244,6 +265,9 @@ impl From<WebSearchToolConfig> for WebSearchConfig {
                 }),
             user_location: config.location.map(Into::into),
             search_context_size: config.context_size,
+            searxng_url: config.searxng_url,
+            use_duckduckgo_fallback: config.use_duckduckgo_fallback,
+            engine: config.engine,
         }
     }
 }

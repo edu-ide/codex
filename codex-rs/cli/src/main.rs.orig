@@ -160,10 +160,6 @@ enum Subcommand {
     #[clap(hide = true, name = "stdio-to-uds")]
     StdioToUds(StdioToUdsCommand),
 
-    /// Internal tooling.
-    #[clap(hide = true)]
-    Internal(InternalArgs),
-
     /// [EXPERIMENTAL] Run the standalone exec-server binary.
     ExecServer(ExecServerCommand),
 
@@ -298,19 +294,6 @@ enum SandboxCommand {
 struct ExecpolicyCommand {
     #[command(subcommand)]
     sub: ExecpolicySubcommand,
-}
-
-#[derive(Debug, Parser)]
-struct InternalArgs {
-    #[command(subcommand)]
-    cmd: InternalCommand,
-}
-
-#[derive(Debug, clap::Subcommand)]
-enum InternalCommand {
-    /// Extract session context dynamically for SessionStart hook
-    #[clap(name = "get-session-context")]
-    GetSessionContext,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -1056,15 +1039,6 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     "execpolicy check",
                 )?;
                 run_execpolicycheck(cmd)?
-            }
-        },
-        Some(Subcommand::Internal(InternalArgs { cmd })) => match cmd {
-            InternalCommand::GetSessionContext => {
-                #[cfg(feature = "ilhae")]
-                {
-                    tokio::task::spawn_blocking(move || codex_ilhae::context_proxy::run_get_session_context())
-                        .await??;
-                }
             }
         },
         Some(Subcommand::Apply(mut apply_cli)) => {

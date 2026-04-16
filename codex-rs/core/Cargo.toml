@@ -88,7 +88,7 @@ once_cell = { workspace = true }
 rand = { workspace = true }
 regex-lite = { workspace = true }
 reqwest = { workspace = true, features = ["json", "stream"] }
-rmcp = { version = "0.15.0", features = [
+rmcp = { workspace = true, features = [
     "base64",
     "macros",
     "schemars",
@@ -117,8 +117,9 @@ tracing = { workspace = true, features = ["log"] }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4", "v5"] }
 which = { workspace = true }
-whoami = { workspace = true }
+whoami = "1.0"
 zip = { workspace = true }
+web-search-rs = { version = "0.1.0", path = "../../../web-search-rs" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"

@@ -1,0 +1,49 @@
+--- main.rs
++++ main.rs
+@@ -140,6 +140,10 @@
+     /// Internal: relay stdio to a Unix domain socket.
+     #[clap(hide = true, name = "stdio-to-uds")]
+     StdioToUds(StdioToUdsCommand),
++
++    /// Internal tooling.
++    #[clap(hide = true)]
++    Internal(InternalArgs),
+ 
+     /// [EXPERIMENTAL] Run the standalone exec-server binary.
+     ExecServer(ExecServerCommand),
+@@ -291,6 +295,19 @@
+     sub: ExecpolicySubcommand,
+ }
+ 
++#[derive(Debug, Parser)]
++struct InternalArgs {
++    #[command(subcommand)]
++    cmd: InternalCommand,
++}
++
++#[derive(Debug, clap::Subcommand)]
++enum InternalCommand {
++    /// Extract session context dynamically for SessionStart hook
++    #[clap(name = "get-session-context")]
++    GetSessionContext,
++}
++
+ #[derive(Debug, clap::Subcommand)]
+ enum ExecpolicySubcommand {
+     /// Check execpolicy files against a command.
+@@ -668,6 +685,15 @@
+             )?;
+             run_execpolicycheck(cmd)?
+         },
++        Some(Subcommand::Internal(InternalArgs { cmd })) => match cmd {
++            InternalCommand::GetSessionContext => {
++                #[cfg(feature = "ilhae")]
++                {
++                    tokio::task::spawn_blocking(move || codex_ilhae::context_proxy::run_get_session_context())
++                        .await??;
++                }
++            }
++        },
+         Some(Subcommand::Apply(mut apply_cli)) => {
+             reject_remote_mode_for_subcommand(
+                 root_remote.as_deref(),

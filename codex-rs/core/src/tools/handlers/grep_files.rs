@@ -42,7 +42,8 @@ impl ToolHandler for GrepSearchHandler {
             }
         })?;
 
-        let base_dir = crate::tools::handlers::resolve_workdir_base_path("{}", Path::new("."))?;
+        let cwd = &invocation.turn.cwd;
+        let base_dir = crate::tools::handlers::resolve_workdir_base_path("{}", cwd)?;
         let abs_path = base_dir.join(&args.path);
 
         if !abs_path.is_absolute() {

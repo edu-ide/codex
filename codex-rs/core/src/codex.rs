@@ -382,8 +382,8 @@ use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
-use crate::tools::spec::ToolsConfig;
-use crate::tools::spec::ToolsConfigParams;
+use codex_tools::ToolsConfig;
+use codex_tools::ToolsConfigParams;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_readiness::Readiness;
 use codex_utils_readiness::ReadinessFlag;
@@ -1324,7 +1324,6 @@ impl SessionConfiguration {
         }
         if let Some(app_server_client_version) = updates.app_server_client_version.clone() {
             next_configuration.app_server_client_version = Some(app_server_client_version);
-        }
         }
         Ok(next_configuration)
     }
@@ -5462,7 +5461,7 @@ mod handlers {
             .list_models(codex_models_manager::manager::RefreshStrategy::OnlineIfUncached)
             .await;
 
-        let params = crate::tools::spec::ToolsConfigParams {
+        let params = codex_tools::ToolsConfigParams {
             model_info: &model_info,
             available_models: &available_models,
             features: &config.features,
@@ -5470,8 +5469,9 @@ mod handlers {
             session_source: state.session_configuration.session_source.clone(),
             sandbox_policy: &state.session_configuration.sandbox_policy,
             windows_sandbox_level: state.session_configuration.windows_sandbox_level,
+            image_generation_tool_auth_allowed: crate::codex::image_generation_tool_auth_allowed(Some(&sess.services.auth_manager)),
         };
-        let tools_config = crate::tools::spec::ToolsConfig::new(&params);
+        let tools_config = codex_tools::ToolsConfig::new(&params);
 
         let builder = crate::tools::spec::build_specs_with_discoverable_tools(
             &tools_config,
@@ -8180,6 +8180,4 @@ pub(crate) use tests::make_session_configuration_for_tests;
 
 #[cfg(test)]
 #[path = "codex_tests.rs"]
-mod tests;
-sts.rs"]
 mod tests;
