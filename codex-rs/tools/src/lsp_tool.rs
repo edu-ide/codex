@@ -7,58 +7,44 @@ pub fn create_lsp_tool() -> ToolSpec {
     let position_properties = BTreeMap::from([
         (
             "line".to_string(),
-            JsonSchema::Number {
-                description: Some("Line number (1-based, matching editor UI).".to_string()),
-            },
+            JsonSchema::number(Some("Line number (1-based, matching editor UI).".to_string())),
         ),
         (
             "column".to_string(),
-            JsonSchema::Number {
-                description: Some("Column number (1-based, matching editor UI).".to_string()),
-            },
+            JsonSchema::number(Some("Column number (1-based, matching editor UI).".to_string())),
         ),
     ]);
 
     let properties = BTreeMap::from([
         (
             "operation".to_string(),
-            JsonSchema::String {
-                description: Some(
-                    "The LSP operation to perform: 'GoToDefinition', 'FindReferences', 'GetDiagnostics', 'Hover', 'Rename', 'CodeAction', 'DocumentSymbols', 'WorkspaceSymbols', 'CodeLens'.".to_string(),
-                ),
-            },
+            JsonSchema::string(Some(
+                "The LSP operation to perform: 'GoToDefinition', 'FindReferences', 'GetDiagnostics', 'Hover', 'Rename', 'CodeAction', 'DocumentSymbols', 'WorkspaceSymbols', 'CodeLens'.".to_string(),
+            )),
         ),
         (
             "file_path".to_string(),
-            JsonSchema::String {
-                description: Some("The absolute path to the file to perform the operation on.".to_string()),
-            },
+            JsonSchema::string(Some("The absolute path to the file to perform the operation on.".to_string())),
         ),
         (
             "content".to_string(),
-            JsonSchema::String {
-                description: Some("The content of the file. Required for most operations if the file has been modified.".to_string()),
-            },
+            JsonSchema::string(Some("The content of the file. Required for most operations if the file has been modified.".to_string())),
         ),
         (
             "position".to_string(),
-            JsonSchema::Object {
-                properties: position_properties,
-                required: Some(vec!["line".to_string(), "column".to_string()]),
-                additional_properties: Some(false.into()),
-            },
+            JsonSchema::object(
+                position_properties,
+                Some(vec!["line".to_string(), "column".to_string()]),
+                Some(false.into()),
+            ),
         ),
         (
             "new_name".to_string(),
-            JsonSchema::String {
-                description: Some("The new name to use for a Rename operation.".to_string()),
-            },
+            JsonSchema::string(Some("The new name to use for a Rename operation.".to_string())),
         ),
         (
             "query".to_string(),
-            JsonSchema::String {
-                description: Some("The query to use for a WorkspaceSymbols operation.".to_string()),
-            },
+            JsonSchema::string(Some("The query to use for a WorkspaceSymbols operation.".to_string())),
         ),
     ]);
 
@@ -69,11 +55,11 @@ pub fn create_lsp_tool() -> ToolSpec {
                 .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::Object {
+        parameters: JsonSchema::object(
             properties,
-            required: Some(vec!["operation".to_string()]),
-            additional_properties: Some(false.into()),
-        },
+            Some(vec!["operation".to_string()]),
+            Some(false.into()),
+        ),
         output_schema: None,
     })
 }

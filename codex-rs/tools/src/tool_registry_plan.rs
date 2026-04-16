@@ -344,6 +344,7 @@ pub fn build_tool_registry_plan(
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
         );
+        plan.register_handler("web_search", ToolHandlerKind::WebSearch);
     }
 
     if config.image_gen_tool {

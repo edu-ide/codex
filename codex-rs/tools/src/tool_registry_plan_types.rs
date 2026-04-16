@@ -42,6 +42,7 @@ pub enum ToolHandlerKind {
     ViewImage,
     WaitAgentV1,
     WaitAgentV2,
+    WebSearch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

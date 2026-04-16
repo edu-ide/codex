@@ -122,11 +122,15 @@ impl StreamableHttpClient for StreamableHttpResponseClient {
         message: rmcp::model::ClientJsonRpcMessage,
         session_id: Option<Arc<str>>,
         auth_token: Option<String>,
+        headers: std::collections::HashMap<reqwest::header::HeaderName, reqwest::header::HeaderValue>,
     ) -> std::result::Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
         let mut request = self
             .inner
             .post(uri.as_ref())
             .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "));
+        for (k, v) in headers {
+            request = request.header(k, v);
+        }
         if let Some(auth_header) = auth_token {
             request = request.bearer_auth(auth_header);
         }
@@ -155,9 +159,7 @@ impl StreamableHttpClient for StreamableHttpResponseClient {
                     ))
                 })?
                 .to_string();
-            return Err(StreamableHttpError::AuthRequired(AuthRequiredError {
-                www_authenticate_header: header,
-            }));
+            return Err(StreamableHttpError::UnexpectedServerResponse(Cow::Owned(format!("auth required: {}", header))));
         }
 
         let status = response.status();
@@ -223,8 +225,12 @@ impl StreamableHttpClient for StreamableHttpResponseClient {
         uri: Arc<str>,
         session: Arc<str>,
         auth_token: Option<String>,
+        headers: std::collections::HashMap<reqwest::header::HeaderName, reqwest::header::HeaderValue>,
     ) -> std::result::Result<(), StreamableHttpError<Self::Error>> {
         let mut request_builder = self.inner.delete(uri.as_ref());
+        for (k, v) in headers {
+            request_builder = request_builder.header(k, v);
+        }
         if let Some(auth_header) = auth_token {
             request_builder = request_builder.bearer_auth(auth_header);
         }
@@ -250,6 +256,7 @@ impl StreamableHttpClient for StreamableHttpResponseClient {
         session_id: Arc<str>,
         last_event_id: Option<String>,
         auth_token: Option<String>,
+        headers: std::collections::HashMap<reqwest::header::HeaderName, reqwest::header::HeaderValue>,
     ) -> std::result::Result<
         BoxStream<'static, std::result::Result<Sse, sse_stream::Error>>,
         StreamableHttpError<Self::Error>,
@@ -259,6 +266,9 @@ impl StreamableHttpClient for StreamableHttpResponseClient {
             .get(uri.as_ref())
             .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "))
             .header(HEADER_SESSION_ID, session_id.as_ref());
+        for (k, v) in headers {
+            request_builder = request_builder.header(k, v);
+        }
         if let Some(last_event_id) = last_event_id {
             request_builder = request_builder.header(HEADER_LAST_EVENT_ID, last_event_id);
         }
@@ -444,6 +454,7 @@ impl From<ElicitationResponse> for CreateElicitationResult {
         Self {
             action: value.action,
             content: value.content,
+            meta: None,
         }
     }
 }
@@ -722,12 +733,8 @@ impl RmcpClient {
             }
             None => None,
         };
-        let rmcp_params = CallToolRequestParams {
-            meta: None,
-            name: name.into(),
-            arguments,
-            task: None,
-        };
+        let mut rmcp_params = CallToolRequestParams::new(name);
+        rmcp_params.arguments = arguments;
         let result = self
             .run_service_operation("tools/call", timeout, move |service| {
                 let rmcp_params = rmcp_params.clone();
@@ -736,15 +743,10 @@ impl RmcpClient {
                     let result = service
                         .peer()
                         .send_request_with_option(
-                            ClientRequest::CallToolRequest(rmcp::model::CallToolRequest {
-                                method: Default::default(),
-                                params: rmcp_params,
-                                extensions: Default::default(),
-                            }),
-                            rmcp::service::PeerRequestOptions {
-                                timeout: None,
-                                meta,
-                            },
+                            ClientRequest::CallToolRequest(
+                                rmcp::model::CallToolRequest::new(rmcp_params),
+                            ),
+                            { let mut o = rmcp::service::PeerRequestOptions::no_options(); o.meta = meta; o },
                         )
                         .await?
                         .await_response()
@@ -1172,7 +1174,7 @@ async fn create_oauth_transport_and_runtime(
     OAuthPersistor,
 )> {
     let http_client = build_http_client(&default_headers)?;
-    let mut oauth_state = OAuthState::new(url.to_string(), Some(http_client.clone())).await?;
+    let mut oauth_state = OAuthState::new(url.to_string(), None).await?;
 
     oauth_state
         .set_credentials(
@@ -1187,6 +1189,7 @@ async fn create_oauth_transport_and_runtime(
         OAuthState::Session(_) | OAuthState::AuthorizedHttpClient(_) => {
             return Err(anyhow!("unexpected OAuth state during client setup"));
         }
+        _ => return Err(anyhow::anyhow!("Unexpected OAuth state")),
     };
 
     let auth_client = AuthClient::new(StreamableHttpResponseClient::new(http_client), manager);
@@ -1207,3 +1210,4 @@ async fn create_oauth_transport_and_runtime(
 
     Ok((transport, runtime))
 }
+

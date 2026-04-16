@@ -2,7 +2,7 @@ mod engine;
 pub(crate) mod events;
 mod legacy_notify;
 mod registry;
-mod schema;
+pub mod schema;
 mod types;
 
 pub use events::post_tool_use::PostToolUseOutcome;

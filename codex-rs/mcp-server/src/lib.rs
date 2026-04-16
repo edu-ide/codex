@@ -348,3 +348,4 @@ mod tests {
         Ok(())
     }
 }
+pub mod test_non_exhaustive;

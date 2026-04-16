@@ -24,7 +24,7 @@ codex-rmcp-client = { workspace = true }
 codex-utils-plugins = { workspace = true }
 futures = { workspace = true }
 regex-lite = { workspace = true }
-rmcp = { version = "0.15.0", default-features = false, features = ["base64", "macros", "schemars", "server"] }
+rmcp = { workspace = true, default-features = true, features = ["base64", "macros", "schemars", "server"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha1 = { workspace = true }
@@ -36,5 +36,5 @@ url = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-rmcp = { version = "0.15.0", default-features = false, features = ["base64", "macros", "schemars", "server"] }
+rmcp = { workspace = true, default-features = true, features = ["base64", "macros", "schemars", "server"] }
 tempfile = { workspace = true }

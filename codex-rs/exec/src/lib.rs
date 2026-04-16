@@ -154,9 +154,9 @@ use crate::event_processor::EventProcessor;
 
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
 const AUTONOMOUS_IDLE_GRACE_SECS: u64 = 15;
-const DEFAULT_EXEC_AUTO_MAX_TURNS: u32 = 8;
-const DEFAULT_EXEC_AUTO_TIMEBOX_MINUTES: u32 = 20;
-const EXEC_AUTONOMY_STALLED_TURN_LIMIT: u32 = 2;
+const DEFAULT_EXEC_AUTO_MAX_TURNS: u32 = 100;
+const DEFAULT_EXEC_AUTO_TIMEBOX_MINUTES: u32 = 600;
+const EXEC_AUTONOMY_STALLED_TURN_LIMIT: u32 = 5;
 
 #[derive(Debug, Clone, Copy)]
 struct ExecAutonomySettings {
@@ -1449,12 +1449,27 @@ fn build_exec_autonomy_followup_prompt_with_root(progress: &str, root_prompt: &s
 
     if let Some(command) = extract_pseudo_exec_command(progress) {
         return format!(
-            "[HEADLESS AUTO LOOP]\n\n{original_task_block}직전 턴이 실제 실행 대신 exec_command tool 호출 JSON만 출력했습니다.\n이번 턴에서는 아래 명령을 exec_command로 실제 실행하세요.\n- command: {command}\n- 먼저 이 명령만 실제로 실행하고, 실행 결과를 짧게 보고한 뒤 종료하세요.\n- 원래 사용자 작업의 나머지 단계와 완료 조건을 계속 만족해야 합니다.\n- 아직 실행하지 않은 다음 단계로 넘어가지 마세요.\n- 남은 작업이 없을 때만 정확히 '모든 작업이 완료되었습니다'라고만 답하세요."
+            "[HEADLESS AUTO LOOP]\n\n{original_task_block}직전 턴이 실제 실행 대신 exec_command tool 호출 JSON만 출력했습니다.\n이번 턴에서는 아래 명령을 exec_command로 실제 실행하세요.\n- command: {command}\n- 먼저 이 명령만 실제로 실행하고, 실행 결과를 짧게 보고한 뒤 종료하세요.\n- 원래 사용자 작업의 나머지 단계와 완료 조건을 계속 만족해야 합니다.\n- 아직 실행하지 않은 다음 단계로 넘어가지 마세요.\n- 사용자의 본 작업이 모두 끝났다면, 즉시 종료하지 마세요. 1. 만약 당신에게 memory_dream_preview 도구와 memory_dream_promote 도구가 제공되었다면(도구 목록에 있다면), 이를 호출하여 요약 대기 중인 메모리 청크 그룹을 확인하고 정식 LLM Wiki(지식 문서)로 모두 승격시키세요. 도구가 없다면 이 단계는 건너뛰세요. 3. 더 이상 정리할 메모리가 없고 모든 지식 승격이 완벽히 끝났을 때만, 정확히 '모든 작업이 완료되었습니다'라고만 답하여 세션을 종료하세요."
         );
     }
 
     format!(
-        "[HEADLESS AUTO LOOP]\n\n{original_task_block}최근 결과:\n{progress}\n\n다음 미완료 작업을 같은 thread에서 계속 수행하세요.\n- 실제 tool을 호출해 작업을 수행하세요. tool 호출을 텍스트로 흉내만 내지 마세요.\n- 직전 턴이 tool 호출 설명만 하고 끝났다면, 이번 턴에서는 그 tool을 실제로 실행하세요.\n- 원래 사용자 작업의 완료 조건을 끝까지 유지하세요.\n- 이미 끝난 단계는 반복하지 마세요.\n- 남은 작업이 없다면 정확히 '모든 작업이 완료되었습니다'라고만 답하세요."
+        "[HEADLESS AUTO LOOP]
+
+{original_task_block}최근 결과:
+{progress}
+
+다음 미완료 작업을 같은 thread에서 계속 수행하세요.
+- 실제 tool을 호출해 작업을 수행하세요. tool 호출을 텍스트로 흉내만 내지 마세요.
+- 직전 턴이 tool 호출 설명만 하고 끝났다면, 이번 턴에서는 그 tool을 실제로 실행하세요.
+- **작업 추적 및 검증 (Task Tracking & Verification):**
+  1. 아직 전체 계획(Plan)을 세우지 않았다면, 전체 작업을 작고 독립적인 단위(Sub-tasks)로 쪼개어 번호를 매긴 체크리스트를 먼저 작성하세요.
+  2. 한 번에 하나의 Sub-task만 집중해서 구현하세요.
+  3. 하나의 Sub-task 구현이 끝나면, **반드시 관련된 품질 검사 도구(예: `cargo check`, `npm run build`, `pytest` 등 해당 프로젝트에 맞는 명령어)를 실행하여 코드가 깨지지 않았는지 스스로 검증**하세요. 검증에 실패하면 다음 Sub-task로 넘어가지 말고 오류를 수정하세요.
+  4. 매 턴마다 현재 남은 작업 목록과 진행 상황을 명시적으로 요약하여 출력하세요.
+- 원래 사용자 작업의 완료 조건을 끝까지 유지하세요.
+- 이미 끝난 단계는 반복하지 마세요.
+- 사용자의 본 작업이 모두 끝났다면, 즉시 종료하지 마세요. 1. 만약 당신에게 memory_dream_preview 도구와 memory_dream_promote 도구가 제공되었다면(도구 목록에 있다면), 이를 호출하여 요약 대기 중인 메모리 청크 그룹을 확인하고 정식 LLM Wiki(지식 문서)로 모두 승격시키세요. 도구가 없다면 이 단계는 건너뛰세요. 3. 더 이상 정리할 메모리가 없고 모든 지식 승격이 완벽히 끝났을 때만, 정확히 '모든 작업이 완료되었습니다'라고만 답하여 세션을 종료하세요."
     )
 }
 
@@ -1638,6 +1653,7 @@ async fn start_exec_autonomous_followup_turn(
         ClientRequest::TurnStart {
             request_id: request_ids.next(),
             params: TurnStartParams {
+                responsesapi_client_metadata: None,
                 thread_id: thread_id.to_string(),
                 input: vec![
                     UserInput::Text {

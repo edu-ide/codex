@@ -988,10 +988,7 @@ impl McpConnectionManager {
                 let mut cursor: Option<String> = None;
 
                 loop {
-                    let params = cursor.as_ref().map(|next| PaginatedRequestParams {
-                        meta: None,
-                        cursor: Some(next.clone()),
-                    });
+                    let params = cursor.as_ref().map(|next| { let mut p = rmcp::model::PaginatedRequestParams::default(); p.cursor = Some(next.clone()); p });
                     let response = match client.list_resources(params, timeout).await {
                         Ok(result) => result,
                         Err(err) => return (server_name, Err(err)),
@@ -1054,10 +1051,7 @@ impl McpConnectionManager {
                 let mut cursor: Option<String> = None;
 
                 loop {
-                    let params = cursor.as_ref().map(|next| PaginatedRequestParams {
-                        meta: None,
-                        cursor: Some(next.clone()),
-                    });
+                    let params = cursor.as_ref().map(|next| { let mut p = rmcp::model::PaginatedRequestParams::default(); p.cursor = Some(next.clone()); p });
                     let response = match client.list_resource_templates(params, timeout).await {
                         Ok(result) => result,
                         Err(err) => return (server_name_cloned, Err(err)),
@@ -1445,26 +1439,17 @@ async fn start_server_task(
         codex_apps_tools_cache_context,
     } = params;
     let elicitation = elicitation_capability_for_server(&server_name);
-    let params = InitializeRequestParams {
-        meta: None,
-        capabilities: ClientCapabilities {
-            experimental: None,
-            extensions: None,
-            roots: None,
-            sampling: None,
-            elicitation,
-            tasks: None,
-        },
-        client_info: Implementation {
-            name: "codex-mcp-client".to_owned(),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-            title: Some("Codex".into()),
-            description: None,
-            icons: None,
-            website_url: None,
-        },
-        protocol_version: ProtocolVersion::V_2025_06_18,
-    };
+    let mut elicitation_opts = rmcp::model::ElicitationCapability::default();
+    let mut caps = rmcp::model::ClientCapabilities::default();
+    caps.elicitation = Some(elicitation_opts);
+    
+    let mut info = rmcp::model::Implementation::new("codex-mcp-client".to_owned(), env!("CARGO_PKG_VERSION").to_owned());
+    info.title = Some("Codex".into());
+    
+    let mut params = rmcp::model::InitializeRequestParams::new(
+        caps,
+        info,
+    );
 
     let send_elicitation = elicitation_requests.make_sender(server_name.clone(), tx_event);
 

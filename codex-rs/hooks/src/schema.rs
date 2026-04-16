@@ -24,9 +24,9 @@ const USER_PROMPT_SUBMIT_OUTPUT_FIXTURE: &str = "user-prompt-submit.command.outp
 const STOP_INPUT_FIXTURE: &str = "stop.command.input.schema.json";
 const STOP_OUTPUT_FIXTURE: &str = "stop.command.output.schema.json";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct NullableString(Option<String>);
+pub struct NullableString(Option<String>);
 
 impl NullableString {
     pub(crate) fn from_path(path: Option<PathBuf>) -> Self {
@@ -54,7 +54,7 @@ impl JsonSchema for NullableString {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub(crate) struct HookUniversalOutputWire {
+pub struct HookUniversalOutputWire {
     #[serde(default = "default_continue")]
     pub r#continue: bool,
     #[serde(default)]
@@ -66,7 +66,7 @@ pub(crate) struct HookUniversalOutputWire {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub(crate) enum HookEventNameWire {
+pub enum HookEventNameWire {
     #[serde(rename = "PreToolUse")]
     PreToolUse,
     #[serde(rename = "PostToolUse")]
@@ -83,7 +83,7 @@ pub(crate) enum HookEventNameWire {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "pre-tool-use.command.output")]
-pub(crate) struct PreToolUseCommandOutputWire {
+pub struct PreToolUseCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
     #[serde(default)]
@@ -98,7 +98,7 @@ pub(crate) struct PreToolUseCommandOutputWire {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "post-tool-use.command.output")]
-pub(crate) struct PostToolUseCommandOutputWire {
+pub struct PostToolUseCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
     #[serde(default)]
@@ -112,7 +112,7 @@ pub(crate) struct PostToolUseCommandOutputWire {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PostToolUseHookSpecificOutputWire {
+pub struct PostToolUseHookSpecificOutputWire {
     pub hook_event_name: HookEventNameWire,
     #[serde(default)]
     pub additional_context: Option<String>,
@@ -124,7 +124,7 @@ pub(crate) struct PostToolUseHookSpecificOutputWire {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PreToolUseHookSpecificOutputWire {
+pub struct PreToolUseHookSpecificOutputWire {
     pub hook_event_name: HookEventNameWire,
     #[serde(default)]
     pub permission_decision: Option<PreToolUsePermissionDecisionWire>,
@@ -137,7 +137,7 @@ pub(crate) struct PreToolUseHookSpecificOutputWire {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub(crate) enum PreToolUsePermissionDecisionWire {
+pub enum PreToolUsePermissionDecisionWire {
     #[serde(rename = "allow")]
     Allow,
     #[serde(rename = "deny")]
@@ -147,7 +147,7 @@ pub(crate) enum PreToolUsePermissionDecisionWire {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub(crate) enum PreToolUseDecisionWire {
+pub enum PreToolUseDecisionWire {
     #[serde(rename = "approve")]
     Approve,
     #[serde(rename = "block")]
@@ -157,14 +157,14 @@ pub(crate) enum PreToolUseDecisionWire {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PreToolUseToolInput {
+pub struct PreToolUseToolInput {
     pub command: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "pre-tool-use.command.input")]
-pub(crate) struct PreToolUseCommandInput {
+pub struct PreToolUseCommandInput {
     pub session_id: String,
     /// Codex extension: expose the active turn id to internal turn-scoped hooks.
     pub turn_id: String,
@@ -184,14 +184,14 @@ pub(crate) struct PreToolUseCommandInput {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PostToolUseToolInput {
+pub struct PostToolUseToolInput {
     pub command: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "post-tool-use.command.input")]
-pub(crate) struct PostToolUseCommandInput {
+pub struct PostToolUseCommandInput {
     pub session_id: String,
     /// Codex extension: expose the active turn id to internal turn-scoped hooks.
     pub turn_id: String,
@@ -213,7 +213,7 @@ pub(crate) struct PostToolUseCommandInput {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "session-start.command.output")]
-pub(crate) struct SessionStartCommandOutputWire {
+pub struct SessionStartCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
     #[serde(default)]
@@ -223,7 +223,7 @@ pub(crate) struct SessionStartCommandOutputWire {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SessionStartHookSpecificOutputWire {
+pub struct SessionStartHookSpecificOutputWire {
     pub hook_event_name: HookEventNameWire,
     #[serde(default)]
     pub additional_context: Option<String>,
@@ -233,7 +233,7 @@ pub(crate) struct SessionStartHookSpecificOutputWire {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "user-prompt-submit.command.output")]
-pub(crate) struct UserPromptSubmitCommandOutputWire {
+pub struct UserPromptSubmitCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
     #[serde(default)]
@@ -247,7 +247,7 @@ pub(crate) struct UserPromptSubmitCommandOutputWire {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub(crate) struct UserPromptSubmitHookSpecificOutputWire {
+pub struct UserPromptSubmitHookSpecificOutputWire {
     pub hook_event_name: HookEventNameWire,
     #[serde(default)]
     pub additional_context: Option<String>,
@@ -257,7 +257,7 @@ pub(crate) struct UserPromptSubmitHookSpecificOutputWire {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "stop.command.output")]
-pub(crate) struct StopCommandOutputWire {
+pub struct StopCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
     #[serde(default)]
@@ -269,15 +269,15 @@ pub(crate) struct StopCommandOutputWire {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub(crate) enum BlockDecisionWire {
+pub enum BlockDecisionWire {
     #[serde(rename = "block")]
     Block,
 }
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "session-start.command.input")]
-pub(crate) struct SessionStartCommandInput {
+pub struct SessionStartCommandInput {
     pub session_id: String,
     pub transcript_path: NullableString,
     pub cwd: String,
@@ -314,7 +314,7 @@ impl SessionStartCommandInput {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "user-prompt-submit.command.input")]
-pub(crate) struct UserPromptSubmitCommandInput {
+pub struct UserPromptSubmitCommandInput {
     pub session_id: String,
     /// Codex extension: expose the active turn id to internal turn-scoped hooks.
     pub turn_id: String,
@@ -331,7 +331,7 @@ pub(crate) struct UserPromptSubmitCommandInput {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "stop.command.input")]
-pub(crate) struct StopCommandInput {
+pub struct StopCommandInput {
     pub session_id: String,
     /// Codex extension: expose the active turn id to internal turn-scoped hooks.
     pub turn_id: String,
