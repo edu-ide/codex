@@ -11,10 +11,10 @@ use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, warn};
 
-use crate::notification_store::NotificationStore;
-use crate::relay_server::{RelayCommand, RelayCommandWithClient, RelayEvent};
-use crate::session_store::SessionStore;
-use crate::settings_store::TelegramSettings;
+use codex_ilhae::notification_store::NotificationStore;
+use codex_ilhae::relay_server::{RelayCommand, RelayCommandWithClient, RelayEvent};
+use codex_ilhae::session_store::SessionStore;
+use codex_ilhae::settings_store::TelegramSettings;
 
 /// Synthetic client ID for the Telegram bot in the relay system.
 const TELEGRAM_CLIENT_ID: u64 = u64::MAX - 1;
@@ -31,7 +31,7 @@ pub struct TelegramBotState {
     pub relay_tx: mpsc::Sender<RelayEvent>,
     pub store: Arc<SessionStore>,
     pub notification_store: Arc<NotificationStore>,
-    pub settings_store: Arc<crate::settings_store::SettingsStore>,
+    pub settings_store: Arc<codex_ilhae::settings_store::SettingsStore>,
     pub settings: TelegramSettings,
     /// Default working directory for Telegram sessions.
     pub default_cwd: String,
@@ -49,7 +49,7 @@ pub fn start(
     relay_tx: mpsc::Sender<RelayEvent>,
     store: Arc<SessionStore>,
     notification_store: Arc<NotificationStore>,
-    settings_store: Arc<crate::settings_store::SettingsStore>,
+    settings_store: Arc<codex_ilhae::settings_store::SettingsStore>,
     mut event_rx: mpsc::Receiver<String>,
     default_cwd: String,
 ) -> tokio::task::JoinHandle<()> {
@@ -572,7 +572,7 @@ async fn handle_relay_event(bot: &Bot, state: &Arc<TelegramBotState>, event: Rel
                 }
             }
         }
-        RelayEvent::UiNotification { message, level } => {
+        RelayEvent::UiNotification { message, level, .. } => {
             // Forward UI notifications to all allowed chats
             let icon = match level.as_str() {
                 "error" => "🔴",

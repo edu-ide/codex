@@ -19,6 +19,5 @@ pub mod kakao_client;
 pub mod line_client;
 pub mod whatsapp_client;
 
-pub mod approval_manager;
 pub mod channel_bots;
 pub mod channel_dock;

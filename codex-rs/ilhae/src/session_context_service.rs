@@ -83,6 +83,7 @@ const SELF_IMPROVEMENT_MODE_SAFE_APPLY_INSTRUCTION: &str = r#"
 SELF-IMPROVEMENT MODE IS ENABLED.
 - Preset: safe_apply.
 - Prefer converting clearly reusable, stable outputs into durable memory artifacts.
+- ONLY capture "High-Signal" memory (reusable facts, strong preferences, stable procedures). DO NOT capture one-off impressions or simple error logs.
 - Safe summarization of repetitive dream groups is allowed.
 - When a promotion or extraction target is explicit and low-risk, prefer applying it instead of leaving only a suggestion.
 - If the target or effect is ambiguous, fall back to review-first behavior instead of forcing an apply.
@@ -111,10 +112,12 @@ SELF-IMPROVEMENT MODE IS ENABLED.
 "#;
 
 const SELF_IMPROVEMENT_MODE_INSTRUCTION: &str = r#"
-<system_directive priority="medium">
+<system_directive priority="high">
 SELF-IMPROVEMENT MODE IS ENABLED.
-- Prefer capturing durable knowledge when the interaction yields reusable facts, preferences, or stable procedures.
-- Use memory promotion, extraction, and dream analysis deliberately instead of duplicating raw notes.
+- ONLY capture "High-Signal" memory when the interaction yields reusable facts, strong preferences, or stable procedures.
+- High-signal memory prevents future user keystrokes: less re-specification, fewer round trips.
+- DO NOT capture exploratory discussion, brainstorming, one-off impressions, or simple error logs as durable memory.
+- When using `memory_store`, categorize it accurately using `memory_type` (e.g. `user_preference`, `bug_fix_pattern`, `project_context`, `api_usage`).
 - Keep the working conversation concise and externalize reusable learnings into the brain layer when justified.
 </system_directive>
 "#;

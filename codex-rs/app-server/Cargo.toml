@@ -100,7 +100,7 @@ opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 pretty_assertions = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls"] }
-rmcp = { version = "0.15.0", default-features = false, features = [
+rmcp = { workspace = true, default-features = true, features = [
     "elicitation",
     "server",
     "transport-streamable-http-server",

@@ -3,9 +3,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use crate::approval_manager::{ApprovalEvent, ApprovalManager};
-use crate::relay_server::RelayEvent;
-use crate::settings_store::GenericChannelSettings;
+use codex_ilhae::approval_manager::{ApprovalEvent, ApprovalManager};
+use codex_ilhae::relay_server::RelayEvent;
+use codex_ilhae::settings_store::GenericChannelSettings;
 
 pub async fn start(
     settings: GenericChannelSettings,

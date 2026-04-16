@@ -53,6 +53,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDef] = &[
             ("memory_promote", "세션 아티팩트를 지식 항목으로 승격"),
             ("memory_extract", "지식 항목을 볼트 노트로 추출"),
             ("memory_dream_preview", "드림 대기 그룹 미리보기"),
+            ("memory_dream_promote", "메모리 그룹을 LLM 위키(지식 문서)로 승격 및 병합"),
             ("memory_dream_analyze", "디렉터리 범위 드림 분석"),
             ("memory_dream_summarize", "드림 그룹을 요약 완료로 표시"),
             ("memory_dream_ignore", "드림 그룹을 무시 상태로 표시"),

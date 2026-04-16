@@ -10,7 +10,7 @@ use std::sync::Arc;
 use strum_macros::{Display, EnumIter, EnumString, IntoStaticStr};
 use tokio::sync::mpsc;
 
-use crate::relay_server::{RelayCommandWithClient, RelayEvent};
+use codex_ilhae::relay_server::{RelayCommandWithClient, RelayEvent};
 
 // ─── Channel ID ──────────────────────────────────────────────────────────────
 

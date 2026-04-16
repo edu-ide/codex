@@ -9,9 +9,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use crate::approval_manager::ApprovalManager;
-use crate::relay_server::RelayEvent;
-use crate::settings_store::{DiscordSettings, SettingsStore};
+use codex_ilhae::approval_manager::ApprovalManager;
+use codex_ilhae::relay_server::RelayEvent;
+use codex_ilhae::settings_store::{DiscordSettings, SettingsStore};
 
 pub struct Handler {
     pub settings_store: Arc<SettingsStore>,
@@ -174,7 +174,7 @@ pub async fn start(
 
         tokio::spawn(async move {
             while let Ok(event) = approval_rx.recv().await {
-                if let crate::approval_manager::ApprovalEvent::NewRequest(req) = event {
+                if let codex_ilhae::approval_manager::ApprovalEvent::NewRequest(req) = event {
                     // For Discord, we need a channel to send the message.
                     // For now, we'll try to find a system channel or use configured guild IDs.
                     // This is a simplified implementation — in a real setup, we might map session_id to a specific thread/channel.

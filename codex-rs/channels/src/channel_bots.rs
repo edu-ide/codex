@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use tracing::info;
 
-use crate::shared_state::SharedState;
+use codex_ilhae::shared_state::SharedState;
 
 /// Start the Telegram bot if enabled in settings.
 pub async fn start_telegram_if_enabled(shared: &Arc<SharedState>) {

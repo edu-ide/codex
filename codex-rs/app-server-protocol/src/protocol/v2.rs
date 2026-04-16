@@ -6176,6 +6176,7 @@ impl From<McpServerElicitationRequestResponse> for rmcp::model::CreateElicitatio
         Self {
             action: value.action.into(),
             content: value.content,
+            meta: value.meta.and_then(|m| serde_json::from_value(m).ok()),
         }
     }
 }
@@ -6185,7 +6186,7 @@ impl From<rmcp::model::CreateElicitationResult> for McpServerElicitationRequestR
         Self {
             action: value.action.into(),
             content: value.content,
-            meta: None,
+            meta: value.meta.and_then(|m| serde_json::to_value(m).ok()),
         }
     }
 }
@@ -7653,7 +7654,6 @@ mod tests {
                 content: Some(json!({
                     "confirmed": true,
                 })),
-                meta: None,
             }
         );
         assert_eq!(
@@ -7665,7 +7665,6 @@ mod tests {
     #[test]
     fn mcp_server_elicitation_request_from_core_url_request() {
         let request = McpServerElicitationRequest::try_from(CoreElicitationRequest::Url {
-            meta: None,
             message: "Finish sign-in".to_string(),
             url: "https://example.com/complete".to_string(),
             elicitation_id: "elicitation-123".to_string(),
@@ -7675,7 +7674,6 @@ mod tests {
         assert_eq!(
             request,
             McpServerElicitationRequest::Url {
-                meta: None,
                 message: "Finish sign-in".to_string(),
                 url: "https://example.com/complete".to_string(),
                 elicitation_id: "elicitation-123".to_string(),
@@ -7686,7 +7684,6 @@ mod tests {
     #[test]
     fn mcp_server_elicitation_request_from_core_form_request() {
         let request = McpServerElicitationRequest::try_from(CoreElicitationRequest::Form {
-            meta: None,
             message: "Allow this request?".to_string(),
             requested_schema: json!({
                 "type": "object",
@@ -7714,7 +7711,6 @@ mod tests {
         assert_eq!(
             request,
             McpServerElicitationRequest::Form {
-                meta: None,
                 message: "Allow this request?".to_string(),
                 requested_schema: expected_schema,
             }
@@ -7834,7 +7830,6 @@ mod tests {
     #[test]
     fn mcp_server_elicitation_request_rejects_invalid_core_form_schema() {
         let result = McpServerElicitationRequest::try_from(CoreElicitationRequest::Form {
-            meta: None,
             message: "Allow this request?".to_string(),
             requested_schema: json!({
                 "type": "object",
@@ -7854,7 +7849,6 @@ mod tests {
         let response = McpServerElicitationRequestResponse {
             action: McpServerElicitationAction::Decline,
             content: None,
-            meta: None,
         };
 
         assert_eq!(

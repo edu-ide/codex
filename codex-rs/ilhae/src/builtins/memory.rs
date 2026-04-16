@@ -78,7 +78,8 @@ macro_rules! register_memory_tools {
                     let bts = $bt_settings.clone();
                     async move |input: MemoryToolStoreInput, _cx| {
                         $crate::check_tool_enabled!(bts, "memory_store");
-                        match brain.memory_chunk_store(&input.text, &input.source) {
+                        let final_text = format!("[Type: {}]\n{}", input.memory_type, input.text);
+                        match brain.memory_chunk_store(&final_text, &input.source) {
                             Ok(id) => Ok::<String, sacp::Error>(format!("✅ Stored memory chunk (id={})", id)),
                             Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
                         }
@@ -206,6 +207,35 @@ macro_rules! register_memory_tools {
                             &input.ki_id,
                             input.namespace.as_deref(),
                             input.vault_path.as_deref(),
+                        ) {
+                            Ok(result) => Ok::<String, sacp::Error>(
+                                serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+                            ),
+                            Err(e) => Err(sacp::Error::internal_error().data(e.to_string())),
+                        }
+                    }
+                },
+                sacp::tool_fn!(),
+            )
+            .tool_fn(
+                "memory_dream_promote",
+                "Synthesize raw memory chunks into a new durable LLM Wiki artifact. Promoted chunks are marked as summarized and drop in priority.",
+                {
+                    let brain = $brain_service.clone();
+                    let bts = $bt_settings.clone();
+                    async move |input: MemoryToolDreamPromoteInput, _cx| {
+                        $crate::check_tool_enabled!(bts, "memory_dream_promote");
+                        if !bts.get().agent.self_improvement_enabled {
+                            return Err(sacp::Error::invalid_request().data(
+                                "Self-improvement is disabled. Enable it in the active ilhae profile.".to_string(),
+                            ));
+                        }
+                        match brain.memory_dream_promote(
+                            &input.chunk_ids,
+                            &input.ki_id,
+                            &input.title,
+                            &input.content,
+                            input.tags,
                         ) {
                             Ok(result) => Ok::<String, sacp::Error>(
                                 serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())

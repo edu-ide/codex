@@ -283,7 +283,7 @@ pub(crate) fn default_self_improvement_followup_spec_for_runtime() -> SelfImprov
             "Review pending dream groups, decide safe summarize/promote/extract actions, and record the decision."
                 .to_string(),
         instructions:
-            "Use memory_dream_preview, memory_dream_analyze, memory_dream_summarize, memory_promote, and memory_extract as needed."
+            "Use memory_dream_preview, memory_dream_analyze, memory_dream_summarize, memory_dream_promote, memory_promote, and memory_extract as needed. Prefer memory_dream_promote to synthesize high-signal chunk groups into LLM Wiki artifacts."
                 .to_string(),
     }
 }

@@ -1745,11 +1745,17 @@ pub fn default_five() -> usize {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MemoryToolStoreInput {
+    /// Memory category. Must be one of: 'user_preference', 'project_context', 'bug_fix_pattern', 'api_usage', or 'general'.
+    #[serde(default = "default_memory_type")]
+    pub memory_type: String,
     /// Text to store as a memory chunk.
     pub text: String,
     /// Source label: "manual", "auto-capture", etc.
     #[serde(default = "default_manual")]
     pub source: String,
+}
+pub fn default_memory_type() -> String {
+    "general".to_string()
 }
 pub fn default_manual() -> String {
     "manual".to_string()
@@ -1810,6 +1816,21 @@ pub struct MemoryToolExtractInput {
     /// Optional vault path/name override.
     #[serde(default)]
     pub vault_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryToolDreamPromoteInput {
+    /// Array of raw memory chunk IDs that were synthesized into this knowledge item.
+    pub chunk_ids: Vec<i64>,
+    /// Target knowledge item ID (e.g. "api-auth-flow").
+    pub ki_id: String,
+    /// Target knowledge item title.
+    pub title: String,
+    /// Synthesized markdown content for the knowledge item.
+    pub content: String,
+    /// Optional tags.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

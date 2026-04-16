@@ -11,7 +11,7 @@ use crate::register_browser_tools;
 use crate::{
     ArtifactEditInput, ArtifactGetInput, ArtifactListInput, ArtifactSaveInput, EmptyInput, IdInput,
     MemoryReadInput, MemoryToolDreamAnalyzeInput, MemoryToolDreamApplyInput,
-    MemoryToolDreamPreviewInput, MemoryToolExtractInput, MemoryToolForgetInput,
+    MemoryToolDreamPreviewInput, MemoryToolDreamPromoteInput, MemoryToolExtractInput, MemoryToolForgetInput,
     MemoryToolListInput, MemoryToolPinInput, MemoryToolPromoteInput, MemoryToolSearchInput,
     MemoryToolStatsInput, MemoryToolStoreInput, MemoryWriteInput, SessionIdInput,
     SessionRenameInput, TaskAddHistoryInput, TaskCreateInput, TaskUpdateInput, TeamDelegateInput,

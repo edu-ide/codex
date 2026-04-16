@@ -42,3 +42,7 @@ enum_dispatch = "0.3"
 inventory = "0.3"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
+uuid = { workspace = true, features = ["v4"] }
+codex-core = { version = "0.0.0", path = "../core" }
+codex-protocol = { version = "0.0.0", path = "../protocol" }
+codex-ilhae = { version = "0.1.0", path = "../ilhae" }
