@@ -1,3 +1,5 @@
+use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_app_server_protocol::MemoryResetResponse;
 use crate::bottom_pane::FeedbackAudience;
 #[cfg(test)]
 use crate::legacy_core::append_message_history_entry;
@@ -502,7 +504,7 @@ impl AcpConversationRuntime {
             updated_at: Self::to_unix_timestamp(&session.updated_at),
             status: ThreadStatus::Idle,
             path: None,
-            cwd: PathBuf::from(session.cwd),
+            cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(std::path::PathBuf::from(session.cwd)).unwrap(),
             cli_version: env!("CARGO_PKG_VERSION").to_string(),
             source: SessionSource::AppServer,
             agent_nickname: None,
@@ -706,7 +708,8 @@ impl AcpConversationRuntime {
             config.permissions.approval_policy.value(),
             config.approvals_reviewer,
             config.permissions.sandbox_policy.get().clone(),
-            config.cwd.clone().to_path_buf(),
+            config.cwd.clone(),
+            Vec::new(),
             config.model_reasoning_effort,
             config,
         )
@@ -726,7 +729,7 @@ impl AcpConversationRuntime {
                 updated_at: Utc::now().timestamp(),
                 status: ThreadStatus::Idle,
                 path: None,
-                cwd: config.cwd.clone().to_path_buf(),
+                cwd: config.cwd.clone(),
                 cli_version: env!("CARGO_PKG_VERSION").to_string(),
                 source: SessionSource::AppServer,
                 agent_nickname: None,
@@ -1489,6 +1492,24 @@ impl SelectedConversationRuntime {
         match self {
             Self::AppServer(_) => unreachable!("native app-server runtime should support {action}"),
             Self::Acp(runtime) => runtime.unsupported(action),
+        }
+    }
+
+    pub(crate) async fn memory_reset(&mut self) -> Result<()> {
+        match self {
+            Self::AppServer(runtime) => runtime.memory_reset().await,
+            Self::Acp(_) => self.unsupported("memory_reset"),
+        }
+    }
+
+    pub(crate) async fn thread_memory_mode_set(
+        &mut self,
+        thread_id: ThreadId,
+        mode: ThreadMemoryMode,
+    ) -> Result<()> {
+        match self {
+            Self::AppServer(runtime) => runtime.thread_memory_mode_set(thread_id, mode).await,
+            Self::Acp(_) => self.unsupported("thread_memory_mode_set"),
         }
     }
 

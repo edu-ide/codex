@@ -627,6 +627,7 @@ async fn start_session_lookup_runtime(
         loader_overrides,
         cloud_requirements,
         feedback,
+        None,
         environment_manager,
     )
     .await?;
@@ -685,6 +686,7 @@ async fn start_active_conversation_runtime(
         loader_overrides,
         cloud_requirements,
         feedback,
+        None,
         environment_manager,
     )
     .await?;
