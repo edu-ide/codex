@@ -567,13 +567,14 @@ impl AcpConversationRuntime {
             availability_nux: None,
             supported_in_api: true,
             input_modalities: vec![InputModality::Text, InputModality::Image],
+            additional_speed_tiers: Vec::new(),
         }
     }
 
     async fn bootstrap(&mut self, config: &Config) -> Result<AppServerBootstrap> {
         let default_model = self.current_model(config);
         Ok(AppServerBootstrap {
-            account_auth_mode: None,
+            requires_openai_auth: false,
             account_email: None,
             auth_mode: None,
             status_account_display: None,
@@ -582,7 +583,6 @@ impl AcpConversationRuntime {
             feedback_audience: FeedbackAudience::External,
             has_chatgpt_account: false,
             available_models: vec![self.minimal_model_preset(config)],
-            rate_limit_snapshots: Vec::new(),
         })
     }
 
@@ -912,6 +912,9 @@ impl ConversationRuntime for AcpConversationRuntime {
             items: Vec::new(),
             status: TurnStatus::InProgress,
             error: None,
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
         };
         self.pending_events.push_back(AppServerEvent::ServerNotification(
             ServerNotification::TurnStarted(TurnStartedNotification {
@@ -971,6 +974,9 @@ impl ConversationRuntime for AcpConversationRuntime {
                                         codex_error_info: None,
                                         additional_details: None,
                                     }),
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
                                 },
                             }),
                         ));
@@ -1321,6 +1327,9 @@ impl ConversationRuntime for AcpConversationRuntime {
                         items: Vec::new(),
                         status: final_status,
                         error: None,
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
                     },
                 }),
             ));
@@ -1371,6 +1380,9 @@ impl ConversationRuntime for AcpConversationRuntime {
                             items: Vec::new(),
                             status: TurnStatus::Interrupted,
                             error: None,
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
                         },
                     }),
                 ));
@@ -1473,6 +1485,21 @@ impl SelectedConversationRuntime {
         match self {
             Self::AppServer(_) => unreachable!("native app-server runtime should support {action}"),
             Self::Acp(runtime) => runtime.unsupported(action),
+        }
+    }
+
+    pub(crate) async fn start_thread_with_session_start_source(
+        &mut self,
+        config: &Config,
+        session_start_source: Option<ThreadStartSource>,
+    ) -> Result<AppServerStartedThread> {
+        match self {
+            Self::AppServer(runtime) => {
+                runtime
+                    .start_thread_with_session_start_source(config, session_start_source)
+                    .await
+            }
+            Self::Acp(runtime) => runtime.start_thread(config).await,
         }
     }
 
@@ -2141,6 +2168,9 @@ fn brain_messages_to_turns(
                     }],
                     status: TurnStatus::Completed,
                     error: None,
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
                 });
             }
             "assistant" => {
@@ -2158,6 +2188,9 @@ fn brain_messages_to_turns(
                         items: vec![item],
                         status: TurnStatus::Completed,
                         error: None,
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
                     });
                 }
             }
@@ -2294,6 +2327,7 @@ impl AppServerSession {
             availability_nux: None,
             supported_in_api: true,
             input_modalities: vec![InputModality::Text, InputModality::Image],
+            additional_speed_tiers: Vec::new(),
         }
     }
 
@@ -3458,6 +3492,9 @@ mod tests {
                     ],
                     status: TurnStatus::Completed,
                     error: None,
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
                     started_at: None,
                     completed_at: None,
                     duration_ms: None,

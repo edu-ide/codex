@@ -142,6 +142,7 @@ impl SlashCommand {
             SlashCommand::Logout => "log out of Codex",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
+            SlashCommand::BgDream => "",
         }
     }
 
@@ -265,6 +266,7 @@ impl SlashCommand {
             SlashCommand::Statusline => false,
             SlashCommand::Theme => false,
             SlashCommand::Title => false,
+            SlashCommand::BgDream => false,
         }
     }
 

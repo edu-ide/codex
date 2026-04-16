@@ -511,7 +511,7 @@ impl StatusHistoryCell {
         } else {
             format!("Custom ({sandbox}, {approval})")
         };
-        let agents_summary = compose_agents_summary(config);
+        let agents_summary = compose_agents_summary(config, &[]);
         let execution_loop = Self::execution_loop_data();
         let workflow_surface = Self::workflow_surface_data(&config.cwd);
         let model_provider = format_model_provider(config);

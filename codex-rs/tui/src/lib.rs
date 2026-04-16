@@ -650,6 +650,7 @@ async fn start_active_conversation_runtime(
     loader_overrides: LoaderOverrides,
     cloud_requirements: CloudRequirementsLoader,
     feedback: codex_feedback::CodexFeedback,
+    environment_manager: Arc<EnvironmentManager>,
 ) -> color_eyre::Result<SelectedConversationRuntime> {
     let capability_profile = current_native_backend_capability_profile();
     let use_acp_runtime = matches!(app_server_target, AppServerTarget::Embedded)
@@ -673,6 +674,7 @@ async fn start_active_conversation_runtime(
         loader_overrides,
         cloud_requirements,
         feedback,
+        environment_manager,
     )
     .await?;
     Ok(SelectedConversationRuntime::from_native(
@@ -1286,7 +1288,7 @@ async fn run_ratatui_app(
         )
         .await
         {
-            Ok(app_server) => AppServerSession::new(app_server)
+            Ok(app_server) => NativeAppServerSession::new(app_server)
                 .with_remote_cwd_override(remote_cwd_override.clone()),
             Err(err) => {
                 terminal_restore_guard.restore_silently();
@@ -1645,6 +1647,7 @@ async fn run_ratatui_app(
         loader_overrides,
         cloud_requirements.clone(),
         feedback.clone(),
+        environment_manager.clone(),
     )
     .await
     {

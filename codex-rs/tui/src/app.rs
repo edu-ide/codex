@@ -11616,10 +11616,3 @@ guardian_approval = true
         );
     }
 }
-ct("summary");
-        assert_eq!(
-            summary.resume_command,
-            Some("codex resume my-session".to_string())
-        );
-    }
-}

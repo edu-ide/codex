@@ -369,6 +369,7 @@ impl ChatWidget {
                     );
                 }
             }
+            SlashCommand::BgDream | SlashCommand::Help => {},
             SlashCommand::TestApproval => {
                 use std::collections::HashMap;
 
@@ -570,11 +571,11 @@ impl ChatWidget {
                     }
                     "on" => {
                         self.app_event_tx.send(AppEvent::SetIlhaeDreamMode { enabled: Some(true) });
-                        self.add_history_message("✅ Dream mode enabled.");
+                        self.add_error_message("✅ Dream mode enabled.".to_string());
                     }
                     "off" => {
                         self.app_event_tx.send(AppEvent::SetIlhaeDreamMode { enabled: Some(false) });
-                        self.add_history_message("🚫 Dream mode disabled.");
+                        self.add_error_message("🚫 Dream mode disabled.".to_string());
                     }
                     _ => {
                         self.add_error_message("Usage: /dream [start|on|off]".to_string());
@@ -600,11 +601,11 @@ impl ChatWidget {
                     }
                     "on" => {
                         self.app_event_tx.send(AppEvent::SetIlhaeEmbedMode { enabled: Some(true) });
-                        self.add_history_message("✅ Embed mode enabled.");
+                        self.add_error_message("✅ Embed mode enabled.".to_string());
                     }
                     "off" => {
                         self.app_event_tx.send(AppEvent::SetIlhaeEmbedMode { enabled: Some(false) });
-                        self.add_history_message("🚫 Embed mode disabled.");
+                        self.add_error_message("🚫 Embed mode disabled.".to_string());
                     }
                     _ => {
                         self.add_error_message("Usage: /embed [start|status|on|off]".to_string());

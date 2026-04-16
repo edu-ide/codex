@@ -7546,6 +7546,7 @@ impl ChatWidget {
             availability_nux: None,
             supported_in_api: true,
             input_modalities: vec![InputModality::Text, InputModality::Image],
+            additional_speed_tiers: Vec::new(),
         }])
     }
 
