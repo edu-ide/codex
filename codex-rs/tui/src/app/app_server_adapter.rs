@@ -12,6 +12,7 @@ should shrink and eventually disappear.
 */
 
 use super::App;
+use crate::app_command::AppCommand;
 use crate::app_event::AppEvent;
 use crate::app_server_session::SelectedConversationRuntime as AppServerSession;
 use crate::app_server_session::app_server_rate_limit_snapshot_to_core;
@@ -159,7 +160,7 @@ impl App {
 
     async fn handle_server_notification_event(
         &mut self,
-        _app_server_client: &AppServerSession,
+        app_server_client: &AppServerSession,
         notification: ServerNotification,
     ) {
         match &notification {
@@ -192,6 +193,19 @@ impl App {
                         Some(AuthMode::Chatgpt) | Some(AuthMode::ChatgptAuthTokens)
                     ),
                 );
+                return;
+            }
+            ServerNotification::ExternalAgentConfigImportCompleted(_) => {
+                let cwd = self.chat_widget.config_ref().cwd.to_path_buf();
+                if let Err(err) = self.refresh_in_memory_config_from_disk().await {
+                    tracing::warn!(
+                        error = %err,
+                        "failed to refresh config after external agent config import"
+                    );
+                }
+                self.chat_widget.refresh_plugin_mentions();
+                self.chat_widget.submit_op(AppCommand::reload_user_config());
+                self.fetch_plugins_list(app_server_client, cwd);
                 return;
             }
             _ => {}
@@ -423,6 +437,7 @@ fn server_notification_thread_target(
         | ServerNotification::AccountUpdated(_)
         | ServerNotification::AccountRateLimitsUpdated(_)
         | ServerNotification::AppListUpdated(_)
+        | ServerNotification::ExternalAgentConfigImportCompleted(_)
         | ServerNotification::DeprecationNotice(_)
         | ServerNotification::ConfigWarning(_)
         | ServerNotification::FuzzyFileSearchSessionUpdated(_)

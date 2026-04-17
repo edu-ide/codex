@@ -4093,6 +4093,11 @@
       "title": "ExternalAgentConfigDetectResponse",
       "type": "object"
     },
+    "ExternalAgentConfigImportCompletedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ExternalAgentConfigImportCompletedNotification",
+      "type": "object"
+    },
     "ExternalAgentConfigImportParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5325,6 +5330,14 @@
         "scope": {
           "$ref": "#/definitions/HookScope"
         },
+        "source": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/HookSource"
+            }
+          ],
+          "default": "unknown"
+        },
         "sourcePath": {
           "$ref": "#/definitions/AbsolutePathBuf"
         },
@@ -5360,6 +5373,19 @@
       "enum": [
         "thread",
         "turn"
+      ],
+      "type": "string"
+    },
+    "HookSource": {
+      "enum": [
+        "system",
+        "user",
+        "project",
+        "mdm",
+        "sessionFlags",
+        "legacyManagedConfigFile",
+        "legacyManagedConfigMdm",
+        "unknown"
       ],
       "type": "string"
     },
@@ -9480,6 +9506,26 @@
             "params"
           ],
           "title": "App/list/updatedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "externalAgentConfig/import/completed"
+              ],
+              "title": "ExternalAgentConfig/import/completedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ExternalAgentConfigImportCompletedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "ExternalAgentConfig/import/completedNotification",
           "type": "object"
         },
         {

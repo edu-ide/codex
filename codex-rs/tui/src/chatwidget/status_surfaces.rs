@@ -5,6 +5,8 @@
 
 use super::*;
 use codex_git_utils::{get_git_repo_root, resolve_root_git_project_for_trust};
+use codex_exec_server::LOCAL_FS;
+use codex_utils_absolute_path::AbsolutePathBuf;
 
 /// Items shown in the terminal title when the user has not configured a
 /// custom selection. Intentionally minimal: spinner + project name.
@@ -191,13 +193,19 @@ impl ChatWidget {
         let Some(repo_root) = get_git_repo_root(cwd) else {
             return "none";
         };
+        let Ok(cwd_absolute) = AbsolutePathBuf::from_absolute_path(cwd) else {
+            return "repo";
+        };
         let Some(trust_root) = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(resolve_root_git_project_for_trust(cwd))
+            tokio::runtime::Handle::current().block_on(resolve_root_git_project_for_trust(
+                LOCAL_FS.as_ref(),
+                &cwd_absolute,
+            ))
         }) else {
             return "repo";
         };
 
-        if repo_root == trust_root {
+        if repo_root.as_path() == trust_root.as_path() {
             "repo"
         } else {
             "linked"
@@ -590,7 +598,7 @@ impl ChatWidget {
                     Some(format!("{} used", format_tokens_compact(total)))
                 }
             }
-            StatusLineItem::ContextRemaining | StatusLineItem::ContextRemainingPercent => self
+            StatusLineItem::ContextRemaining => self
                 .status_line_context_remaining_percent()
                 .map(|remaining| format!("Context {remaining}% left")),
             StatusLineItem::ContextUsed => self

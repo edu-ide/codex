@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use codex_async_utils::OrCancelExt;
+use codex_connectors::metadata::connector_mention_slug;
 use codex_features::Feature;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::error::Result as CodexResult;
@@ -69,7 +70,7 @@ pub(crate) fn collect_explicit_app_ids_from_skill_items(
 
     let connector_slug_counts = build_connector_slug_counts(connectors);
     for connector in connectors {
-        let slug = connectors::connector_mention_slug(connector);
+        let slug = connector_mention_slug(connector);
         let connector_count = connector_slug_counts.get(&slug).copied().unwrap_or(0);
         let skill_count = skill_name_counts_lower.get(&slug).copied().unwrap_or(0);
         if connector_count == 1 && skill_count == 0 && mention_names_lower.contains(&slug) {
@@ -144,7 +145,7 @@ fn connector_inserted_in_messages(
         return true;
     }
 
-    let mention_slug = connectors::connector_mention_slug(connector);
+    let mention_slug = connector_mention_slug(connector);
     let connector_count = connector_slug_counts
         .get(&mention_slug)
         .copied()
@@ -196,8 +197,11 @@ pub(crate) async fn built_tools(
             connectors::with_app_enabled_state(connectors.clone(), &turn_context.config)
         });
     let connectors = if apps_enabled {
-        let connectors = connectors::merge_plugin_apps_with_accessible(
-            loaded_plugins.effective_apps(),
+        let connectors = codex_connectors::merge::merge_plugin_connectors_with_accessible(
+            loaded_plugins
+                .effective_apps()
+                .into_iter()
+                .map(|connector_id| connector_id.0),
             accessible_connectors.clone().unwrap_or_default(),
         );
         Some(connectors::with_app_enabled_state(

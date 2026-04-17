@@ -967,6 +967,9 @@
       ],
       "type": "object"
     },
+    "ExternalAgentConfigImportCompletedNotification": {
+      "type": "object"
+    },
     "FileChangeOutputDeltaNotification": {
       "properties": {
         "delta": {
@@ -1517,6 +1520,14 @@
         "scope": {
           "$ref": "#/definitions/HookScope"
         },
+        "source": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/HookSource"
+            }
+          ],
+          "default": "unknown"
+        },
         "sourcePath": {
           "$ref": "#/definitions/AbsolutePathBuf"
         },
@@ -1552,6 +1563,19 @@
       "enum": [
         "thread",
         "turn"
+      ],
+      "type": "string"
+    },
+    "HookSource": {
+      "enum": [
+        "system",
+        "user",
+        "project",
+        "mdm",
+        "sessionFlags",
+        "legacyManagedConfigFile",
+        "legacyManagedConfigMdm",
+        "unknown"
       ],
       "type": "string"
     },
@@ -4742,6 +4766,26 @@
         "params"
       ],
       "title": "App/list/updatedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "externalAgentConfig/import/completed"
+          ],
+          "title": "ExternalAgentConfig/import/completedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ExternalAgentConfigImportCompletedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "ExternalAgentConfig/import/completedNotification",
       "type": "object"
     },
     {

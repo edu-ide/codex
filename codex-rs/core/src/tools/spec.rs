@@ -245,7 +245,13 @@ pub(crate) fn build_specs_with_discoverable_tools(
         enabled_tools.dedup_by(|left, right| left.name == right.name);
         push_tool_spec(
             &mut builder,
-            create_code_mode_tool(&enabled_tools, &BTreeMap::new(), config.code_mode_only_enabled),
+            create_code_mode_tool(
+                &enabled_tools,
+                &BTreeMap::new(),
+                config.code_mode_only_enabled,
+                config.search_tool
+                    && deferred_mcp_tools.as_ref().is_some_and(|tools| !tools.is_empty()),
+            ),
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
         );

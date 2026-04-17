@@ -6,6 +6,7 @@ use std::path::Path;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerDisabledReason;
 use codex_config::types::McpServerTransportConfig;
+use codex_exec_server::LOCAL_FS;
 use codex_config::Constrained;
 use codex_config::ConstraintResult;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -93,6 +94,7 @@ pub async fn load_global_mcp_servers(
     // MCP servers defined in in-repo .codex/ folders.
     let cwd: Option<AbsolutePathBuf> = None;
     let config_layer_stack = load_config_layers_state(
+        LOCAL_FS.as_ref(),
         codex_home,
         cwd,
         &cli_overrides,

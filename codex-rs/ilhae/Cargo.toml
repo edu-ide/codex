@@ -94,7 +94,7 @@ brain-artifact-rs = { path = "../../../brain-artifact-rs" }
 brain-rs = { path = "../../../brain-rs" }
 a2a-rs = { path = "../../../a2a-rs", default-features = false, features = ["client", "server"] }
 a2a-acp-adapter = { path = "../../../a2a-acp-adapter" }
-codex-acp = { path = "../../../codex-acp" }
+codex-acp = { path = "../../../codex-acp-merge-rehearsal-20260417-224511" }
 dsrs = { package = "dspy-rs", path = "../../../DSRs/crates/dspy-rs" }
 shell-words = "1"
 walkdir = "2.5.0"

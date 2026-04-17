@@ -20,6 +20,12 @@ workspace = true
 [dependencies.codex-utils-absolute-path]
 workspace = true
 
+[dependencies.codex-exec-server]
+workspace = true
+
+[dependencies.codex-protocol]
+workspace = true
+
 [dependencies.futures]
 version = "0.3"
 default-features = false

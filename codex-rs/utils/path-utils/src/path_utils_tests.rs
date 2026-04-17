@@ -131,7 +131,6 @@ mod path_comparison {
         let verbatim_dir = PathBuf::from(format!(r"\\?\{}", dir.path().display()));
 
         assert!(paths_match_after_normalization(verbatim_dir, dir.path()));
->>>>>>> upstream/main
         Ok(())
     }
 }

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::codex::TurnContext;
 use crate::function_tool::FunctionCallError;
 use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::run_post_tool_use_hooks;
@@ -18,6 +19,8 @@ use crate::tools::context::ToolPayload;
 pub use codex_protocol::CommandCategory;
 pub use codex_protocol::CommandMeta;
 use codex_protocol::models::ResponseInputItem;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::SandboxPolicy;
 use codex_tools::ConfiguredToolSpec;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
@@ -77,12 +80,25 @@ pub trait ToolHandler: Send + Sync {
         None
     }
 
+    /// Creates an optional consumer for streamed tool argument diffs.
+    fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
+        None
+    }
+
     /// Perform the actual [ToolInvocation] and returns a [ToolOutput] containing
     /// the final output to return to the model.
     fn handle(
         &self,
         invocation: ToolInvocation,
     ) -> impl std::future::Future<Output = Result<Self::Output, FunctionCallError>> + Send;
+}
+
+/// Consumes streamed argument diffs for a tool call and emits protocol events
+/// derived from partial tool input.
+pub(crate) trait ToolArgumentDiffConsumer: Send {
+    /// Consume the next argument diff for a tool call.
+    fn consume_diff(&mut self, turn: &TurnContext, call_id: String, diff: &str)
+    -> Option<EventMsg>;
 }
 
 pub(crate) struct AnyToolResult {
@@ -135,6 +151,8 @@ trait AnyToolHandler: Send + Sync {
         result: &dyn ToolOutput,
     ) -> Option<PostToolUsePayload>;
 
+    fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>>;
+
     fn handle_any<'a>(
         &'a self,
         invocation: ToolInvocation,
@@ -164,6 +182,10 @@ where
         result: &dyn ToolOutput,
     ) -> Option<PostToolUsePayload> {
         ToolHandler::post_tool_use_payload(self, call_id, payload, result)
+    }
+
+    fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
+        ToolHandler::create_diff_consumer(self)
     }
 
     fn handle_any<'a>(
@@ -305,6 +327,13 @@ impl ToolRegistry {
     /// and dynamically load specialized toolsets or generated skills.
     pub async fn sync_with_brain(&self) -> Result<(), String> {
         brain_bridge::sync_with_brain_cli().await
+    }
+
+    pub(crate) fn create_diff_consumer(
+        &self,
+        name: &ToolName,
+    ) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
+        self.handler(name)?.create_diff_consumer()
     }
 
     pub(crate) async fn dispatch_any(

@@ -20,9 +20,6 @@ workspace = true
 [dependencies.codex-execpolicy]
 workspace = true
 
-[dependencies.codex-git-utils]
-workspace = true
-
 [dependencies.codex-utils-absolute-path]
 workspace = true
 
@@ -99,6 +96,9 @@ ignored = [ "icu_provider", "strum",]
 workspace = true
 
 [dependencies.encoding_rs]
+workspace = true
+
+[dependencies.globset]
 workspace = true
 
 [dependencies.thiserror]

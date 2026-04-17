@@ -69,10 +69,6 @@ pub(crate) enum StatusLineItem {
     /// Percentage of context window remaining.
     ContextRemaining,
 
-    /// Percentage of context window remaining.
-    #[strum(to_string = "context-remaining-percent")]
-    ContextRemainingPercent,
-
     /// Percentage of context window used.
     ///
     /// Also accepts the legacy `context-usage` config value.
@@ -123,9 +119,6 @@ impl StatusLineItem {
             StatusLineItem::ProjectRoot => "Project root directory (omitted when unavailable)",
             StatusLineItem::GitBranch => "Current Git branch (omitted when unavailable)",
             StatusLineItem::ContextRemaining => {
-                "Percentage of context window remaining (omitted when unknown)"
-            }
-            StatusLineItem::ContextRemainingPercent => {
                 "Percentage of context window remaining (omitted when unknown)"
             }
             StatusLineItem::ContextUsed => {
@@ -327,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn context_remaining_is_separate_selectable_id() {
+    fn context_remaining_is_selectable_id() {
         assert_eq!(
             "context-remaining".parse::<StatusLineItem>(),
             Ok(StatusLineItem::ContextRemaining)
@@ -335,18 +328,6 @@ mod tests {
         assert_eq!(
             StatusLineItem::ContextRemaining.to_string(),
             "context-remaining"
-        );
-    }
-
-    #[test]
-    fn context_remaining_percent_is_separate_selectable_id() {
-        assert_eq!(
-            StatusLineItem::ContextRemainingPercent.to_string(),
-            "context-remaining-percent"
-        );
-        assert_eq!(
-            "context-remaining-percent".parse::<StatusLineItem>(),
-            Ok(StatusLineItem::ContextRemainingPercent)
         );
     }
 

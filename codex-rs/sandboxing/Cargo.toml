@@ -35,6 +35,9 @@ workspace = true
 [dependencies.serde_json]
 workspace = true
 
+[dependencies.regex-lite]
+workspace = true
+
 [dependencies.tracing]
 version = "0.1.44"
 features = [ "log",]

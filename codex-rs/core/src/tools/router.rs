@@ -7,6 +7,7 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::AnyToolResult;
 use crate::tools::registry::ToolHandler;
+use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::build_specs_with_discoverable_tools;
 use codex_tools::ToolsConfig;
@@ -180,6 +181,13 @@ impl ToolRouter {
             }),
             _ => None,
         })
+    }
+
+    pub(crate) fn create_diff_consumer(
+        &self,
+        tool_name: &ToolName,
+    ) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
+        self.registry.create_diff_consumer(tool_name)
     }
 
     fn configured_tool_supports_parallel(&self, tool_name: &ToolName) -> bool {

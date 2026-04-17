@@ -268,7 +268,7 @@ use crate::mcp::McpManager;
 use crate::memories;
 use crate::network_policy_decision::execpolicy_network_rule_amendment;
 use crate::plugins::PluginsManager;
-use crate::project_doc::get_user_instructions;
+use crate::agents_md::AgentsMdManager;
 use crate::rollout::RolloutRecorder;
 use crate::rollout::RolloutRecorderParams;
 use crate::rollout::map_session_init_error;
@@ -527,7 +527,9 @@ impl Codex {
             config.startup_warnings.push(message);
         }
 
-        let user_instructions = get_user_instructions(&config, environment.as_deref()).await;
+        let user_instructions = AgentsMdManager::new(&config)
+            .user_instructions(environment.as_deref())
+            .await;
 
         let exec_policy = if crate::guardian::is_guardian_reviewer_source(&session_source) {
             // Guardian review should rely on the built-in shell safety checks,
@@ -1087,6 +1089,14 @@ impl TurnContext {
     }
 
     pub(crate) fn to_turn_context_item(&self) -> TurnContextItem {
+        let legacy_file_system_sandbox_policy = FileSystemSandboxPolicy::from_legacy_sandbox_policy(
+            self.sandbox_policy.get(),
+            &self.cwd,
+        );
+        let file_system_sandbox_policy = (self.file_system_sandbox_policy
+            != legacy_file_system_sandbox_policy)
+            .then(|| self.file_system_sandbox_policy.clone());
+
         TurnContextItem {
             turn_id: Some(self.sub_id.clone()),
             trace_id: self.trace_id.clone(),
@@ -1096,6 +1106,7 @@ impl TurnContext {
             approval_policy: self.approval_policy.value(),
             sandbox_policy: self.sandbox_policy.get().clone(),
             network: self.turn_context_network_item(),
+            file_system_sandbox_policy,
             model: self.model_info.slug.clone(),
             personality: self.personality,
             collaboration_mode: Some(self.collaboration_mode.clone()),
@@ -2429,6 +2440,11 @@ impl Session {
     pub(crate) async fn total_token_usage(&self) -> Option<TokenUsage> {
         let state = self.state.lock().await;
         state.token_info().map(|info| info.total_token_usage)
+    }
+
+    pub(crate) async fn token_usage_info(&self) -> Option<TokenUsageInfo> {
+        let state = self.state.lock().await;
+        state.token_info()
     }
 
     pub(crate) async fn get_estimated_token_count(
@@ -5174,6 +5190,7 @@ mod handlers {
                 }
             };
             let config_layer_stack = match load_config_layers_state(
+                codex_exec_server::LOCAL_FS.as_ref(),
                 &codex_home,
                 Some(cwd_abs.clone()),
                 empty_cli_overrides,
@@ -6594,6 +6611,7 @@ async fn try_run_sampling_request(
                     error_or_panic("OutputTextDelta without active item".to_string());
                 }
             }
+            ResponseEvent::ToolCallInputDelta { .. } => {}
             ResponseEvent::ReasoningSummaryDelta {
                 delta,
                 summary_index,

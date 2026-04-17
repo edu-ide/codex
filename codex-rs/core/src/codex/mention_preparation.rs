@@ -52,8 +52,8 @@ pub(super) async fn prepare_turn_mentions_and_injections(
 ) -> TurnPreparation {
     let mentioned_plugins = collect_explicit_plugin_mentions(input, plugin_capability_summaries);
     let available_connectors = if turn_context.apps_enabled() {
-        let connectors = crate::connectors::merge_plugin_apps_with_accessible(
-            effective_apps,
+        let connectors = codex_connectors::merge::merge_plugin_connectors_with_accessible(
+            effective_apps.into_iter().map(|connector_id| connector_id.0),
             crate::connectors::accessible_connectors_from_mcp_tools(mcp_tools),
         );
         crate::connectors::with_app_enabled_state(connectors, &turn_context.config)

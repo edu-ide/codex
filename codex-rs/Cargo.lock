@@ -1552,6 +1552,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake2"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
+dependencies = [
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2229,7 +2238,7 @@ dependencies = [
  "codex-login",
  "codex-plugin",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "os_info",
  "pretty_assertions",
  "serde",
@@ -2300,6 +2309,7 @@ dependencies = [
  "codex-cloud-requirements",
  "codex-config",
  "codex-core",
+ "codex-core-plugins",
  "codex-exec-server",
  "codex-features",
  "codex-feedback",
@@ -2317,7 +2327,7 @@ dependencies = [
  "codex-state",
  "codex-thread-store",
  "codex-tools",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-cargo-bin",
  "codex-utils-cli",
  "codex-utils-json-to-toml",
@@ -2384,10 +2394,9 @@ dependencies = [
  "anyhow",
  "clap",
  "codex-experimental-api-macros",
- "codex-git-utils",
  "codex-protocol",
  "codex-shell-command",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-cargo-bin",
  "inventory",
  "pretty_assertions",
@@ -2434,7 +2443,7 @@ dependencies = [
  "assert_cmd",
  "assert_matches",
  "codex-exec-server",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-cargo-bin",
  "pretty_assertions",
  "similar",
@@ -2455,8 +2464,8 @@ dependencies = [
  "codex-linux-sandbox",
  "codex-sandboxing",
  "codex-shell-escalation",
- "codex-utils-absolute-path",
- "codex-utils-home-dir",
+ "codex-utils-absolute-path 0.0.0",
+ "codex-utils-home-dir 0.0.0",
  "dotenvy",
  "tempfile",
  "tokio",
@@ -2528,6 +2537,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "codex-app-server-protocol",
  "codex-config",
  "codex-connectors",
  "codex-core",
@@ -2568,6 +2578,7 @@ dependencies = [
  "codex-login",
  "codex-mcp",
  "codex-mcp-server",
+ "codex-model-provider",
  "codex-protocol",
  "codex-responses-api-proxy",
  "codex-rmcp-client",
@@ -2576,7 +2587,7 @@ dependencies = [
  "codex-stdio-to-uds",
  "codex-terminal-detection",
  "codex-tui",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-cargo-bin",
  "codex-utils-cli",
  "codex-utils-path",
@@ -2736,12 +2747,11 @@ dependencies = [
  "codex-app-server-protocol",
  "codex-execpolicy",
  "codex-features",
- "codex-git-utils",
  "codex-model-provider-info",
  "codex-network-proxy",
  "codex-protocol",
- "codex-utils-absolute-path",
- "dunce",
+ "codex-utils-absolute-path 0.0.0",
+ "codex-utils-path",
  "futures",
  "multimap",
  "pretty_assertions",
@@ -2794,6 +2804,7 @@ dependencies = [
  "codex-code-mode",
  "codex-config",
  "codex-connectors",
+ "codex-core-plugins",
  "codex-core-skills",
  "codex-exec-server",
  "codex-execpolicy",
@@ -2804,6 +2815,7 @@ dependencies = [
  "codex-instructions",
  "codex-login",
  "codex-mcp",
+ "codex-model-provider",
  "codex-model-provider-info",
  "codex-models-manager",
  "codex-network-proxy",
@@ -2822,10 +2834,10 @@ dependencies = [
  "codex-test-binary-support",
  "codex-thread-store",
  "codex-tools",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-cache",
  "codex-utils-cargo-bin",
- "codex-utils-home-dir",
+ "codex-utils-home-dir 0.0.0",
  "codex-utils-image",
  "codex-utils-output-truncation",
  "codex-utils-path",
@@ -2838,6 +2850,7 @@ dependencies = [
  "codex-windows-sandbox",
  "core-foundation 0.9.4",
  "core_test_support",
+ "crypto_box",
  "csv",
  "ctor 0.6.3",
  "dirs 6.0.0",
@@ -2869,6 +2882,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "sha1",
+ "sha2 0.10.9",
  "shlex",
  "similar",
  "tempfile",
@@ -2897,6 +2911,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-core-plugins"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "codex-app-server-protocol",
+ "codex-config",
+ "codex-core-skills",
+ "codex-exec-server",
+ "codex-git-utils",
+ "codex-login",
+ "codex-plugin",
+ "codex-protocol",
+ "codex-utils-absolute-path 0.0.0",
+ "codex-utils-plugins",
+ "dirs 6.0.0",
+ "pretty_assertions",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "codex-core-skills"
 version = "0.0.0"
 dependencies = [
@@ -2910,7 +2952,7 @@ dependencies = [
  "codex-otel",
  "codex-protocol",
  "codex-skills",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-plugins",
  "dirs 6.0.0",
  "dunce",
@@ -2958,7 +3000,7 @@ dependencies = [
  "codex-otel",
  "codex-protocol",
  "codex-responses-api-proxy",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-cargo-bin",
  "codex-utils-cli",
  "codex-utils-oss",
@@ -2997,7 +3039,7 @@ dependencies = [
  "codex-protocol",
  "codex-sandboxing",
  "codex-test-binary-support",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-pty",
  "ctor 0.6.3",
  "futures",
@@ -3020,7 +3062,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "multimap",
  "pretty_assertions",
  "serde",
@@ -3107,7 +3149,9 @@ name = "codex-git-utils"
 version = "0.0.0"
 dependencies = [
  "assert_matches",
- "codex-utils-absolute-path",
+ "codex-exec-server",
+ "codex-protocol",
+ "codex-utils-absolute-path 0.0.0",
  "futures",
  "once_cell",
  "pretty_assertions",
@@ -3129,7 +3173,7 @@ dependencies = [
  "chrono",
  "codex-config",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "futures",
  "pretty_assertions",
  "regex",
@@ -3211,7 +3255,7 @@ dependencies = [
 name = "codex-install-context"
 version = "0.0.0"
 dependencies = [
- "codex-utils-home-dir",
+ "codex-utils-home-dir 0.0.0",
  "pretty_assertions",
  "tempfile",
 ]
@@ -3243,7 +3287,8 @@ dependencies = [
  "codex-core",
  "codex-protocol",
  "codex-sandboxing",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
+ "globset",
  "landlock",
  "libc",
  "pkg-config",
@@ -3278,7 +3323,6 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
- "codex-api",
  "codex-app-server-protocol",
  "codex-client",
  "codex-config",
@@ -3324,7 +3368,7 @@ dependencies = [
  "codex-plugin",
  "codex-protocol",
  "codex-rmcp-client",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-plugins",
  "futures",
  "pretty_assertions",
@@ -3358,7 +3402,7 @@ dependencies = [
  "codex-models-manager",
  "codex-protocol",
  "codex-shell-command",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-cli",
  "codex-utils-json-to-toml",
  "core_test_support",
@@ -3379,13 +3423,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-model-provider"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "codex-api",
+ "codex-login",
+ "codex-model-provider-info",
+ "codex-protocol",
+ "http 1.4.0",
+ "pretty_assertions",
+]
+
+[[package]]
 name = "codex-model-provider-info"
 version = "0.0.0"
 dependencies = [
  "codex-api",
  "codex-app-server-protocol",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "http 1.4.0",
  "maplit",
  "pretty_assertions",
@@ -3407,11 +3464,12 @@ dependencies = [
  "codex-config",
  "codex-feedback",
  "codex-login",
+ "codex-model-provider",
  "codex-model-provider-info",
  "codex-otel",
  "codex-protocol",
  "codex-response-debug-context",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-output-truncation",
  "codex-utils-template",
  "core_test_support",
@@ -3434,8 +3492,8 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
- "codex-utils-absolute-path",
- "codex-utils-home-dir",
+ "codex-utils-absolute-path 0.0.0",
+ "codex-utils-home-dir 0.0.0",
  "codex-utils-rustls-provider",
  "globset",
  "pretty_assertions",
@@ -3484,7 +3542,7 @@ dependencies = [
  "codex-api",
  "codex-app-server-protocol",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-string",
  "eventsource-stream",
  "gethostname",
@@ -3512,7 +3570,7 @@ dependencies = [
 name = "codex-plugin"
 version = "0.0.0"
 dependencies = [
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-plugins",
  "thiserror 2.0.18",
 ]
@@ -3534,13 +3592,13 @@ dependencies = [
  "chrono",
  "codex-async-utils",
  "codex-execpolicy",
- "codex-git-utils",
  "codex-network-proxy",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-image",
  "codex-utils-string",
  "codex-utils-template",
  "encoding_rs",
+ "globset",
  "icu_decimal",
  "icu_locale_core",
  "icu_provider",
@@ -3613,7 +3671,7 @@ dependencies = [
  "codex-keyring-store",
  "codex-protocol",
  "codex-utils-cargo-bin",
- "codex-utils-home-dir",
+ "codex-utils-home-dir 0.0.0",
  "codex-utils-pty",
  "futures",
  "keyring",
@@ -3667,10 +3725,11 @@ version = "0.0.0"
 dependencies = [
  "codex-network-proxy",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "dunce",
  "libc",
  "pretty_assertions",
+ "regex-lite",
  "serde_json",
  "tempfile",
  "tracing",
@@ -3706,7 +3765,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "once_cell",
  "pretty_assertions",
  "regex",
@@ -3727,7 +3786,7 @@ dependencies = [
  "async-trait",
  "clap",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "libc",
  "pretty_assertions",
  "serde",
@@ -3744,7 +3803,7 @@ dependencies = [
 name = "codex-skills"
 version = "0.0.0"
 dependencies = [
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "include_dir",
  "thiserror 2.0.18",
 ]
@@ -3810,11 +3869,16 @@ dependencies = [
  "codex-rollout",
  "codex-state",
  "pretty_assertions",
+ "prost 0.14.3",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
  "uuid",
 ]
 
@@ -3826,7 +3890,7 @@ dependencies = [
  "codex-code-mode",
  "codex-features",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-pty",
  "pretty_assertions",
  "rmcp",
@@ -3856,6 +3920,7 @@ dependencies = [
  "codex-cli",
  "codex-cloud-requirements",
  "codex-config",
+ "codex-connectors",
  "codex-core",
  "codex-exec-server",
  "codex-features",
@@ -3876,7 +3941,7 @@ dependencies = [
  "codex-shell-command",
  "codex-state",
  "codex-terminal-detection",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-approval-presets",
  "codex-utils-cargo-bin",
  "codex-utils-cli",
@@ -3957,6 +4022,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-utils-absolute-path"
+version = "1.1.0"
+dependencies = [
+ "dirs 6.0.0",
+ "dunce",
+ "schemars 0.8.22",
+ "serde",
+ "ts-rs",
+]
+
+[[package]]
 name = "codex-utils-approval-presets"
 version = "0.0.0"
 dependencies = [
@@ -4004,10 +4080,18 @@ version = "0.0.0"
 name = "codex-utils-home-dir"
 version = "0.0.0"
 dependencies = [
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "dirs 6.0.0",
  "pretty_assertions",
  "tempfile",
+]
+
+[[package]]
+name = "codex-utils-home-dir"
+version = "1.1.0"
+dependencies = [
+ "codex-utils-absolute-path 1.1.0",
+ "dirs 6.0.0",
 ]
 
 [[package]]
@@ -4056,7 +4140,7 @@ dependencies = [
 name = "codex-utils-path"
 version = "0.0.0"
 dependencies = [
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "dunce",
  "pretty_assertions",
  "tempfile",
@@ -4068,7 +4152,7 @@ version = "0.0.0"
 dependencies = [
  "codex-exec-server",
  "codex-login",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "serde",
  "serde_json",
  "tempfile",
@@ -4116,7 +4200,7 @@ dependencies = [
  "codex-core",
  "codex-model-provider-info",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "pretty_assertions",
 ]
 
@@ -4168,7 +4252,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-pty",
  "codex-utils-string",
  "dirs-next",
@@ -4523,7 +4607,7 @@ dependencies = [
  "codex-model-provider-info",
  "codex-models-manager",
  "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.0.0",
  "codex-utils-cargo-bin",
  "ctor 0.6.3",
  "futures",
@@ -4738,6 +4822,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77727bb15fa921304124b128af125e7e3b968275d1b108b379190264f4423710"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "crypto_box"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16182b4f39a82ec8a6851155cc4c0cda3065bb1db33651726a29e1951de0f009"
+dependencies = [
+ "aead",
+ "blake2",
+ "crypto_secretbox",
+ "curve25519-dalek",
+ "salsa20",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "crypto_secretbox"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9d6cf87adf719ddf43a805e92c6870a531aedda35ff640442cbaf8674e141e1"
+dependencies = [
+ "aead",
+ "cipher",
+ "generic-array",
+ "poly1305",
+ "salsa20",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -6658,6 +6772,7 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
+ "zeroize",
 ]
 
 [[package]]
@@ -10168,7 +10283,7 @@ dependencies = [
  "heck 0.4.1",
  "itertools 0.11.0",
  "prost 0.12.6",
- "prost-types",
+ "prost-types 0.12.6",
 ]
 
 [[package]]
@@ -10182,7 +10297,7 @@ dependencies = [
  "pbjson",
  "pbjson-build",
  "prost 0.12.6",
- "prost-build",
+ "prost-build 0.12.6",
  "serde",
 ]
 
@@ -10739,7 +10854,26 @@ dependencies = [
  "petgraph 0.6.5",
  "prettyplease",
  "prost 0.12.6",
- "prost-types",
+ "prost-types 0.12.6",
+ "regex",
+ "syn 2.0.114",
+ "tempfile",
+]
+
+[[package]]
+name = "prost-build"
+version = "0.14.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
+dependencies = [
+ "heck 0.5.0",
+ "itertools 0.14.0",
+ "log",
+ "multimap",
+ "petgraph 0.8.3",
+ "prettyplease",
+ "prost 0.14.3",
+ "prost-types 0.14.3",
  "regex",
  "syn 2.0.114",
  "tempfile",
@@ -10778,6 +10912,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9091c90b0a32608e984ff2fa4091273cbdd755d54935c51d520887f4a1dbd5b0"
 dependencies = [
  "prost 0.12.6",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.14.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8991c4cbdb8bc5b11f0b074ffe286c30e523de90fee5ba8132f1399f23cb3dd7"
+dependencies = [
+ "prost 0.14.3",
 ]
 
 [[package]]
@@ -14718,8 +14861,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a286e33f82f8a1ee2df63f4fa35c0becf4a85a0cb03091a15fd7bf0b402dc94a"
 dependencies = [
  "async-trait",
+ "axum 0.8.8",
  "base64 0.22.1",
  "bytes",
+ "h2 0.4.13",
  "http 1.4.0",
  "http-body 1.0.1",
  "http-body-util",
@@ -14729,6 +14874,7 @@ dependencies = [
  "percent-encoding",
  "pin-project",
  "rustls-native-certs",
+ "socket2 0.6.2",
  "sync_wrapper 1.0.2",
  "tokio",
  "tokio-rustls 0.26.4",
@@ -14740,6 +14886,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tonic-build"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1882ac3bf5ef12877d7ed57aad87e75154c11931c2ba7e6cde5e22d63522c734"
+dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
 name = "tonic-prost"
 version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14748,6 +14906,22 @@ dependencies = [
  "bytes",
  "prost 0.14.3",
  "tonic",
+]
+
+[[package]]
+name = "tonic-prost-build"
+version = "0.14.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4556786613791cfef4ed134aa670b61a85cfcacf71543ef33e8d801abae988f"
+dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "prost-build 0.14.3",
+ "prost-types 0.14.3",
+ "quote",
+ "syn 2.0.114",
+ "tempfile",
+ "tonic-build",
 ]
 
 [[package]]
@@ -15889,8 +16063,8 @@ name = "web-search-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "codex-utils-absolute-path",
- "codex-utils-home-dir",
+ "codex-utils-absolute-path 1.1.0",
+ "codex-utils-home-dir 1.1.0",
  "regex-lite",
  "reqwest 0.12.28",
  "serde",
