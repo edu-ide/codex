@@ -780,42 +780,52 @@ pub async fn run_worker_loop(
             ilhae_dir.clone(),
         )
         .await;
-        
+
         // Spawn background LLM Dream if candidates are found and dream mode is enabled
         if settings_store.get().agent.dream_mode {
             if let Some(out) = outcome {
                 if out.dream_duplicate_candidates > 0 || out.dream_rare_candidates > 0 {
-                    info!("[HygieneLoop] Discovered dream candidates. Spawning background autonomous Dream Agent...");
+                    info!(
+                        "[HygieneLoop] Discovered dream candidates. Spawning background autonomous Dream Agent..."
+                    );
                     let exe_path = std::env::current_exe().unwrap_or_else(|_| "ilhae".into());
-                let dream_prompt = "너는 백그라운드 지식 정리(Dream) 에이전트야. \
+                    let dream_prompt = "너는 백그라운드 지식 정리(Dream) 에이전트야. \
                     [CRITICAL RULE: 절대 실제 소스코드(.ts, .rs, .py 등)나 프로젝트 파일을 수정/삭제하지 마라! 오직 지식 금고(.brain/ 또는 글로벌 메모리)의 마크다운(.md) 파일만 다루어야 한다.] \
                     사용자와 직접 소통하지 말고 즉시 `brain_memory_ops`의 `dream_preview`를 호출해서 \
                     산발된 기억 조각들과 중복 청크들을 진단해. \
                     그 후 `brain_artifact_ops`를 사용해 의미 있는 마크다운 파일(index.md 등)로 융합하고 중복을 제거해. \
                     모든 정리가 끝나면 마지막으로 반드시 `propose` 도구를 호출하여 agent: 'ilhae' (의식/메인 에이전트) 에게 '🌙 무의식(Dream) 에이전트가 백그라운드 지식 융합 및 정리를 완료했습니다!' 라고 A2A 보고 메시지를 전송한 뒤 세션을 종료해.";
-                
-                tokio::spawn(async move {
-                    match tokio::process::Command::new(exe_path)
-                        .arg("exec")
-                        .arg(dream_prompt)
-                        .env("ILHAE_DREAM_MODE", "1")
-                        .output()
-                        .await
-                    {
-                        Ok(output) => {
-                            if output.status.success() {
-                                info!("[HygieneLoop] Background Dream Agent completed successfully.");
-                            } else {
-                                warn!("[HygieneLoop] Background Dream Agent failed with exit code: {:?}", output.status.code());
+
+                    tokio::spawn(async move {
+                        match tokio::process::Command::new(exe_path)
+                            .arg("exec")
+                            .arg(dream_prompt)
+                            .env("ILHAE_DREAM_MODE", "1")
+                            .output()
+                            .await
+                        {
+                            Ok(output) => {
+                                if output.status.success() {
+                                    info!(
+                                        "[HygieneLoop] Background Dream Agent completed successfully."
+                                    );
+                                } else {
+                                    warn!(
+                                        "[HygieneLoop] Background Dream Agent failed with exit code: {:?}",
+                                        output.status.code()
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "[HygieneLoop] Failed to spawn Background Dream Agent: {}",
+                                    e
+                                );
                             }
                         }
-                        Err(e) => {
-                            warn!("[HygieneLoop] Failed to spawn Background Dream Agent: {}", e);
-                        }
-                    }
-                });
+                    });
+                }
             }
-        }
         }
 
         tokio::time::sleep(Duration::from_secs(DEFAULT_HYGIENE_POLL_INTERVAL_SECS)).await;

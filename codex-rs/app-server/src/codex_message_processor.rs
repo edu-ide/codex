@@ -201,7 +201,6 @@ use codex_app_server_protocol::build_turns_from_rollout_items;
 use codex_arg0::Arg0DispatchPaths;
 use codex_backend_client::Client as BackendClient;
 use codex_chatgpt::connectors;
-use codex_cloud_requirements::cloud_requirements_loader;
 use codex_config::types::McpServerTransportConfig;
 use codex_core::CodexThread;
 use codex_core::ForkSnapshot;
@@ -264,7 +263,6 @@ use codex_login::ServerOptions as LoginServerOptions;
 use codex_login::ShutdownHandle;
 use codex_login::auth::login_with_chatgpt_auth_tokens;
 use codex_login::complete_device_code_login;
-use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::login_with_api_key;
 use codex_login::request_device_code;
 use codex_login::run_login_server;
@@ -328,7 +326,6 @@ use codex_thread_store::ThreadSortKey as StoreThreadSortKey;
 use codex_thread_store::ThreadStore;
 use codex_thread_store::ThreadStoreError;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_json_to_toml::json_to_toml;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -353,6 +350,16 @@ use tracing::Instrument;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
+
+mod config_runtime;
+
+use self::config_runtime::collect_resume_override_mismatches;
+use self::config_runtime::derive_config_for_cwd;
+use self::config_runtime::derive_config_from_params;
+use self::config_runtime::merge_persisted_resume_metadata;
+use self::config_runtime::preserve_runtime_model_provider_base_url;
+use self::config_runtime::replace_cloud_requirements_loader;
+use self::config_runtime::sync_default_client_residency_requirement;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -480,6 +487,8 @@ struct ListenerTaskContext {
     thread_watch_manager: ThreadWatchManager,
     fallback_model_provider: String,
     codex_home: PathBuf,
+    runtime_model_provider_id: String,
+    runtime_model_provider_base_url: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2321,6 +2330,8 @@ impl CodexMessageProcessor {
             thread_watch_manager: self.thread_watch_manager.clone(),
             fallback_model_provider: self.config.model_provider_id.clone(),
             codex_home: self.config.codex_home.to_path_buf(),
+            runtime_model_provider_id: self.config.model_provider_id.clone(),
+            runtime_model_provider_base_url: self.config.model_provider.base_url.clone(),
         };
         let request_trace = request_context.request_trace();
         let runtime_feature_enablement = self.current_runtime_feature_enablement();
@@ -2439,6 +2450,13 @@ impl CodexMessageProcessor {
                 return;
             }
         };
+        preserve_runtime_model_provider_base_url(
+            &listener_task_context.runtime_model_provider_id,
+            listener_task_context
+                .runtime_model_provider_base_url
+                .as_deref(),
+            &mut config,
+        );
 
         // The user may have requested WorkspaceWrite or DangerFullAccess via
         // the command line, though in the process of deriving the Config, it
@@ -2520,6 +2538,13 @@ impl CodexMessageProcessor {
                     return;
                 }
             };
+            preserve_runtime_model_provider_base_url(
+                &listener_task_context.runtime_model_provider_id,
+                listener_task_context
+                    .runtime_model_provider_base_url
+                    .as_deref(),
+                &mut config,
+            );
         }
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
@@ -4134,7 +4159,7 @@ impl CodexMessageProcessor {
         let cloud_requirements = self.current_cloud_requirements();
         let cli_overrides = self.current_cli_overrides();
         let runtime_feature_enablement = self.current_runtime_feature_enablement();
-        let config = match derive_config_for_cwd(
+        let mut config = match derive_config_for_cwd(
             &cli_overrides,
             request_overrides,
             typesafe_overrides,
@@ -4152,6 +4177,11 @@ impl CodexMessageProcessor {
                 return;
             }
         };
+        preserve_runtime_model_provider_base_url(
+            &self.config.model_provider_id,
+            self.config.model_provider.base_url.as_deref(),
+            &mut config,
+        );
 
         let fallback_model_provider = config.model_provider_id.clone();
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
@@ -4695,7 +4725,7 @@ impl CodexMessageProcessor {
         let cloud_requirements = self.current_cloud_requirements();
         let cli_overrides = self.current_cli_overrides();
         let runtime_feature_enablement = self.current_runtime_feature_enablement();
-        let config = match derive_config_for_cwd(
+        let mut config = match derive_config_for_cwd(
             &cli_overrides,
             request_overrides,
             typesafe_overrides,
@@ -4714,6 +4744,11 @@ impl CodexMessageProcessor {
                 return;
             }
         };
+        preserve_runtime_model_provider_base_url(
+            &self.config.model_provider_id,
+            self.config.model_provider.base_url.as_deref(),
+            &mut config,
+        );
 
         let fallback_model_provider = config.model_provider_id.clone();
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
@@ -7636,6 +7671,8 @@ impl CodexMessageProcessor {
                 thread_watch_manager: self.thread_watch_manager.clone(),
                 fallback_model_provider: self.config.model_provider_id.clone(),
                 codex_home: self.config.codex_home.to_path_buf(),
+                runtime_model_provider_id: self.config.model_provider_id.clone(),
+                runtime_model_provider_base_url: self.config.model_provider.base_url.clone(),
             },
             conversation_id,
             connection_id,
@@ -7750,6 +7787,8 @@ impl CodexMessageProcessor {
                 thread_watch_manager: self.thread_watch_manager.clone(),
                 fallback_model_provider: self.config.model_provider_id.clone(),
                 codex_home: self.config.codex_home.to_path_buf(),
+                runtime_model_provider_id: self.config.model_provider_id.clone(),
+                runtime_model_provider_base_url: self.config.model_provider.base_url.clone(),
             },
             conversation_id,
             conversation,
@@ -7799,6 +7838,8 @@ impl CodexMessageProcessor {
             thread_watch_manager,
             fallback_model_provider,
             codex_home,
+            runtime_model_provider_id: _,
+            runtime_model_provider_base_url: _,
         } = listener_task_context;
         let outgoing_for_task = Arc::clone(&outgoing);
         tokio::spawn(async move {
@@ -8276,12 +8317,12 @@ impl CodexMessageProcessor {
             WindowsSandboxSetupMode::Elevated => CoreWindowsSandboxSetupMode::Elevated,
             WindowsSandboxSetupMode::Unelevated => CoreWindowsSandboxSetupMode::Unelevated,
         };
-        let config = Arc::clone(&self.config);
+        let runtime_config = Arc::clone(&self.config);
         let cloud_requirements = self.current_cloud_requirements();
         let command_cwd = params
             .cwd
             .map(PathBuf::from)
-            .unwrap_or_else(|| config.cwd.to_path_buf());
+            .unwrap_or_else(|| runtime_config.cwd.to_path_buf());
         let cli_overrides = self.current_cli_overrides();
         let runtime_feature_enablement = self.current_runtime_feature_enablement();
         let outgoing = Arc::clone(&self.outgoing);
@@ -8297,12 +8338,17 @@ impl CodexMessageProcessor {
                 },
                 Some(command_cwd.clone()),
                 &cloud_requirements,
-                &config.codex_home,
+                &runtime_config.codex_home,
                 &runtime_feature_enablement,
             )
             .await;
             let setup_result = match derived_config {
-                Ok(config) => {
+                Ok(mut config) => {
+                    preserve_runtime_model_provider_base_url(
+                        &runtime_config.model_provider_id,
+                        runtime_config.model_provider.base_url.as_deref(),
+                        &mut config,
+                    );
                     let setup_request = WindowsSandboxSetupRequest {
                         mode,
                         policy: config.permissions.sandbox_policy.get().clone(),
@@ -8651,148 +8697,6 @@ fn set_thread_status_and_interrupt_stale_turns(
     thread.status = status;
 }
 
-fn collect_resume_override_mismatches(
-    request: &ThreadResumeParams,
-    config_snapshot: &ThreadConfigSnapshot,
-) -> Vec<String> {
-    let mut mismatch_details = Vec::new();
-
-    if let Some(requested_model) = request.model.as_deref()
-        && requested_model != config_snapshot.model
-    {
-        mismatch_details.push(format!(
-            "model requested={requested_model} active={}",
-            config_snapshot.model
-        ));
-    }
-    if let Some(requested_provider) = request.model_provider.as_deref()
-        && requested_provider != config_snapshot.model_provider_id
-    {
-        mismatch_details.push(format!(
-            "model_provider requested={requested_provider} active={}",
-            config_snapshot.model_provider_id
-        ));
-    }
-    if let Some(requested_service_tier) = request.service_tier.as_ref()
-        && requested_service_tier != &config_snapshot.service_tier
-    {
-        mismatch_details.push(format!(
-            "service_tier requested={requested_service_tier:?} active={:?}",
-            config_snapshot.service_tier
-        ));
-    }
-    if let Some(requested_cwd) = request.cwd.as_deref() {
-        let requested_cwd_path = std::path::PathBuf::from(requested_cwd);
-        if requested_cwd_path != config_snapshot.cwd.as_path() {
-            mismatch_details.push(format!(
-                "cwd requested={} active={}",
-                requested_cwd_path.display(),
-                config_snapshot.cwd.display()
-            ));
-        }
-    }
-    if let Some(requested_approval) = request.approval_policy.as_ref() {
-        let active_approval: AskForApproval = config_snapshot.approval_policy.into();
-        if requested_approval != &active_approval {
-            mismatch_details.push(format!(
-                "approval_policy requested={requested_approval:?} active={active_approval:?}"
-            ));
-        }
-    }
-    if let Some(requested_review_policy) = request.approvals_reviewer.as_ref() {
-        let active_review_policy: codex_app_server_protocol::ApprovalsReviewer =
-            config_snapshot.approvals_reviewer.into();
-        if requested_review_policy != &active_review_policy {
-            mismatch_details.push(format!(
-                "approvals_reviewer requested={requested_review_policy:?} active={active_review_policy:?}"
-            ));
-        }
-    }
-    if let Some(requested_sandbox) = request.sandbox.as_ref() {
-        let sandbox_matches = matches!(
-            (requested_sandbox, &config_snapshot.sandbox_policy),
-            (
-                SandboxMode::ReadOnly,
-                codex_protocol::protocol::SandboxPolicy::ReadOnly { .. }
-            ) | (
-                SandboxMode::WorkspaceWrite,
-                codex_protocol::protocol::SandboxPolicy::WorkspaceWrite { .. }
-            ) | (
-                SandboxMode::DangerFullAccess,
-                codex_protocol::protocol::SandboxPolicy::DangerFullAccess
-            ) | (
-                SandboxMode::DangerFullAccess,
-                codex_protocol::protocol::SandboxPolicy::ExternalSandbox { .. }
-            )
-        );
-        if !sandbox_matches {
-            mismatch_details.push(format!(
-                "sandbox requested={requested_sandbox:?} active={:?}",
-                config_snapshot.sandbox_policy
-            ));
-        }
-    }
-    if let Some(requested_personality) = request.personality.as_ref()
-        && config_snapshot.personality.as_ref() != Some(requested_personality)
-    {
-        mismatch_details.push(format!(
-            "personality requested={requested_personality:?} active={:?}",
-            config_snapshot.personality
-        ));
-    }
-
-    if request.config.is_some() {
-        mismatch_details
-            .push("config overrides were provided and ignored while running".to_string());
-    }
-    if request.base_instructions.is_some() {
-        mismatch_details
-            .push("baseInstructions override was provided and ignored while running".to_string());
-    }
-    if request.developer_instructions.is_some() {
-        mismatch_details.push(
-            "developerInstructions override was provided and ignored while running".to_string(),
-        );
-    }
-    if request.persist_extended_history {
-        mismatch_details.push(
-            "persistExtendedHistory override was provided and ignored while running".to_string(),
-        );
-    }
-
-    mismatch_details
-}
-
-fn merge_persisted_resume_metadata(
-    request_overrides: &mut Option<HashMap<String, serde_json::Value>>,
-    typesafe_overrides: &mut ConfigOverrides,
-    persisted_metadata: &ThreadMetadata,
-) {
-    if has_model_resume_override(request_overrides.as_ref(), typesafe_overrides) {
-        return;
-    }
-
-    typesafe_overrides.model = persisted_metadata.model.clone();
-
-    if let Some(reasoning_effort) = persisted_metadata.reasoning_effort {
-        request_overrides.get_or_insert_with(HashMap::new).insert(
-            "model_reasoning_effort".to_string(),
-            serde_json::Value::String(reasoning_effort.to_string()),
-        );
-    }
-}
-
-fn has_model_resume_override(
-    request_overrides: Option<&HashMap<String, serde_json::Value>>,
-    typesafe_overrides: &ConfigOverrides,
-) -> bool {
-    typesafe_overrides.model.is_some()
-        || typesafe_overrides.model_provider.is_some()
-        || request_overrides.is_some_and(|overrides| overrides.contains_key("model"))
-        || request_overrides
-            .is_some_and(|overrides| overrides.contains_key("model_reasoning_effort"))
-}
-
 fn skills_to_info(
     skills: &[codex_core::skills::SkillMetadata],
     disabled_paths: &std::collections::HashSet<AbsolutePathBuf>,
@@ -8967,114 +8871,6 @@ fn validate_dynamic_tools(tools: &[ApiDynamicToolSpec]) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-fn replace_cloud_requirements_loader(
-    cloud_requirements: &RwLock<CloudRequirementsLoader>,
-    auth_manager: Arc<AuthManager>,
-    chatgpt_base_url: String,
-    codex_home: PathBuf,
-) {
-    let loader = cloud_requirements_loader(auth_manager, chatgpt_base_url, codex_home);
-    if let Ok(mut guard) = cloud_requirements.write() {
-        *guard = loader;
-    } else {
-        warn!("failed to update cloud requirements loader");
-    }
-}
-
-async fn sync_default_client_residency_requirement(
-    cli_overrides: &[(String, TomlValue)],
-    cloud_requirements: &RwLock<CloudRequirementsLoader>,
-) {
-    let loader = cloud_requirements
-        .read()
-        .map(|guard| guard.clone())
-        .unwrap_or_default();
-    match codex_core::config::ConfigBuilder::default()
-        .cli_overrides(cli_overrides.to_vec())
-        .cloud_requirements(loader)
-        .build()
-        .await
-    {
-        Ok(config) => set_default_client_residency_requirement(config.enforce_residency.value()),
-        Err(err) => warn!(
-            error = %err,
-            "failed to sync default client residency requirement after auth refresh"
-        ),
-    }
-}
-
-/// Derive the effective [`Config`] by layering three override sources.
-///
-/// Precedence (lowest to highest):
-/// - `cli_overrides`: process-wide startup `--config` flags.
-/// - `request_overrides`: per-request dotted-path overrides (`params.config`), converted JSON->TOML.
-/// - `typesafe_overrides`: Request objects such as `NewThreadParams` and
-///   `ThreadStartParams` support a limited set of _explicit_ config overrides, so
-///   `typesafe_overrides` is a `ConfigOverrides` derived from the respective request object.
-///   Because the overrides are defined explicitly in the `*Params`, this takes priority over
-///   the more general "bag of config options" provided by `cli_overrides` and `request_overrides`.
-async fn derive_config_from_params(
-    cli_overrides: &[(String, TomlValue)],
-    request_overrides: Option<HashMap<String, serde_json::Value>>,
-    typesafe_overrides: ConfigOverrides,
-    cloud_requirements: &CloudRequirementsLoader,
-    codex_home: &Path,
-    runtime_feature_enablement: &BTreeMap<String, bool>,
-) -> std::io::Result<Config> {
-    let merged_cli_overrides = cli_overrides
-        .iter()
-        .cloned()
-        .chain(
-            request_overrides
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(k, v)| (k, json_to_toml(v))),
-        )
-        .collect::<Vec<_>>();
-
-    let mut config = codex_core::config::ConfigBuilder::default()
-        .codex_home(codex_home.to_path_buf())
-        .cli_overrides(merged_cli_overrides)
-        .harness_overrides(typesafe_overrides)
-        .cloud_requirements(cloud_requirements.clone())
-        .build()
-        .await?;
-    apply_runtime_feature_enablement(&mut config, runtime_feature_enablement);
-    Ok(config)
-}
-
-async fn derive_config_for_cwd(
-    cli_overrides: &[(String, TomlValue)],
-    request_overrides: Option<HashMap<String, serde_json::Value>>,
-    typesafe_overrides: ConfigOverrides,
-    cwd: Option<PathBuf>,
-    cloud_requirements: &CloudRequirementsLoader,
-    codex_home: &Path,
-    runtime_feature_enablement: &BTreeMap<String, bool>,
-) -> std::io::Result<Config> {
-    let merged_cli_overrides = cli_overrides
-        .iter()
-        .cloned()
-        .chain(
-            request_overrides
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(k, v)| (k, json_to_toml(v))),
-        )
-        .collect::<Vec<_>>();
-
-    let mut config = codex_core::config::ConfigBuilder::default()
-        .codex_home(codex_home.to_path_buf())
-        .cli_overrides(merged_cli_overrides)
-        .harness_overrides(typesafe_overrides)
-        .fallback_cwd(cwd)
-        .cloud_requirements(cloud_requirements.clone())
-        .build()
-        .await?;
-    apply_runtime_feature_enablement(&mut config, runtime_feature_enablement);
-    Ok(config)
 }
 
 async fn read_history_cwd_from_state_db(

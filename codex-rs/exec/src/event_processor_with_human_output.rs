@@ -36,6 +36,7 @@ pub(crate) struct EventProcessorWithHumanOutput {
     final_message_rendered: bool,
     emit_final_message_on_shutdown: bool,
     last_total_token_usage: Option<ThreadTokenUsage>,
+    start_time: Option<std::time::Instant>,
 }
 
 impl EventProcessorWithHumanOutput {
@@ -61,6 +62,7 @@ impl EventProcessorWithHumanOutput {
             final_message_rendered: false,
             emit_final_message_on_shutdown: false,
             last_total_token_usage: None,
+            start_time: Some(std::time::Instant::now()),
         }
     }
 
@@ -380,10 +382,19 @@ impl EventProcessor for EventProcessorWithHumanOutput {
         }
 
         if let Some(usage) = &self.last_total_token_usage {
+            let mut tps_str = String::new();
+            if let Some(start) = self.start_time {
+                let elapsed = start.elapsed().as_secs_f64();
+                if elapsed > 0.5 {
+                    let out_toks = usage.total.output_tokens.max(0) as f64;
+                    tps_str = format!(" ({:.1} output tok/s)", out_toks / elapsed);
+                }
+            }
             eprintln!(
-                "{}\n{}",
+                "{}\n{}{}",
                 "tokens used".style(self.dimmed),
-                format_with_separators(blended_total(usage))
+                format_with_separators(blended_total(usage)),
+                tps_str.style(self.dimmed)
             );
         }
 

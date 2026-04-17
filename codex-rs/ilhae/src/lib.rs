@@ -90,9 +90,9 @@ pub mod a2a_persistence;
 pub mod startup_main;
 pub use startup_main::{
     BootstrappedIlhaeRuntime, bootstrap_ilhae_runtime, current_native_backend_capability_profile,
-    current_native_backend_engine, ensure_native_runtime_for_cli, native_runtime_context,
-    prepare_native_turn_inputs, prepare_session_turn_inputs, run_ilhae_proxy,
-    stop_native_runtime_for_cli,
+    current_native_backend_engine, emit_native_loop_lifecycle, ensure_native_runtime_for_cli,
+    native_runtime_context, prepare_native_turn_inputs, prepare_session_turn_inputs,
+    run_ilhae_proxy, stop_native_runtime_for_cli, subscribe_native_loop_lifecycle,
 };
 
 // ═══════════════════════════════════════════════════════════════

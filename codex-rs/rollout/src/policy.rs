@@ -130,7 +130,11 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::CollabCloseEnd(_)
         | EventMsg::CollabResumeEnd(_)
         | EventMsg::DynamicToolCallRequest(_)
-        | EventMsg::DynamicToolCallResponse(_) => Some(EventPersistenceMode::Extended),
+        | EventMsg::DynamicToolCallResponse(_)
+        | EventMsg::LoopLifecycleStarted(_)
+        | EventMsg::LoopLifecycleProgress(_)
+        | EventMsg::LoopLifecycleCompleted(_)
+        | EventMsg::LoopLifecycleFailed(_) => Some(EventPersistenceMode::Extended),
         EventMsg::Warning(_)
         | EventMsg::RealtimeConversationStarted(_)
         | EventMsg::RealtimeConversationSdp(_)

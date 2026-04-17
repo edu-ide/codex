@@ -21,10 +21,7 @@ impl ToolHandler for SelfCheckHandler {
         ToolKind::Function
     }
 
-    async fn handle(
-        &self,
-        invocation: ToolInvocation,
-    ) -> Result<Self::Output, FunctionCallError> {
+    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
         let args: SelfCheckArgs =
             crate::tools::handlers::parse_arguments(&match invocation.payload {
                 ToolPayload::Function { arguments } => arguments,

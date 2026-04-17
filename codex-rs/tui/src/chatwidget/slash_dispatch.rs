@@ -372,7 +372,7 @@ impl ChatWidget {
                     );
                 }
             }
-            SlashCommand::BgDream | SlashCommand::Help => {},
+            SlashCommand::BgDream | SlashCommand::Help => {}
             SlashCommand::TestApproval => {
                 use std::collections::HashMap;
 
@@ -557,9 +557,8 @@ impl ChatWidget {
                 self.bottom_pane.drain_pending_submission_state();
             }
             SlashCommand::Dream if !trimmed.is_empty() => {
-                let Some((prepared_args, _)) = self
-                    .bottom_pane
-                    .prepare_inline_args_submission(false)
+                let Some((prepared_args, _)) =
+                    self.bottom_pane.prepare_inline_args_submission(false)
                 else {
                     return;
                 };
@@ -573,11 +572,15 @@ impl ChatWidget {
                         self.submit_user_message(prompt.to_string().into());
                     }
                     "on" => {
-                        self.app_event_tx.send(AppEvent::SetIlhaeDreamMode { enabled: Some(true) });
+                        self.app_event_tx.send(AppEvent::SetIlhaeDreamMode {
+                            enabled: Some(true),
+                        });
                         self.add_error_message("✅ Dream mode enabled.".to_string());
                     }
                     "off" => {
-                        self.app_event_tx.send(AppEvent::SetIlhaeDreamMode { enabled: Some(false) });
+                        self.app_event_tx.send(AppEvent::SetIlhaeDreamMode {
+                            enabled: Some(false),
+                        });
                         self.add_error_message("🚫 Dream mode disabled.".to_string());
                     }
                     _ => {
@@ -587,9 +590,8 @@ impl ChatWidget {
                 self.bottom_pane.drain_pending_submission_state();
             }
             SlashCommand::Embed if !trimmed.is_empty() => {
-                let Some((prepared_args, _)) = self
-                    .bottom_pane
-                    .prepare_inline_args_submission(false)
+                let Some((prepared_args, _)) =
+                    self.bottom_pane.prepare_inline_args_submission(false)
                 else {
                     return;
                 };
@@ -603,11 +605,15 @@ impl ChatWidget {
                         self.submit_user_message(prompt.to_string().into());
                     }
                     "on" => {
-                        self.app_event_tx.send(AppEvent::SetIlhaeEmbedMode { enabled: Some(true) });
+                        self.app_event_tx.send(AppEvent::SetIlhaeEmbedMode {
+                            enabled: Some(true),
+                        });
                         self.add_error_message("✅ Embed mode enabled.".to_string());
                     }
                     "off" => {
-                        self.app_event_tx.send(AppEvent::SetIlhaeEmbedMode { enabled: Some(false) });
+                        self.app_event_tx.send(AppEvent::SetIlhaeEmbedMode {
+                            enabled: Some(false),
+                        });
                         self.add_error_message("🚫 Embed mode disabled.".to_string());
                     }
                     _ => {

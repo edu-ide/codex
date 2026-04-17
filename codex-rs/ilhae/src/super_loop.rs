@@ -1,9 +1,12 @@
 use crate::context_proxy::autonomy::state::{AutonomousPhase, AutonomousSessionState};
 use crate::settings_store::SettingsStore;
 use brain_rs::BrainService;
-use dsrs::{ChatAdapter, LM, Predict, configure};
+use codex_protocol::items::LoopLifecycleItem;
+use codex_protocol::protocol::{LoopLifecycleKind, LoopLifecycleStatus};
+use dsrs::{configure, ChatAdapter, Predict, LM};
 use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -197,6 +200,53 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+fn now_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn loop_item_id(kind: LoopLifecycleKind, driver: SuperLoopDriver, epoch_ms: i64) -> String {
+    let kind = match kind {
+        LoopLifecycleKind::SuperLoop => "super_loop",
+        LoopLifecycleKind::ImprovementLoop => "improvement_loop",
+        _ => "background_loop",
+    };
+    format!("{kind}:{}:{epoch_ms}", driver.as_str())
+}
+
+fn loop_item(
+    id: String,
+    kind: LoopLifecycleKind,
+    title: &str,
+    summary: String,
+    detail: Option<String>,
+    status: LoopLifecycleStatus,
+    reason: Option<String>,
+    counts: Option<BTreeMap<String, i64>>,
+    error: Option<String>,
+    duration_ms: Option<i64>,
+) -> LoopLifecycleItem {
+    LoopLifecycleItem {
+        id,
+        kind,
+        title: title.to_string(),
+        summary,
+        detail,
+        status,
+        reason,
+        counts,
+        error,
+        duration_ms,
+        target_profile: None,
+    }
+}
+
+fn emit_loop_notification(notification: crate::IlhaeLoopLifecycleNotification) {
+    crate::emit_native_loop_lifecycle(notification);
 }
 
 fn state_path(ilhae_dir: &Path) -> PathBuf {
@@ -1372,17 +1422,122 @@ fn run_cycle_blocking(
     autonomous_sessions: Arc<Cache<String, AutonomousSessionState>>,
     ilhae_dir: PathBuf,
 ) -> Result<(), String> {
+    let started_at = Instant::now();
+    let super_loop_item_id = loop_item_id(LoopLifecycleKind::SuperLoop, driver, now_millis());
+    emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Started {
+        session_id: "native-runtime".to_string(),
+        item: loop_item(
+            super_loop_item_id.clone(),
+            LoopLifecycleKind::SuperLoop,
+            "Running Super Loop",
+            format!("Scanning background follow-ups ({})", driver.as_str()),
+            None,
+            LoopLifecycleStatus::InProgress,
+            Some("cycle_started".to_string()),
+            None,
+            None,
+            None,
+        ),
+    });
+
     let settings = settings_store.get();
     if !super_loop_enabled(&settings, &autonomous_sessions) {
+        emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Completed {
+            session_id: "native-runtime".to_string(),
+            item: loop_item(
+                super_loop_item_id,
+                LoopLifecycleKind::SuperLoop,
+                "Running Super Loop",
+                "Super loop skipped".to_string(),
+                Some("No enabled background loop inputs were detected".to_string()),
+                LoopLifecycleStatus::Completed,
+                Some("skipped_disabled".to_string()),
+                None,
+                None,
+                Some(started_at.elapsed().as_millis() as i64),
+            ),
+        });
         return Ok(());
     }
 
     let mut state = read_state(&ilhae_dir);
     let findings = evaluate_findings(&settings, &brain, &autonomous_sessions);
+    let findings_count = findings.len() as i64;
+    let improvement_findings = findings
+        .iter()
+        .filter(|finding| {
+            matches!(
+                finding.kind,
+                SuperLoopFindingKind::SelfImprovementCandidate
+                    | SuperLoopFindingKind::IgnoredDreamReviewCandidate
+            )
+        })
+        .count() as i64;
     let signature = build_signature(&findings);
     let now = now_secs();
     if should_skip(&state, &signature, now) {
+        emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Completed {
+            session_id: "native-runtime".to_string(),
+            item: loop_item(
+                super_loop_item_id,
+                LoopLifecycleKind::SuperLoop,
+                "Running Super Loop",
+                "Super loop skipped".to_string(),
+                Some("Cooldown active for the current finding signature".to_string()),
+                LoopLifecycleStatus::Completed,
+                Some("skipped_cooldown".to_string()),
+                Some(BTreeMap::from([(
+                    "findings".to_string(),
+                    findings.len() as i64,
+                )])),
+                None,
+                Some(started_at.elapsed().as_millis() as i64),
+            ),
+        });
         return Ok(());
+    }
+
+    emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Progress {
+        session_id: "native-runtime".to_string(),
+        item_id: super_loop_item_id.clone(),
+        kind: LoopLifecycleKind::SuperLoop,
+        summary: format!("Evaluated {findings_count} findings"),
+        detail: Some(format!("driver={}, signature={signature}", driver.as_str())),
+        counts: Some(BTreeMap::from([
+            ("findings".to_string(), findings_count),
+            ("improvement_findings".to_string(), improvement_findings),
+        ])),
+    });
+
+    let improvement_item_id = (improvement_findings > 0).then(|| {
+        loop_item_id(
+            LoopLifecycleKind::ImprovementLoop,
+            driver,
+            now_millis().saturating_add(1),
+        )
+    });
+    if let Some(improvement_item_id) = improvement_item_id.as_ref() {
+        emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Started {
+            session_id: "native-runtime".to_string(),
+            item: loop_item(
+                improvement_item_id.clone(),
+                LoopLifecycleKind::ImprovementLoop,
+                "Reviewing Improvement Loop",
+                format!(
+                    "Reviewing {} self-improvement findings",
+                    improvement_findings
+                ),
+                None,
+                LoopLifecycleStatus::InProgress,
+                Some("improvement_review_started".to_string()),
+                Some(BTreeMap::from([(
+                    "findings".to_string(),
+                    improvement_findings,
+                )])),
+                None,
+                None,
+            ),
+        });
     }
 
     match execute_plan(driver, brain.clone(), &settings, &state, &findings) {
@@ -1447,9 +1602,77 @@ fn run_cycle_blocking(
             state.last_outcome = summarize_outcome(&findings, &actions, &scores);
             state.last_error = None;
             write_state(&ilhae_dir, &state).map_err(|err| err.to_string())?;
+            let elapsed_ms = started_at.elapsed().as_millis() as i64;
+            if let Some(improvement_item_id) = improvement_item_id {
+                let improvement_actions = actions
+                    .iter()
+                    .filter(|action| {
+                        action.target.contains("improvement") || action.target.contains("dream")
+                    })
+                    .count() as i64;
+                emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Completed {
+                    session_id: "native-runtime".to_string(),
+                    item: loop_item(
+                        improvement_item_id,
+                        LoopLifecycleKind::ImprovementLoop,
+                        "Reviewing Improvement Loop",
+                        if improvement_actions > 0 {
+                            format!("Applied {improvement_actions} improvement follow-ups")
+                        } else {
+                            "Improvement review completed".to_string()
+                        },
+                        Some(
+                            "Self-improvement findings were folded into the super-loop plan"
+                                .to_string(),
+                        ),
+                        LoopLifecycleStatus::Completed,
+                        Some("improvement_review_completed".to_string()),
+                        Some(BTreeMap::from([
+                            ("findings".to_string(), improvement_findings),
+                            ("actions".to_string(), improvement_actions),
+                        ])),
+                        None,
+                        Some(elapsed_ms),
+                    ),
+                });
+            }
+            emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Completed {
+                session_id: "native-runtime".to_string(),
+                item: loop_item(
+                    super_loop_item_id,
+                    LoopLifecycleKind::SuperLoop,
+                    "Running Super Loop",
+                    "Super loop completed".to_string(),
+                    Some(format!(
+                        "planned {} actions from {} findings",
+                        actions.len(),
+                        findings_count
+                    )),
+                    LoopLifecycleStatus::Completed,
+                    Some("cycle_completed".to_string()),
+                    Some(BTreeMap::from([
+                        ("findings".to_string(), findings_count),
+                        ("actions".to_string(), actions.len() as i64),
+                        (
+                            "resolved_tasks".to_string(),
+                            state.last_outcome.resolved_tasks as i64,
+                        ),
+                        (
+                            "retry_tasks".to_string(),
+                            state.last_outcome.retry_tasks as i64,
+                        ),
+                        (
+                            "escalated_tasks".to_string(),
+                            state.last_outcome.escalated_tasks as i64,
+                        ),
+                    ])),
+                    None,
+                    Some(elapsed_ms),
+                ),
+            });
             info!(
                 driver = driver.as_str(),
-                findings = findings.len(),
+                findings = findings_count,
                 actions = actions.len(),
                 resolved = state.last_outcome.resolved_tasks,
                 running = state.last_outcome.running_tasks,
@@ -1470,6 +1693,45 @@ fn run_cycle_blocking(
             state.last_outcome = SuperLoopOutcome::default();
             state.last_error = Some(err.clone());
             let _ = write_state(&ilhae_dir, &state);
+            let elapsed_ms = started_at.elapsed().as_millis() as i64;
+            if let Some(improvement_item_id) = improvement_item_id {
+                emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Failed {
+                    session_id: "native-runtime".to_string(),
+                    item: loop_item(
+                        improvement_item_id,
+                        LoopLifecycleKind::ImprovementLoop,
+                        "Reviewing Improvement Loop",
+                        "Improvement review failed".to_string(),
+                        None,
+                        LoopLifecycleStatus::Failed,
+                        Some("improvement_review_failed".to_string()),
+                        Some(BTreeMap::from([(
+                            "findings".to_string(),
+                            improvement_findings,
+                        )])),
+                        Some(err.clone()),
+                        Some(elapsed_ms),
+                    ),
+                });
+            }
+            emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Failed {
+                session_id: "native-runtime".to_string(),
+                item: loop_item(
+                    super_loop_item_id,
+                    LoopLifecycleKind::SuperLoop,
+                    "Running Super Loop",
+                    "Super loop failed".to_string(),
+                    Some(format!("driver={}", driver.as_str())),
+                    LoopLifecycleStatus::Failed,
+                    Some("cycle_failed".to_string()),
+                    Some(BTreeMap::from([(
+                        "findings".to_string(),
+                        findings_count,
+                    )])),
+                    Some(err.clone()),
+                    Some(elapsed_ms),
+                ),
+            });
             Err(err)
         }
     }

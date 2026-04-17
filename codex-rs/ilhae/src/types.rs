@@ -5,10 +5,13 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::notification_store;
 use brain_knowledge_rs::memory_store;
+use codex_protocol::items::LoopLifecycleItem;
 use codex_protocol::request_permissions::RequestPermissionProfile;
+use codex_protocol::protocol::LoopLifecycleKind;
 
 // ─── Method Name Constants ───────────────────────────────────────────────
 pub const NOTIF_ASSISTANT_TURN_PATCH: &str = "ilhae/assistant_turn_patch";
@@ -24,6 +27,7 @@ pub const NOTIF_AUTONOMOUS_STATE: &str = "ilhae/autonomous_state";
 pub const NOTIF_COST_UPDATE: &str = "ilhae/cost_update";
 pub const NOTIF_ENGINE_STATE: &str = "ilhae/engine_state";
 pub const NOTIF_APP_SESSION_EVENT: &str = "ilhae/app_session_event";
+pub const NOTIF_LOOP_LIFECYCLE: &str = "ilhae/loop_lifecycle";
 pub const NOTIF_SESSION_INFO_UPDATE: &str = "session/session_info_update";
 pub const NOTIF_HISTORY_SYNC: &str = "session/history_sync";
 pub const NOTIF_CRON_TRIGGERED: &str = "ilhae/cron_triggered";
@@ -953,6 +957,70 @@ impl IlhaeAppSessionEventNotification {
             | IlhaeAppSessionEventDto::MessageDelta { thread_id, .. }
             | IlhaeAppSessionEventDto::ToolCallStarted { thread_id, .. }
             | IlhaeAppSessionEventDto::ToolCallCompleted { thread_id, .. } => thread_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum IlhaeLoopLifecycleNotification {
+    Started {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        item: LoopLifecycleItem,
+    },
+    Progress {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "itemId")]
+        item_id: String,
+        kind: LoopLifecycleKind,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        counts: Option<BTreeMap<String, i64>>,
+    },
+    Completed {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        item: LoopLifecycleItem,
+    },
+    Failed {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        item: LoopLifecycleItem,
+    },
+}
+
+impl sacp::JsonRpcMessage for IlhaeLoopLifecycleNotification {
+    fn to_untyped_message(&self) -> Result<sacp::UntypedMessage, sacp::Error> {
+        sacp::UntypedMessage::new(NOTIF_LOOP_LIFECYCLE, self)
+    }
+
+    fn method(&self) -> &str {
+        NOTIF_LOOP_LIFECYCLE
+    }
+
+    fn parse_message(_method: &str, params: &impl Serialize) -> Result<Self, sacp::Error> {
+        let s = serde_json::to_string(params).map_err(sacp::Error::into_internal_error)?;
+        serde_json::from_str(&s).map_err(sacp::Error::into_internal_error)
+    }
+
+    fn matches_method(method: &str) -> bool {
+        method == NOTIF_LOOP_LIFECYCLE
+    }
+}
+
+impl sacp::JsonRpcNotification for IlhaeLoopLifecycleNotification {}
+
+impl IlhaeLoopLifecycleNotification {
+    pub fn session_id(&self) -> &str {
+        match self {
+            Self::Started { session_id, .. }
+            | Self::Progress { session_id, .. }
+            | Self::Completed { session_id, .. }
+            | Self::Failed { session_id, .. } => session_id,
         }
     }
 }

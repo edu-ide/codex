@@ -1,7 +1,12 @@
 use std::sync::Arc;
+use std::{collections::BTreeMap, time::Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_client_protocol_schema::{ContentBlock, PromptRequest, PromptResponse, TextContent};
+use codex_protocol::{
+    items::LoopLifecycleItem,
+    protocol::{LoopLifecycleKind, LoopLifecycleStatus},
+};
 use sacp::{Agent, Client, Conductor, ConnectionTo, Responder, UntypedMessage};
 use serde_json::json;
 use tracing::{debug, info, warn};
@@ -21,6 +26,43 @@ use super::{
     prompt_finalize::{PromptFinalizeInput, finalize_prompt_result},
     team_preflight::{TeamPromptPreparation, prepare_team_prompt, try_handle_direct_target_route},
 };
+
+fn context_loop_item_id(session_id: &str, epoch_ms: u64) -> String {
+    format!("context:{session_id}:{epoch_ms}")
+}
+
+fn loop_counts(entries: impl IntoIterator<Item = (&'static str, i64)>) -> Option<BTreeMap<String, i64>> {
+    let map: BTreeMap<String, i64> = entries
+        .into_iter()
+        .filter(|(_, value)| *value > 0)
+        .map(|(key, value)| (key.to_string(), value))
+        .collect();
+    (!map.is_empty()).then_some(map)
+}
+
+fn context_loop_item(
+    item_id: String,
+    summary: String,
+    detail: Option<String>,
+    status: LoopLifecycleStatus,
+    counts: Option<BTreeMap<String, i64>>,
+    duration_ms: Option<i64>,
+    error: Option<String>,
+) -> LoopLifecycleItem {
+    LoopLifecycleItem {
+        id: item_id,
+        kind: LoopLifecycleKind::ContextInjection,
+        title: "Injecting Context".to_string(),
+        summary,
+        detail,
+        status,
+        reason: Some("prompt_preflight".to_string()),
+        counts,
+        error,
+        duration_ms,
+        target_profile: None,
+    }
+}
 
 pub fn bind_routes<H>(
     builder: sacp::Builder<sacp::Proxy, H>,
@@ -72,6 +114,8 @@ pub async fn handle_prompt_request(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
+    let context_loop_started_at = Instant::now();
+    let context_loop_id = context_loop_item_id(&session_id, proxy_prompt_received_epoch_ms);
     if let Ok(notif) = UntypedMessage::new(
         crate::types::NOTIF_PROMPT_TRACE_START,
         json!({
@@ -82,6 +126,21 @@ pub async fn handle_prompt_request(
     ) {
         let _ = cx.send_notification_to(Client, notif);
     }
+    let _ = cx.send_notification_to(
+        Client,
+        crate::types::IlhaeLoopLifecycleNotification::Started {
+            session_id: session_id.clone(),
+            item: context_loop_item(
+                context_loop_id.clone(),
+                "Loading session context".to_string(),
+                None,
+                LoopLifecycleStatus::InProgress,
+                None,
+                None,
+                None,
+            ),
+        },
+    );
     debug!("Received PromptRequest: {:?}", session_id);
 
     let sid_for_map = session_id.clone();
@@ -133,7 +192,25 @@ pub async fn handle_prompt_request(
     };
     let prepared_context = prepare_session_prompt_context(&context_deps, &session_id, is_subagent)
         .await
-        .map_err(|err| sacp::util::internal_error(err.to_string()))?;
+        .map_err(|err| {
+            let _ = cx.send_notification_to(
+                Client,
+                crate::types::IlhaeLoopLifecycleNotification::Failed {
+                    session_id: session_id.clone(),
+                    item: context_loop_item(
+                        context_loop_id.clone(),
+                        "Context injection failed".to_string(),
+                        None,
+                        LoopLifecycleStatus::Failed,
+                        None,
+                        Some(context_loop_started_at.elapsed().as_millis() as i64),
+                        Some(err.to_string()),
+                    ),
+                },
+            );
+            sacp::util::internal_error(err.to_string())
+        })?;
+    let session_context_blocks = prepared_context.prompt_blocks.len() as i64;
     prepend_prompt_blocks(&mut req.prompt, prepared_context.prompt_blocks);
     let session_info = prepared_context.session_info;
     let effective_session_id = session_info
@@ -177,19 +254,19 @@ pub async fn handle_prompt_request(
         }
     );
 
-    if let Some((dynamic_ctx, last_ver, current_ver)) = dynamic_ctx_opt {
+    if let Some((ref dynamic_ctx, last_ver, current_ver)) = dynamic_ctx_opt {
         info!(
             "Injecting dynamic instructions for session: {} (ver {} → {})",
             session_id, last_ver, current_ver
         );
         req.prompt
-            .insert(0, ContentBlock::Text(TextContent::new(dynamic_ctx)));
+            .insert(0, ContentBlock::Text(TextContent::new(dynamic_ctx.clone())));
     }
 
-    if let Some(history_text) = history_opt {
+    if let Some(ref history_text) = history_opt {
         info!("Injecting cross-agent history for session: {}", session_id);
         req.prompt
-            .insert(0, ContentBlock::Text(TextContent::new(history_text)));
+            .insert(0, ContentBlock::Text(TextContent::new(history_text.clone())));
     }
 
     let current_agent_id = prepared_context.current_agent_id;
@@ -204,6 +281,7 @@ pub async fn handle_prompt_request(
         &user_text,
     )
     .await;
+    let recall_block_count = recall_blocks.len() as i64;
     prepend_prompt_blocks(&mut req.prompt, recall_blocks);
 
     if let Some(info) = &session_info
@@ -238,6 +316,43 @@ pub async fn handle_prompt_request(
     brain
         .session_add_message_simple(&session_id, "user", &user_text, "")
         .ok();
+    let dynamic_instruction_count = dynamic_ctx_opt.as_ref().map(|_| 1).unwrap_or(0);
+    let cross_agent_history_count = history_opt.as_ref().map(|_| 1).unwrap_or(0);
+    let mut loaded_sections = Vec::new();
+    if session_context_blocks > 0 {
+        loaded_sections.push(format!("session_context({session_context_blocks})"));
+    }
+    if dynamic_instruction_count > 0 {
+        loaded_sections.push("dynamic_instructions".to_string());
+    }
+    if cross_agent_history_count > 0 {
+        loaded_sections.push("cross_agent_history".to_string());
+    }
+    if recall_block_count > 0 {
+        loaded_sections.push(format!("session_recall({recall_block_count})"));
+    }
+    let context_counts = loop_counts([
+        ("session_blocks", session_context_blocks),
+        ("dynamic_blocks", dynamic_instruction_count),
+        ("history_blocks", cross_agent_history_count),
+        ("recall_blocks", recall_block_count),
+    ]);
+    let context_detail = (!loaded_sections.is_empty()).then(|| loaded_sections.join(", "));
+    let _ = cx.send_notification_to(
+        Client,
+        crate::types::IlhaeLoopLifecycleNotification::Progress {
+            session_id: session_id.clone(),
+            item_id: context_loop_id.clone(),
+            kind: LoopLifecycleKind::ContextInjection,
+            summary: if loaded_sections.is_empty() {
+                "No extra session context was injected".to_string()
+            } else {
+                format!("Loaded {} context sources", loaded_sections.len())
+            },
+            detail: context_detail.clone(),
+            counts: context_counts.clone(),
+        },
+    );
     let proxy_prompt_forward_epoch_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -262,6 +377,25 @@ pub async fn handle_prompt_request(
     ) {
         let _ = cx.send_notification_to(Client, notif);
     }
+    let _ = cx.send_notification_to(
+        Client,
+        crate::types::IlhaeLoopLifecycleNotification::Completed {
+            session_id: session_id.clone(),
+            item: context_loop_item(
+                context_loop_id,
+                if loaded_sections.is_empty() {
+                    "Context injection completed".to_string()
+                } else {
+                    format!("Injected {} context sources", loaded_sections.len())
+                },
+                context_detail,
+                LoopLifecycleStatus::Completed,
+                context_counts,
+                Some(context_loop_started_at.elapsed().as_millis() as i64),
+                None,
+            ),
+        },
+    );
 
     let settings_snapshot = settings.get();
     let execution_mode = decide_execution_mode(&settings_snapshot);

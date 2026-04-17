@@ -4,8 +4,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::app_server_session::ConversationRuntime;
 use crate::app_server_session::AppServerSession;
+use crate::app_server_session::ConversationRuntime;
 use crate::diff_render::display_path_for;
 use crate::key_hint;
 use crate::legacy_core::Cursor;
@@ -172,14 +172,7 @@ pub async fn run_resume_picker_with_app_server(
     include_non_interactive: bool,
     app_server: AppServerSession,
 ) -> Result<SessionSelection> {
-    run_resume_picker_with_runtime(
-        tui,
-        config,
-        show_all,
-        include_non_interactive,
-        app_server,
-    )
-    .await
+    run_resume_picker_with_runtime(tui, config, show_all, include_non_interactive, app_server).await
 }
 
 pub async fn run_resume_picker_with_runtime<R>(

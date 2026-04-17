@@ -187,7 +187,12 @@ pub fn spawn_autonomous_loop(
             {
                 Ok(super::user_agent::UserAgentDirective::Continue(text)) => text,
                 Ok(super::user_agent::UserAgentDirective::Complete) => {
-                    let is_retro = state.sessions.autonomous_sessions.get(&session_id).map(|s| s.phase == AutonomousPhase::Retro).unwrap_or(false);
+                    let is_retro = state
+                        .sessions
+                        .autonomous_sessions
+                        .get(&session_id)
+                        .map(|s| s.phase == AutonomousPhase::Retro)
+                        .unwrap_or(false);
                     if is_retro {
                         info!("[AutoMode] Retro complete. Ending auto-loop.");
                         set_autonomous_snapshot(
@@ -209,7 +214,7 @@ pub fn spawn_autonomous_loop(
                     } else {
                         info!("[AutoMode] User Agent signaled completion. Initiating Retro phase.");
                         let retro_msg = "작업이 완료되었습니다. 이제 지금까지의 작업 내역을 바탕으로 `brain_artifact_ops`를 사용해 `index.md`와 관련 프로젝트 위키를 갱신(Compile)하고 세션을 완벽히 종료하세요.".to_string();
-                        
+
                         set_autonomous_snapshot(
                             &state,
                             &session_id,
@@ -225,7 +230,7 @@ pub fn spawn_autonomous_loop(
                             ),
                         )
                         .await;
-                        
+
                         retro_msg
                     }
                 }

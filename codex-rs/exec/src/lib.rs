@@ -432,6 +432,19 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         .build()
         .await?;
 
+    let _sglang_qwen_proxy = codex_responses_api_proxy::maybe_start_sglang_qwen_proxy(
+        &config.model_provider_id,
+        config.model_provider.base_url.as_deref(),
+        arg0_paths.codex_self_exe.as_deref(),
+    )?;
+    if let Some(proxy) = _sglang_qwen_proxy.as_ref() {
+        let proxy_base_url = proxy.base_url().to_string();
+        config.model_provider.base_url = Some(proxy_base_url.clone());
+        if let Some(provider) = config.model_providers.get_mut(&config.model_provider_id) {
+            provider.base_url = Some(proxy_base_url.clone());
+        }
+    }
+
     if oss && let Err(err) = hydrate_oss_model_name(&mut config).await {
         warn!(error = %err, "failed to resolve OSS model name");
     }

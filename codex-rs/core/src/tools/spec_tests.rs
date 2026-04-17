@@ -5,12 +5,6 @@ use crate::test_support::construct_model_info_offline;
 use crate::tools::ToolRouter;
 use crate::tools::router::ToolRouterParams;
 use codex_app_server_protocol::AppInfo;
-use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
-use codex_protocol::openai_models::InputModality;
-use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::openai_models::ModelsResponse;
-use codex_tools::AdditionalProperties;
-use codex_tools::CommandToolOptions;
 use codex_features::Feature;
 use codex_features::Features;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
@@ -18,10 +12,15 @@ use codex_models_manager::bundled_models_response;
 use codex_models_manager::model_info::with_config_overrides;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
 use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::InputModality;
+use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_tools::AdditionalProperties;
+use codex_tools::CommandToolOptions;
 use codex_tools::ConfiguredToolSpec;
 use codex_tools::DiscoverablePluginInfo;
 use codex_tools::DiscoverableTool;
@@ -317,6 +316,7 @@ fn unified_exec_is_blocked_for_windows_sandboxed_policies_only() {
         &SandboxPolicy::DangerFullAccess,
         WindowsSandboxLevel::Disabled,
     ));
+}
 
 /// Builds the tool registry builder while collecting tool specs for later serialization.
 fn build_specs(
@@ -349,7 +349,6 @@ fn build_specs_with_unavailable_tools(
         /*discoverable_tools*/ None,
         dynamic_tools,
     )
->>>>>>> upstream/main
 }
 
 #[tokio::test]
@@ -1745,7 +1744,6 @@ async fn shell_zsh_fork_prefers_shell_command_over_unified_exec() {
 }
 
 #[test]
-<<<<<<< HEAD
 #[ignore]
 fn test_parallel_support_flags() {
     let config = test_config();

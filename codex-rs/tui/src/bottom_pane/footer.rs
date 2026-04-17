@@ -708,7 +708,10 @@ fn runtime_mode_footer_line() -> Option<Line<'static>> {
     ));
 
     if agent.advisor_mode {
-        parts.push(format!("adv:{}", advisor_preset_short_label(&agent.advisor_preset)));
+        parts.push(format!(
+            "adv:{}",
+            advisor_preset_short_label(&agent.advisor_preset)
+        ));
     }
 
     if agent.autonomous_mode {

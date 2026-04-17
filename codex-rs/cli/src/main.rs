@@ -699,7 +699,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         None => {
             #[cfg(feature = "ilhae")]
             if root_remote.is_none() {
-                codex_ilhae::ensure_native_runtime_for_cli().await?;
+                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
+                    .await?;
             }
             prepend_config_flags(
                 &mut interactive.config_overrides,
@@ -720,7 +721,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         }
         #[cfg(feature = "ilhae")]
         Some(Subcommand::Stop) => {
-            codex_ilhae::stop_native_runtime_for_cli().await?;
+            codex_ilhae::stop_native_runtime_for_cli(interactive.config_profile.as_deref())
+                .await?;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -728,18 +730,21 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "exec",
             )?;
+            if exec_cli.config_profile.is_none() {
+                exec_cli.config_profile = interactive.config_profile.clone();
+            }
             #[cfg(feature = "ilhae")]
             {
-                codex_ilhae::ensure_native_runtime_for_cli().await?;
-                if codex_ilhae::config::get_active_native_runtime_config().is_some() {
+                codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile.as_deref())
+                    .await?;
+                if codex_ilhae::config::get_native_runtime_config(exec_cli.config_profile.as_deref())
+                    .is_some()
+                {
                     exec_cli.oss = true;
                     if exec_cli.oss_provider.is_none() {
                         exec_cli.oss_provider = Some("llama-server".to_string());
                     }
                 }
-            }
-            if exec_cli.config_profile.is_none() {
-                exec_cli.config_profile = interactive.config_profile.clone();
             }
             prepend_config_flags(
                 &mut exec_cli.config_overrides,
@@ -753,14 +758,16 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "review",
             )?;
+            let review_profile = interactive.config_profile.clone();
             #[cfg(feature = "ilhae")]
             {
-                codex_ilhae::ensure_native_runtime_for_cli().await?;
+                codex_ilhae::ensure_native_runtime_for_cli(review_profile.as_deref()).await?;
             }
             let mut exec_cli = ExecCli::try_parse_from(["codex", "exec"])?;
-            exec_cli.config_profile = interactive.config_profile.clone();
+            exec_cli.config_profile = review_profile.clone();
             #[cfg(feature = "ilhae")]
-            if codex_ilhae::config::get_active_native_runtime_config().is_some() {
+            if codex_ilhae::config::get_native_runtime_config(review_profile.as_deref()).is_some()
+            {
                 exec_cli.oss = true;
                 exec_cli.oss_provider = Some("llama-server".to_string());
             }
@@ -867,10 +874,6 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             remote,
             config_overrides,
         })) => {
-            #[cfg(feature = "ilhae")]
-            if remote.remote.is_none() && root_remote.is_none() {
-                codex_ilhae::ensure_native_runtime_for_cli().await?;
-            }
             interactive = finalize_resume_interactive(
                 interactive,
                 root_config_overrides.clone(),
@@ -880,6 +883,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 include_non_interactive,
                 config_overrides,
             );
+            #[cfg(feature = "ilhae")]
+            if remote.remote.is_none() && root_remote.is_none() {
+                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
+                    .await?;
+            }
             let exit_info = run_interactive_tui(
                 interactive,
                 remote.remote.or(root_remote.clone()),
@@ -898,10 +906,6 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             remote,
             config_overrides,
         })) => {
-            #[cfg(feature = "ilhae")]
-            if remote.remote.is_none() && root_remote.is_none() {
-                codex_ilhae::ensure_native_runtime_for_cli().await?;
-            }
             interactive = finalize_fork_interactive(
                 interactive,
                 root_config_overrides.clone(),
@@ -910,6 +914,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 all,
                 config_overrides,
             );
+            #[cfg(feature = "ilhae")]
+            if remote.remote.is_none() && root_remote.is_none() {
+                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
+                    .await?;
+            }
             let exit_info = run_interactive_tui(
                 interactive,
                 remote.remote.or(root_remote.clone()),

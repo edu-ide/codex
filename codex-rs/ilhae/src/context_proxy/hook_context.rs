@@ -9,7 +9,9 @@ pub fn run_get_session_context() -> anyhow::Result<()> {
     // Read input from stdin (Codex hook protocol)
     let mut stdin = std::io::stdin();
     let mut buf = String::new();
-    stdin.read_to_string(&mut buf).context("Failed to read from stdin")?;
+    stdin
+        .read_to_string(&mut buf)
+        .context("Failed to read from stdin")?;
 
     let input: SessionStartCommandInput =
         serde_json::from_str(&buf).context("Failed to parse SessionStartCommandInput")?;

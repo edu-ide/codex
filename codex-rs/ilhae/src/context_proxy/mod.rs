@@ -41,10 +41,10 @@ pub mod terminal_handlers;
 
 use self::client_sync::handle_set_session_config_option;
 
+pub use hook_context::run_get_session_context;
 pub use role_parser::*;
 pub use routing::*;
 pub use team_a2a::*;
-pub use hook_context::run_get_session_context;
 
 fn split_tool_name(tool_call: &serde_json::Value) -> String {
     let raw = tool_call
