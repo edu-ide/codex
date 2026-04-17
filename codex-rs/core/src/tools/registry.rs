@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -295,6 +295,36 @@ pub async fn ensure_native_runtime_for_cli() -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn stop_native_runtime_for_cli() -> anyhow::Result<()> {
+    let Some((profile_id, config)) = crate::config::get_active_native_runtime_config() else {
+        println!("No active native runtime profile found.");
+        return Ok(());
+    };
+
+    let path = std::path::Path::new(&config.server_bin);
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        println!("Stopping native runtime: {} (profile: {})", name, profile_id);
+
+        let mut cmd = std::process::Command::new("killall");
+        cmd.arg(name);
+
+        match cmd.status() {
+            Ok(status) => {
+                if status.success() {
+                    println!("Successfully stopped {}.", name);
+                } else {
+                    println!("Failed to stop {} (maybe it wasn't running).", name);
+                }
+            }
+            Err(e) => {
+                println!("Error attempting to stop {}: {}", name, e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn flatten_prompt_blocks_to_text(blocks: Vec<ContentBlock>) -> String {
     blocks
         .into_iter()

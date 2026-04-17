@@ -45,6 +45,9 @@ workspace = true
 [dependencies.codex-skills]
 workspace = true
 
+[dependencies.codex-exec-server]
+workspace = true
+
 [dependencies.codex-utils-absolute-path]
 workspace = true
 

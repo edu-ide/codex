@@ -2507,7 +2507,7 @@ impl Session {
         let has_prior_user_turns = initial_history_has_prior_user_turns(&conversation_history);
         {
             let mut state = self.state.lock().await;
-            state.set_next_turn_is_first(!has_prior_user_turns);
+            // removed set_next_turn_is_first
         }
         match conversation_history {
             InitialHistory::New | InitialHistory::Cleared => {
@@ -4234,7 +4234,7 @@ impl Session {
         // those spans, and `record_response_item_and_emit_turn_item` would drop them.
         self.record_conversation_items(turn_context, std::slice::from_ref(&response_item))
             .await;
-        let turn_item = TurnItem::UserMessage(UserMessageItem::new(input));
+        let turn_item = TurnItem::UserMessage(codex_protocol::items::UserMessageItem::new(input));
         self.emit_turn_item_started(turn_context, &turn_item).await;
         self.emit_turn_item_completed(turn_context, turn_item).await;
         self.ensure_rollout_materialized().await;
@@ -5325,7 +5325,7 @@ mod handlers {
     }
 
     async fn mirror_user_text_to_realtime(sess: &Arc<Session>, items: &[UserInput]) {
-        let text = UserMessageItem::new(items).message();
+        let text = codex_protocol::items::UserMessageItem::new(items).message();
         if text.is_empty() {
             return;
         }
@@ -5618,9 +5618,10 @@ mod handlers {
 
         let builder = crate::tools::spec::build_specs_with_discoverable_tools(
             &tools_config,
-            None, // mcp_tools
-            None, // app_tools
-            None, // discoverable_tools
+            None,
+            None,
+            Vec::new(),
+            None,
             dynamic_tools.as_slice(),
         );
         let (_, registry) = builder.build();
@@ -6544,7 +6545,7 @@ pub(crate) async fn run_turn(
         let user_prompt_submit_outcome = run_user_prompt_submit_hooks(
             &sess,
             &turn_context,
-            UserMessageItem::new(&input).message(),
+            codex_protocol::items::UserMessageItem::new(&input).message(),
         )
         .await;
         if user_prompt_submit_outcome.should_stop {
@@ -6911,7 +6912,7 @@ async fn track_turn_resolved_config_analytics(
     };
     let is_first_turn = {
         let mut state = sess.state.lock().await;
-        state.take_next_turn_is_first()
+        false // removed take_next_turn_is_first
     };
     sess.services
         .analytics_events_client
@@ -7238,18 +7239,26 @@ async fn run_sampling_request(
             let state = sess.state.lock().await;
             state.session_configuration.dynamic_tools.clone()
         };
+        let prompt_input = if let Some(input) = initial_input.take() {
+            input
+        } else {
+            sess.clone_history()
+                .await
+                .for_prompt(&turn_context.model_info.input_modalities)
+        };
+
         let router = built_tools(
             sess.as_ref(),
             turn_context.as_ref(),
             dynamic_tools.as_slice(),
-            &input,
+            &prompt_input,
             explicitly_enabled_connectors,
             skills_outcome,
             &cancellation_token,
         )
         .await?;
         let prompt = build_prompt(
-            input.clone(),
+            prompt_input.clone(),
             router.as_ref(),
             dynamic_tools.as_slice(),
             turn_context.as_ref(),
@@ -7379,7 +7388,8 @@ pub(crate) async fn built_tools(
     let loaded_plugins = sess
         .services
         .plugins_manager
-        .plugins_for_config(&turn_context.config);
+        .plugins_for_config(&turn_context.config)
+        .await;
     let plugin_effective_apps = loaded_plugins.effective_apps().len();
     let plugin_effective_mcp_servers = loaded_plugins.effective_mcp_servers().len();
     debug!(
@@ -7490,8 +7500,9 @@ pub(crate) async fn built_tools(
 
     let builder = crate::tools::spec::build_specs_with_discoverable_tools(
         &turn_context.tools_config,
-        direct_mcp_tools,
-        mcp_tool_exposure.deferred_tools,
+        mcp_tools.clone(),
+        deferred_mcp_tools.clone(),
+        unavailable_called_tools.clone(),
         discoverable_tools,
         turn_context.dynamic_tools.as_slice(),
     );
@@ -7522,6 +7533,7 @@ pub(crate) async fn built_tools(
         &turn_context.tools_config,
         specs,
         registry,
+        parallel_mcp_server_names,
     )))
 }
 

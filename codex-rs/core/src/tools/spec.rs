@@ -151,6 +151,7 @@ fn llama_server_tool_spec(tool: &ToolSpec) -> Option<ToolSpec> {
         ToolSpec::ToolSearch { .. }
         | ToolSpec::ImageGeneration { .. }
         | ToolSpec::WebSearch { .. }
+        | ToolSpec::Namespace(_)
         | ToolSpec::Freeform(_) => None,
     }
 }
@@ -368,7 +369,8 @@ pub(crate) fn build_specs_with_discoverable_tools(
             &nested_config,
             mcp_tools.clone(),
             deferred_mcp_tools.clone(),
-            /*discoverable_tools*/ None,
+            unavailable_called_tools.clone(),
+            None,
             dynamic_tools,
         )
         .build();
@@ -1364,8 +1366,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 
         for (name, tool) in entries.into_iter() {
-            match mcp_tool_to_responses_api_tool(name.clone(), &tool) {
-                Ok(converted_tool) => {
+            match mcp_tool_to_responses_api_tool(&ToolName::from(name.as_str()), &tool) {                Ok(converted_tool) => {
                     push_tool_spec(
                         &mut builder,
                         ToolSpec::Function(converted_tool),

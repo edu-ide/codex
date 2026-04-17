@@ -71,13 +71,14 @@ impl ToolRouter {
             dynamic_tools,
         );
         let (specs, registry) = builder.build();
-        Self::from_config_with_specs(config, specs, registry)
+        Self::from_config_with_specs(config, specs, registry, parallel_mcp_server_names)
     }
 
     pub(crate) fn from_config_with_specs(
         config: &ToolsConfig,
         specs: Vec<ConfiguredToolSpec>,
         registry: ToolRegistry,
+        parallel_mcp_server_names: HashSet<String>,
     ) -> Self {
         let model_visible_specs = if config.code_mode_only_enabled {
             specs

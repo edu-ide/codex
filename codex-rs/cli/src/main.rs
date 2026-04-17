@@ -124,6 +124,10 @@ enum Subcommand {
     #[clap(name = "proxy", visible_aliases = ["desktop", "ilhae-proxy"])]
     Proxy,
 
+    /// Stop the native Ilhae model server (e.g. llama-server).
+    #[cfg(feature = "ilhae")]
+    Stop,
+
     /// Launch the Ilhae desktop app (downloads the macOS installer if missing).
     #[cfg(target_os = "macos")]
     App(app_cmd::AppCommand),
@@ -713,6 +717,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         #[cfg(feature = "ilhae")]
         Some(Subcommand::Proxy) => {
             codex_ilhae::run_ilhae_proxy().await?;
+        }
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Stop) => {
+            codex_ilhae::stop_native_runtime_for_cli().await?;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
             reject_remote_mode_for_subcommand(
