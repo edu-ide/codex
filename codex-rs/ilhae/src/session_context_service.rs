@@ -57,6 +57,23 @@ ADVISOR MODE IS ENABLED.
 </system_directive>
 "#;
 
+fn system2_advisor_instruction() -> Option<String> {
+    let target = crate::config::get_active_system2_target_config()?;
+    Some(format!(
+        r#"<system_directive priority="high">
+SYSTEM2 ADVISOR TOOL IS AVAILABLE.
+- Primary execution model: stay in fast executor mode by default.
+- If you hit ambiguity, strategic trade-offs, architecture questions, repeated failed attempts, or need a high-level plan before taking action, call `advisor_request`.
+- Use `advisor_request` sparingly and only when deeper reasoning is genuinely needed.
+- Do NOT call `advisor_request` for greetings, simple file reads, obvious single-step edits, or routine tool execution.
+- When you do call it, pass a focused question describing the decision, plan, or uncertainty you need resolved.
+- The advisor runs on profile `{}` and returns planning advice only; you remain responsible for tool use and final execution.
+</system_directive>
+"#,
+        target.target_profile_id
+    ))
+}
+
 const SELF_IMPROVEMENT_MODE_REVIEW_ONLY_INSTRUCTION: &str = r#"
 <system_directive priority="medium">
 SELF-IMPROVEMENT MODE IS ENABLED.
@@ -220,6 +237,9 @@ pub async fn prepare_session_prompt_context(
         prompt_blocks.push(ContentBlock::Text(TextContent::new(
             advisor_instruction_for_preset(&settings_snapshot.agent.advisor_preset).to_string(),
         )));
+    }
+    if let Some(system2_instruction) = system2_advisor_instruction() {
+        prompt_blocks.push(ContentBlock::Text(TextContent::new(system2_instruction)));
     }
     if settings_snapshot.agent.self_improvement_enabled {
         prompt_blocks.push(ContentBlock::Text(TextContent::new(

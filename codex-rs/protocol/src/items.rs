@@ -9,6 +9,11 @@ use crate::protocol::AgentReasoningRawContentEvent;
 use crate::protocol::ContextCompactedEvent;
 use crate::protocol::EventMsg;
 use crate::protocol::ImageGenerationEndEvent;
+use crate::protocol::LoopLifecycleCompletedEvent;
+use crate::protocol::LoopLifecycleFailedEvent;
+use crate::protocol::LoopLifecycleItemEvent;
+use crate::protocol::LoopLifecycleKind;
+use crate::protocol::LoopLifecycleStatus;
 use crate::protocol::UserMessageEvent;
 use crate::protocol::WebSearchEndEvent;
 use crate::user_input::ByteRange;
@@ -33,6 +38,7 @@ pub enum TurnItem {
     Reasoning(ReasoningItem),
     WebSearch(WebSearchItem),
     ImageGeneration(ImageGenerationItem),
+    LoopLifecycle(LoopLifecycleItem),
     ContextCompaction(ContextCompactionItem),
 }
 
@@ -125,6 +131,47 @@ pub struct ImageGenerationItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub saved_path: Option<AbsolutePathBuf>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+pub struct LoopLifecycleItem {
+    pub id: String,
+    pub kind: LoopLifecycleKind,
+    pub title: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub detail: Option<String>,
+    pub status: LoopLifecycleStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub counts: Option<std::collections::BTreeMap<String, i64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub duration_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub target_profile: Option<String>,
+}
+
+impl LoopLifecycleItem {
+    pub fn as_started_event(&self) -> EventMsg {
+        EventMsg::LoopLifecycleStarted(LoopLifecycleItemEvent { item: self.clone() })
+    }
+
+    pub fn as_completed_event(&self) -> EventMsg {
+        EventMsg::LoopLifecycleCompleted(LoopLifecycleCompletedEvent { item: self.clone() })
+    }
+
+    pub fn as_failed_event(&self) -> EventMsg {
+        EventMsg::LoopLifecycleFailed(LoopLifecycleFailedEvent { item: self.clone() })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
@@ -392,6 +439,7 @@ impl TurnItem {
             TurnItem::Reasoning(item) => item.id.clone(),
             TurnItem::WebSearch(item) => item.id.clone(),
             TurnItem::ImageGeneration(item) => item.id.clone(),
+            TurnItem::LoopLifecycle(item) => item.id.clone(),
             TurnItem::ContextCompaction(item) => item.id.clone(),
         }
     }
@@ -405,6 +453,7 @@ impl TurnItem {
             TurnItem::WebSearch(item) => vec![item.as_legacy_event()],
             TurnItem::ImageGeneration(item) => vec![item.as_legacy_event()],
             TurnItem::Reasoning(item) => item.as_legacy_events(show_raw_agent_reasoning),
+            TurnItem::LoopLifecycle(_) => Vec::new(),
             TurnItem::ContextCompaction(item) => vec![item.as_legacy_event()],
         }
     }
@@ -414,6 +463,7 @@ impl TurnItem {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use serde_json::json;
 
     #[test]
     fn hook_prompt_roundtrips_multiple_fragments() {
@@ -445,5 +495,81 @@ mod tests {
                 hook_run_id: "hook-run-1".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn loop_lifecycle_item_round_trips_json() {
+        let item = LoopLifecycleItem {
+            id: "loop-1".to_string(),
+            kind: LoopLifecycleKind::Advisor,
+            title: "Escalating to advisor".to_string(),
+            summary: "Need deeper planning".to_string(),
+            detail: Some("multi_file_refactor".to_string()),
+            status: LoopLifecycleStatus::Completed,
+            reason: Some("ambiguity".to_string()),
+            counts: Some(std::collections::BTreeMap::from([(
+                "attempts".to_string(),
+                2,
+            )])),
+            error: None,
+            duration_ms: Some(1200),
+            target_profile: Some("minimax-m2.7-turboquant".to_string()),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&item).expect("serialize loop lifecycle item"),
+            json!({
+                "id": "loop-1",
+                "kind": "advisor",
+                "title": "Escalating to advisor",
+                "summary": "Need deeper planning",
+                "detail": "multi_file_refactor",
+                "status": "completed",
+                "reason": "ambiguity",
+                "counts": { "attempts": 2 },
+                "error": null,
+                "duration_ms": 1200,
+                "target_profile": "minimax-m2.7-turboquant",
+            })
+        );
+
+        let decoded: LoopLifecycleItem =
+            serde_json::from_value(json!({
+                "id": "loop-1",
+                "kind": "advisor",
+                "title": "Escalating to advisor",
+                "summary": "Need deeper planning",
+                "detail": "multi_file_refactor",
+                "status": "completed",
+                "reason": "ambiguity",
+                "counts": { "attempts": 2 },
+                "duration_ms": 1200,
+                "target_profile": "minimax-m2.7-turboquant",
+            }))
+            .expect("deserialize loop lifecycle item");
+
+        assert_eq!(decoded, item);
+    }
+
+    #[test]
+    fn turn_item_id_and_legacy_events_support_loop_lifecycle() {
+        let item = LoopLifecycleItem {
+            id: "loop-2".to_string(),
+            kind: LoopLifecycleKind::VerificationLoop,
+            title: "Running verification".to_string(),
+            summary: "Executing targeted checks".to_string(),
+            detail: None,
+            status: LoopLifecycleStatus::InProgress,
+            reason: None,
+            counts: None,
+            error: None,
+            duration_ms: None,
+            target_profile: None,
+        };
+
+        let turn_item = TurnItem::LoopLifecycle(item.clone());
+        assert_eq!(turn_item.id(), "loop-2".to_string());
+        assert!(turn_item.as_legacy_events(false).is_empty());
+        assert_eq!(turn_item, TurnItem::LoopLifecycle(item));
     }
 }

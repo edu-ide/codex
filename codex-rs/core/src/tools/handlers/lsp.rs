@@ -70,10 +70,7 @@ impl ToolHandler for LspToolHandler {
         ToolKind::Function
     }
 
-    async fn handle(
-        &self,
-        invocation: ToolInvocation,
-    ) -> Result<Self::Output, FunctionCallError> {
+    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
         let arguments = match &invocation.payload {
             ToolPayload::Function { arguments } => arguments,
             _ => {
@@ -91,32 +88,33 @@ impl ToolHandler for LspToolHandler {
             .unwrap_or("");
 
         // Ensure LSP server is running for this file type
-        let server: std::sync::Arc<crate::tools::handlers::lsp_manager::LspServerInstance> = match self
-            .manager
-            .get_or_start_server(ext, &format!("file://{}", cwd.display()))
-            .await
-        {
-            Ok(s) => s,
-            Err(e) => {
-                let output = LspToolOutput {
-                    operation: args.operation,
-                    result: format!("Error starting LSP server: {}", e),
-                    file_path: args.file_path,
-                    result_count: Some(0),
-                    file_count: Some(0),
-                };
-                return Ok(FunctionToolOutput {
-                    body: vec![
-                        codex_protocol::models::FunctionCallOutputContentItem::InputText {
-                            text: serde_json::to_string(&output).unwrap_or_default(),
-                        },
-                    ],
-                    success: Some(false),
-                    post_tool_use_response: None,
-                    hint: None,
-                });
-            }
-        };
+        let server: std::sync::Arc<crate::tools::handlers::lsp_manager::LspServerInstance> =
+            match self
+                .manager
+                .get_or_start_server(ext, &format!("file://{}", cwd.display()))
+                .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    let output = LspToolOutput {
+                        operation: args.operation,
+                        result: format!("Error starting LSP server: {}", e),
+                        file_path: args.file_path,
+                        result_count: Some(0),
+                        file_count: Some(0),
+                    };
+                    return Ok(FunctionToolOutput {
+                        body: vec![
+                            codex_protocol::models::FunctionCallOutputContentItem::InputText {
+                                text: serde_json::to_string(&output).unwrap_or_default(),
+                            },
+                        ],
+                        success: Some(false),
+                        post_tool_use_response: None,
+                        hint: None,
+                    });
+                }
+            };
 
         // Try reading file content and open it in LSP
         let mut file_content: Option<String> = None;
@@ -155,7 +153,9 @@ impl ToolHandler for LspToolHandler {
                 let params = json!({
                     "textDocument": { "uri": format!("file://{}", args.file_path) }
                 });
-                server.send_request("textDocument/documentSymbol", params).await
+                server
+                    .send_request("textDocument/documentSymbol", params)
+                    .await
             }
             LspOperation::WorkspaceSymbol => {
                 let params = json!({
@@ -170,7 +170,10 @@ impl ToolHandler for LspToolHandler {
 
         let result_str = match lsp_res {
             Ok(val) => {
-                if matches!(args.operation, LspOperation::DocumentSymbol | LspOperation::WorkspaceSymbol) {
+                if matches!(
+                    args.operation,
+                    LspOperation::DocumentSymbol | LspOperation::WorkspaceSymbol
+                ) {
                     format_symbols(&val, 0, file_content.as_deref())
                 } else {
                     serde_json::to_string_pretty(&val).unwrap_or_else(|_| "[]".to_string())
@@ -200,31 +203,66 @@ impl ToolHandler for LspToolHandler {
     }
 }
 
-fn format_symbols(symbols: &serde_json::Value, indent: usize, file_content: Option<&str>) -> String {
+fn format_symbols(
+    symbols: &serde_json::Value,
+    indent: usize,
+    file_content: Option<&str>,
+) -> String {
     let mut out = String::new();
     if let Some(arr) = symbols.as_array() {
         for sym in arr {
             let name = sym.get("name").and_then(|n| n.as_str()).unwrap_or("?");
             let kind = sym.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
-            
+
             let location = sym.get("location");
-            let range = sym.get("range").or_else(|| location.and_then(|l| l.get("range")));
+            let range = sym
+                .get("range")
+                .or_else(|| location.and_then(|l| l.get("range")));
             let uri = location.and_then(|l| l.get("uri")).and_then(|u| u.as_str());
 
-            let start_line = range.and_then(|r| r.get("start")).and_then(|s| s.get("line")).and_then(|l| l.as_u64()).unwrap_or(0);
-            let end_line = range.and_then(|r| r.get("end")).and_then(|s| s.get("line")).and_then(|l| l.as_u64()).unwrap_or(0);
+            let start_line = range
+                .and_then(|r| r.get("start"))
+                .and_then(|s| s.get("line"))
+                .and_then(|l| l.as_u64())
+                .unwrap_or(0);
+            let end_line = range
+                .and_then(|r| r.get("end"))
+                .and_then(|s| s.get("line"))
+                .and_then(|l| l.as_u64())
+                .unwrap_or(0);
 
             let kind_str = match kind {
-                1 => "File", 2 => "Module", 3 => "Namespace", 4 => "Package", 5 => "Class",
-                6 => "Method", 7 => "Property", 8 => "Field", 9 => "Constructor", 10 => "Enum",
-                11 => "Interface", 12 => "Function", 13 => "Variable", 14 => "Constant", 
-                15 => "String", 16 => "Number", 17 => "Boolean", 18 => "Array", 19 => "Object",
-                20 => "Key", 21 => "Null", 22 => "EnumMember", 23 => "Struct", 24 => "Event",
-                25 => "Operator", 26 => "TypeParameter", _ => "Symbol"
+                1 => "File",
+                2 => "Module",
+                3 => "Namespace",
+                4 => "Package",
+                5 => "Class",
+                6 => "Method",
+                7 => "Property",
+                8 => "Field",
+                9 => "Constructor",
+                10 => "Enum",
+                11 => "Interface",
+                12 => "Function",
+                13 => "Variable",
+                14 => "Constant",
+                15 => "String",
+                16 => "Number",
+                17 => "Boolean",
+                18 => "Array",
+                19 => "Object",
+                20 => "Key",
+                21 => "Null",
+                22 => "EnumMember",
+                23 => "Struct",
+                24 => "Event",
+                25 => "Operator",
+                26 => "TypeParameter",
+                _ => "Symbol",
             };
 
             let prefix = "  ".repeat(indent);
-            
+
             let mut extra = String::new();
             if let Some(u) = uri {
                 let clean_uri = u.strip_prefix("file://").unwrap_or(u);
@@ -238,8 +276,14 @@ fn format_symbols(symbols: &serde_json::Value, indent: usize, file_content: Opti
                 }
             }
 
-            out.push_str(&format!("{}[Line {}-{}] [{}] {}{}\n", 
-                prefix, start_line + 1, end_line + 1, kind_str, name, extra
+            out.push_str(&format!(
+                "{}[Line {}-{}] [{}] {}{}\n",
+                prefix,
+                start_line + 1,
+                end_line + 1,
+                kind_str,
+                name,
+                extra
             ));
 
             if let Some(children) = sym.get("children") {

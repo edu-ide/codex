@@ -25,9 +25,9 @@ pub use app::AppExitInfo;
 pub use app::ExitReason;
 use app_server_session::AcpConversationRuntime;
 use app_server_session::AppServerSession as NativeAppServerSession;
-use app_server_session::ConversationTurnRequest;
-use app_server_session::ConversationRuntime;
 use app_server_session::AppServerStartedThread;
+use app_server_session::ConversationRuntime;
+use app_server_session::ConversationTurnRequest;
 use app_server_session::SelectedConversationRuntime;
 use codex_app_server_client::AppServerClient;
 use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
@@ -45,6 +45,7 @@ use codex_app_server_protocol::ThreadSourceKind;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
+use codex_ilhae::current_native_backend_capability_profile;
 use codex_login::AuthConfig;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::enforce_login_restrictions;
@@ -65,7 +66,6 @@ use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
 use codex_utils_oss::hydrate_oss_model_name;
 use color_eyre::eyre::WrapErr;
-use codex_ilhae::current_native_backend_capability_profile;
 use cwd_prompt::CwdPromptAction;
 use cwd_prompt::CwdPromptOutcome;
 use cwd_prompt::CwdSelection;
@@ -502,7 +502,9 @@ pub(crate) enum SessionLookupRuntime {
 impl SessionLookupRuntime {
     pub fn with_remote_cwd_override(self, override_path: Option<PathBuf>) -> Self {
         match self {
-            Self::AppServer(runtime) => Self::AppServer(runtime.with_remote_cwd_override(override_path)),
+            Self::AppServer(runtime) => {
+                Self::AppServer(runtime.with_remote_cwd_override(override_path))
+            }
             Self::Acp(runtime) => Self::Acp(runtime),
         }
     }
@@ -538,7 +540,10 @@ impl ConversationRuntime for SessionLookupRuntime {
         }
     }
 
-    async fn start_thread(&mut self, config: &Config) -> color_eyre::Result<AppServerStartedThread> {
+    async fn start_thread(
+        &mut self,
+        config: &Config,
+    ) -> color_eyre::Result<AppServerStartedThread> {
         match self {
             Self::AppServer(runtime) => runtime.start_thread(config).await,
             Self::Acp(runtime) => runtime.start_thread(config).await,
@@ -631,9 +636,9 @@ async fn start_session_lookup_runtime(
         environment_manager,
     )
     .await?;
-    Ok(SessionLookupRuntime::AppServer(NativeAppServerSession::new(
-        app_server,
-    )))
+    Ok(SessionLookupRuntime::AppServer(
+        NativeAppServerSession::new(app_server),
+    ))
 }
 
 pub(crate) async fn start_session_lookup_runtime_for_picker(
@@ -1062,6 +1067,20 @@ pub async fn run_main(
     )
     .await;
 
+    let _sglang_qwen_proxy = codex_responses_api_proxy::maybe_start_sglang_qwen_proxy(
+        &config.model_provider_id,
+        config.model_provider.base_url.as_deref(),
+        arg0_paths.codex_self_exe.as_deref(),
+    )
+    .map_err(std::io::Error::other)?;
+    if let Some(proxy) = _sglang_qwen_proxy.as_ref() {
+        let proxy_base_url = proxy.base_url().to_string();
+        config.model_provider.base_url = Some(proxy_base_url.clone());
+        if let Some(provider) = config.model_providers.get_mut(&config.model_provider_id) {
+            provider.base_url = Some(proxy_base_url.clone());
+        }
+    }
+
     if cli.oss
         && let Err(err) = hydrate_oss_model_name(&mut config).await
     {
@@ -1250,7 +1269,10 @@ async fn run_ratatui_app(
 
     let should_prewarm_announcements = std::env::current_exe()
         .ok()
-        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
         .is_none_or(|name| name != "ilhae");
     if should_prewarm_announcements {
         tooltips::announcement::prewarm();
@@ -1646,7 +1668,27 @@ async fn run_ratatui_app(
     }
 
     set_default_client_residency_requirement(config.enforce_residency.value());
-    let active_profile = config.active_profile.clone();
+    let active_profile = cli
+        .config_profile
+        .clone()
+        .or_else(|| config.active_profile.clone());
+    config.active_profile = active_profile.clone();
+    if let Some(profile_id) = active_profile.as_deref()
+        && let Some(runtime) = codex_ilhae::native_runtime_context()
+    {
+        let (_, profile) = codex_ilhae::config::get_ilhae_profile(Some(profile_id));
+        if let Some(profile) = profile
+            && let Err(err) = codex_ilhae::config::apply_ilhae_profile_projection(
+                &runtime.settings_store,
+                &profile,
+            )
+        {
+            warn!(
+                "failed to project selected ilhae profile `{}` into runtime settings: {}",
+                profile_id, err
+            );
+        }
+    }
     let should_show_trust_screen = should_show_trust_screen(&config);
     let should_prompt_windows_sandbox_nux_at_startup = cfg!(target_os = "windows")
         && trust_decision_was_made
@@ -1994,6 +2036,7 @@ fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_server_session::AppServerSession;
     use crate::legacy_core::config::ConfigBuilder;
     use crate::legacy_core::config::ConfigOverrides;
     use codex_app_server_protocol::ClientRequest;

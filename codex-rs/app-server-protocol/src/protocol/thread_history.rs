@@ -39,6 +39,11 @@ use codex_protocol::protocol::ImageGenerationBeginEvent;
 use codex_protocol::protocol::ImageGenerationEndEvent;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
+use codex_protocol::protocol::LoopLifecycleCompletedEvent;
+use codex_protocol::protocol::LoopLifecycleFailedEvent;
+use codex_protocol::protocol::LoopLifecycleItemEvent;
+use codex_protocol::protocol::LoopLifecycleProgressEvent;
+use codex_protocol::protocol::LoopLifecycleStatus as CoreLoopLifecycleStatus;
 use codex_protocol::protocol::McpToolCallBeginEvent;
 use codex_protocol::protocol::McpToolCallEndEvent;
 use codex_protocol::protocol::PatchApplyBeginEvent;
@@ -178,6 +183,12 @@ impl ThreadHistoryBuilder {
             EventMsg::ViewImageToolCall(payload) => self.handle_view_image_tool_call(payload),
             EventMsg::ImageGenerationBegin(payload) => self.handle_image_generation_begin(payload),
             EventMsg::ImageGenerationEnd(payload) => self.handle_image_generation_end(payload),
+            EventMsg::LoopLifecycleStarted(payload) => self.handle_loop_lifecycle_started(payload),
+            EventMsg::LoopLifecycleProgress(payload) => self.handle_loop_lifecycle_progress(payload),
+            EventMsg::LoopLifecycleCompleted(payload) => {
+                self.handle_loop_lifecycle_completed(payload)
+            }
+            EventMsg::LoopLifecycleFailed(payload) => self.handle_loop_lifecycle_failed(payload),
             EventMsg::CollabAgentSpawnBegin(payload) => {
                 self.handle_collab_agent_spawn_begin(payload)
             }
@@ -344,6 +355,7 @@ impl ThreadHistoryBuilder {
             | codex_protocol::items::TurnItem::Reasoning(_)
             | codex_protocol::items::TurnItem::WebSearch(_)
             | codex_protocol::items::TurnItem::ImageGeneration(_)
+            | codex_protocol::items::TurnItem::LoopLifecycle(_)
             | codex_protocol::items::TurnItem::ContextCompaction(_) => {}
         }
     }
@@ -365,8 +377,43 @@ impl ThreadHistoryBuilder {
             | codex_protocol::items::TurnItem::Reasoning(_)
             | codex_protocol::items::TurnItem::WebSearch(_)
             | codex_protocol::items::TurnItem::ImageGeneration(_)
+            | codex_protocol::items::TurnItem::LoopLifecycle(_)
             | codex_protocol::items::TurnItem::ContextCompaction(_) => {}
         }
+    }
+
+    fn handle_loop_lifecycle_started(&mut self, payload: &LoopLifecycleItemEvent) {
+        self.upsert_item_in_current_turn(ThreadItem::from(
+            codex_protocol::items::TurnItem::LoopLifecycle(payload.item.clone()),
+        ));
+    }
+
+    fn handle_loop_lifecycle_progress(&mut self, payload: &LoopLifecycleProgressEvent) {
+        self.upsert_item_in_current_turn(ThreadItem::LoopLifecycle {
+            id: payload.item_id.clone(),
+            kind: payload.kind.clone(),
+            title: String::new(),
+            summary: payload.summary.clone(),
+            detail: payload.detail.clone(),
+            status: CoreLoopLifecycleStatus::InProgress,
+            reason: None,
+            counts: payload.counts.clone(),
+            error: None,
+            duration_ms: None,
+            target_profile: None,
+        });
+    }
+
+    fn handle_loop_lifecycle_completed(&mut self, payload: &LoopLifecycleCompletedEvent) {
+        self.upsert_item_in_current_turn(ThreadItem::from(
+            codex_protocol::items::TurnItem::LoopLifecycle(payload.item.clone()),
+        ));
+    }
+
+    fn handle_loop_lifecycle_failed(&mut self, payload: &LoopLifecycleFailedEvent) {
+        self.upsert_item_in_current_turn(ThreadItem::from(
+            codex_protocol::items::TurnItem::LoopLifecycle(payload.item.clone()),
+        ));
     }
 
     fn handle_web_search_begin(&mut self, payload: &WebSearchBeginEvent) {
@@ -1174,6 +1221,7 @@ mod tests {
     use codex_protocol::mcp::CallToolResult;
     use codex_protocol::models::MessagePhase as CoreMessagePhase;
     use codex_protocol::models::WebSearchAction as CoreWebSearchAction;
+    use codex_protocol::items::LoopLifecycleItem as CoreLoopLifecycleItem;
     use codex_protocol::parse_command::ParsedCommand;
     use codex_protocol::protocol::AgentMessageEvent;
     use codex_protocol::protocol::AgentReasoningEvent;
@@ -1185,6 +1233,10 @@ mod tests {
     use codex_protocol::protocol::ExecCommandEndEvent;
     use codex_protocol::protocol::ExecCommandSource;
     use codex_protocol::protocol::ItemStartedEvent;
+    use codex_protocol::protocol::LoopLifecycleCompletedEvent;
+    use codex_protocol::protocol::LoopLifecycleItemEvent;
+    use codex_protocol::protocol::LoopLifecycleKind as CoreLoopLifecycleKind;
+    use codex_protocol::protocol::LoopLifecycleStatus as CoreLoopLifecycleStatus;
     use codex_protocol::protocol::McpInvocation;
     use codex_protocol::protocol::McpToolCallEndEvent;
     use codex_protocol::protocol::PatchApplyBeginEvent;
@@ -1866,6 +1918,80 @@ mod tests {
                     message: "boom".into(),
                 }),
                 duration_ms: Some(8),
+            }
+        );
+    }
+
+    #[test]
+    fn reconstructs_loop_lifecycle_items_from_persisted_events() {
+        let events = vec![
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-loop".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::LoopLifecycleStarted(LoopLifecycleItemEvent {
+                item: CoreLoopLifecycleItem {
+                    id: "loop-1".into(),
+                    kind: CoreLoopLifecycleKind::Advisor,
+                    title: "Escalating to advisor".into(),
+                    summary: "Need deeper planning".into(),
+                    detail: Some("multi_file_refactor".into()),
+                    status: CoreLoopLifecycleStatus::InProgress,
+                    reason: Some("ambiguity".into()),
+                    counts: Some(std::collections::BTreeMap::from([(
+                        "attempts".to_string(),
+                        1,
+                    )])),
+                    error: None,
+                    duration_ms: None,
+                    target_profile: Some("minimax-m2.7-turboquant".into()),
+                },
+            }),
+            EventMsg::LoopLifecycleCompleted(LoopLifecycleCompletedEvent {
+                item: CoreLoopLifecycleItem {
+                    id: "loop-1".into(),
+                    kind: CoreLoopLifecycleKind::Advisor,
+                    title: "Escalating to advisor".into(),
+                    summary: "Received strategy".into(),
+                    detail: Some("multi_file_refactor".into()),
+                    status: CoreLoopLifecycleStatus::Completed,
+                    reason: Some("ambiguity".into()),
+                    counts: Some(std::collections::BTreeMap::from([(
+                        "attempts".to_string(),
+                        1,
+                    )])),
+                    error: None,
+                    duration_ms: Some(1200),
+                    target_profile: Some("minimax-m2.7-turboquant".into()),
+                },
+            }),
+        ];
+
+        let items = events
+            .into_iter()
+            .map(RolloutItem::EventMsg)
+            .collect::<Vec<_>>();
+        let turns = build_turns_from_rollout_items(&items);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items[0],
+            ThreadItem::LoopLifecycle {
+                id: "loop-1".into(),
+                kind: CoreLoopLifecycleKind::Advisor,
+                title: "Escalating to advisor".into(),
+                summary: "Received strategy".into(),
+                detail: Some("multi_file_refactor".into()),
+                status: CoreLoopLifecycleStatus::Completed,
+                reason: Some("ambiguity".into()),
+                counts: Some(std::collections::BTreeMap::from([(
+                    "attempts".to_string(),
+                    1,
+                )])),
+                error: None,
+                duration_ms: Some(1200),
+                target_profile: Some("minimax-m2.7-turboquant".into()),
             }
         );
     }

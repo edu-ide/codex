@@ -1,3 +1,4 @@
+use codex_protocol::config_types::TrustLevel;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
@@ -68,6 +69,7 @@ pub fn resolve_ilhae_codex_home_dir() -> PathBuf {
 pub struct IlhaeTomlConfig {
     pub profile: IlhaeActiveProfileConfig,
     pub profiles: BTreeMap<String, IlhaeProfileConfig>,
+    pub projects: BTreeMap<String, IlhaeProjectConfig>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -85,7 +87,15 @@ pub struct IlhaeProfileConfig {
     pub task: IlhaeProfileScopeConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub knowledge: Option<IlhaeProfileKnowledgeConfig>,
+    pub system2: IlhaeProfileSystem2Config,
     pub native_runtime: IlhaeProfileNativeRuntimeConfig,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[serde(default)]
+pub struct IlhaeProjectConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_level: Option<TrustLevel>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -140,6 +150,21 @@ pub struct IlhaeProfileNativeRuntimeConfig {
     #[serde(default = "default_native_runtime_startup_timeout_secs")]
     pub startup_timeout_secs: u64,
     pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[serde(default)]
+pub struct IlhaeProfileSystem2Config {
+    pub enabled: bool,
+    pub profile: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedSystem2TargetConfig {
+    pub source_profile_id: String,
+    pub target_profile_id: String,
+    pub base_url: String,
+    pub model_name: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -406,6 +431,7 @@ pub fn dto_to_profile(dto: &crate::IlhaeAppProfileDto) -> IlhaeProfileConfig {
                     knowledge.report_relative_path.clone()
                 },
             }),
+        system2: IlhaeProfileSystem2Config::default(),
         native_runtime: IlhaeProfileNativeRuntimeConfig::default(),
     }
 }
@@ -511,10 +537,16 @@ pub fn set_active_ilhae_profile(profile_id: &str) -> Result<crate::IlhaeAppProfi
     Ok(profile_to_dto(profile_id, &profile))
 }
 
-pub fn get_active_native_runtime_config() -> Option<(String, IlhaeProfileNativeRuntimeConfig)> {
+pub fn get_native_runtime_config(
+    profile_id: Option<&str>,
+) -> Option<(String, IlhaeProfileNativeRuntimeConfig)> {
     let config = load_ilhae_toml_config();
-    let active_profile = config.profile.active?;
-    let profile = config.profiles.get(&active_profile)?;
+    let target_profile = profile_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .or(config.profile.active)?;
+    let profile = config.profiles.get(&target_profile)?;
     let engine_id = profile
         .agent
         .engine_id
@@ -533,7 +565,43 @@ pub fn get_active_native_runtime_config() -> Option<(String, IlhaeProfileNativeR
     if !profile.native_runtime.enabled {
         return None;
     }
-    Some((active_profile, profile.native_runtime.clone()))
+    Some((target_profile, profile.native_runtime.clone()))
+}
+
+pub fn get_active_native_runtime_config() -> Option<(String, IlhaeProfileNativeRuntimeConfig)> {
+    get_native_runtime_config(None)
+}
+
+pub fn get_active_system2_target_config() -> Option<ResolvedSystem2TargetConfig> {
+    let config = load_ilhae_toml_config();
+    let source_profile_id = config.profile.active?;
+    let source_profile = config.profiles.get(&source_profile_id)?;
+    if !source_profile.system2.enabled {
+        return None;
+    }
+
+    let target_profile_id = source_profile.system2.profile.trim().to_string();
+    if target_profile_id.is_empty() {
+        return None;
+    }
+
+    let target_profile = config.profiles.get(&target_profile_id)?;
+    let base_url = target_profile.native_runtime.base_url.trim().to_string();
+    if base_url.is_empty() {
+        return None;
+    }
+
+    let model_name = Path::new(&target_profile.native_runtime.model_path)
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .filter(|value| !value.is_empty())?;
+
+    Some(ResolvedSystem2TargetConfig {
+        source_profile_id,
+        target_profile_id,
+        base_url,
+        model_name,
+    })
 }
 
 pub fn apply_ilhae_profile_projection(
@@ -1058,6 +1126,22 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
     );
     root.insert("profiles".to_string(), toml::Value::Table(profiles));
 
+    let mut projects = toml::value::Table::new();
+    for (project_path, project) in &config.projects {
+        let Some(trust_level) = project.trust_level else {
+            continue;
+        };
+        let mut project_table = toml::value::Table::new();
+        project_table.insert(
+            "trust_level".to_string(),
+            toml::Value::String(trust_level.to_string()),
+        );
+        projects.insert(project_path.clone(), toml::Value::Table(project_table));
+    }
+    if !projects.is_empty() {
+        root.insert("projects".to_string(), toml::Value::Table(projects));
+    }
+
     root
 }
 
@@ -1089,6 +1173,21 @@ pub fn prepare_ilhae_codex_home() -> Result<PathBuf, String> {
     unsafe {
         std::env::set_var("CODEX_HOME", &codex_home);
         std::env::set_var("ILHAE_RUNTIME", "1");
+    }
+    if let Some(system2) = get_active_system2_target_config() {
+        unsafe {
+            std::env::set_var("ILHAE_SYSTEM2_ENABLED", "1");
+            std::env::set_var("ILHAE_SYSTEM2_PROFILE", system2.target_profile_id);
+            std::env::set_var("ILHAE_SYSTEM2_BASE_URL", system2.base_url);
+            std::env::set_var("ILHAE_SYSTEM2_MODEL", system2.model_name);
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("ILHAE_SYSTEM2_ENABLED");
+            std::env::remove_var("ILHAE_SYSTEM2_PROFILE");
+            std::env::remove_var("ILHAE_SYSTEM2_BASE_URL");
+            std::env::remove_var("ILHAE_SYSTEM2_MODEL");
+        }
     }
     Ok(codex_home)
 }
@@ -1297,5 +1396,144 @@ mod tests {
             Some("openai")
         );
         assert!(review_profile.get("url").is_none());
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_carries_project_trust_into_managed_config() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let config_toml = r#"
+[profile]
+active = "qwen-35b-sglang"
+
+[profiles.qwen-35b-sglang.agent]
+engine = "sglang"
+command = "ilhae"
+
+[projects."/mnt/nvme0n1p2/workspace/monorepo"]
+trust_level = "trusted"
+
+[projects."/mnt/nvme0n1p2/workspace/monorepo/services/ilhae-agent"]
+trust_level = "untrusted"
+"#;
+        std::fs::write(tmp.path().join("config.toml"), config_toml).expect("write config");
+
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed = std::fs::read_to_string(tmp.path().join("managed_config.toml"))
+            .expect("read managed config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let projects = parsed
+            .get("projects")
+            .and_then(toml::Value::as_table)
+            .expect("projects table");
+
+        let trusted = projects
+            .get("/mnt/nvme0n1p2/workspace/monorepo")
+            .and_then(toml::Value::as_table)
+            .expect("trusted project entry");
+        assert_eq!(
+            trusted.get("trust_level").and_then(toml::Value::as_str),
+            Some("trusted")
+        );
+
+        let untrusted = projects
+            .get("/mnt/nvme0n1p2/workspace/monorepo/services/ilhae-agent")
+            .and_then(toml::Value::as_table)
+            .expect("untrusted project entry");
+        assert_eq!(
+            untrusted.get("trust_level").and_then(toml::Value::as_str),
+            Some("untrusted")
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_sets_system2_env_projection() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let config_toml = r#"
+[profile]
+active = "qwen3.6-local"
+
+[profiles."qwen3.6-local".agent]
+engine = "ilhae"
+command = "ilhae"
+
+[profiles."qwen3.6-local".system2]
+enabled = true
+profile = "minimax-m2.7-turboquant"
+
+[profiles."minimax-m2.7-turboquant".agent]
+engine = "ilhae"
+command = "ilhae"
+
+[profiles."minimax-m2.7-turboquant".native_runtime]
+enabled = false
+base_url = "http://192.168.219.113:8080/v1"
+model_path = "/home/sk/models/MiniMax-M2.7-GGUF/UD-IQ3_XXS/MiniMax-M2.7-UD-IQ3_XXS-00001-of-00003.gguf"
+"#;
+        std::fs::write(tmp.path().join("config.toml"), config_toml).expect("write config");
+
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        assert!(
+            std::env::var("ILHAE_SYSTEM2_ENABLED").ok().as_deref() == Some("1"),
+            "system2 should be enabled"
+        );
+        assert_eq!(
+            std::env::var("ILHAE_SYSTEM2_PROFILE").ok().as_deref(),
+            Some("minimax-m2.7-turboquant")
+        );
+        assert_eq!(
+            std::env::var("ILHAE_SYSTEM2_BASE_URL").ok().as_deref(),
+            Some("http://192.168.219.113:8080/v1")
+        );
+        assert_eq!(
+            std::env::var("ILHAE_SYSTEM2_MODEL").ok().as_deref(),
+            Some("MiniMax-M2.7-UD-IQ3_XXS-00001-of-00003.gguf")
+        );
+    }
+
+    #[test]
+    fn active_profile_system2_resolves_target_profile() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let config_toml = r#"
+[profile]
+active = "qwen3.6-local"
+
+[profiles."qwen3.6-local".agent]
+engine = "ilhae"
+command = "ilhae"
+
+[profiles."qwen3.6-local".system2]
+enabled = true
+profile = "minimax-m2.7-turboquant"
+
+[profiles."minimax-m2.7-turboquant".agent]
+engine = "minimax-turboquant"
+command = "ilhae"
+
+[profiles."minimax-m2.7-turboquant".native_runtime]
+enabled = false
+base_url = "http://192.168.219.113:8080/v1"
+model_path = "/home/sk/models/MiniMax-M2.7-GGUF/UD-IQ3_XXS/MiniMax-M2.7-UD-IQ3_XXS-00001-of-00003.gguf"
+"#;
+        std::fs::write(tmp.path().join("config.toml"), config_toml).expect("write config");
+
+        let resolved = get_active_system2_target_config().expect("system2 target");
+        assert_eq!(resolved.source_profile_id, "qwen3.6-local");
+        assert_eq!(resolved.target_profile_id, "minimax-m2.7-turboquant");
+        assert_eq!(resolved.base_url, "http://192.168.219.113:8080/v1");
+        assert_eq!(
+            resolved.model_name,
+            "MiniMax-M2.7-UD-IQ3_XXS-00001-of-00003.gguf"
+        );
     }
 }

@@ -69,6 +69,7 @@ use crate::test_support::test_path_buf;
 #[cfg(test)]
 use crate::test_support::test_path_display;
 use crate::tui;
+use crate::tui::Tui;
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
 use crate::version::CODEX_CLI_VERSION;
@@ -109,14 +110,11 @@ use codex_config::types::ApprovalsReviewer;
 use codex_config::types::ModelAvailabilityNuxConfig;
 use codex_exec_server::EnvironmentManager;
 use codex_features::Feature;
-use codex_ilhae::BootstrappedIlhaeRuntime;
 use codex_ilhae::capabilities::EngineCapabilityProfile;
 use codex_ilhae::capabilities::engine_capability_profile;
 use codex_ilhae::current_native_backend_capability_profile;
 use codex_ilhae::helpers::ILHAE_AGENT_ID;
 use codex_ilhae::native_runtime_context;
-use codex_ilhae::notify_engine_state;
-use codex_ilhae::types::NOTIF_APP_SESSION_EVENT;
 use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_models_manager::model_presets::HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG;
 use codex_models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG;
@@ -176,6 +174,7 @@ use uuid::Uuid;
 mod agent_navigation;
 mod app_server_adapter;
 pub(crate) mod app_server_requests;
+mod ilhae_runtime_controls;
 mod loaded_threads;
 mod pending_interactive_replay;
 
@@ -1115,91 +1114,6 @@ impl App {
         ));
     }
 
-    fn report_ilhae_runtime_control_unsupported(&mut self, command: &str) {
-        let backend = if self.remote_app_server_url.is_some() {
-            "remote runtime"
-        } else {
-            "current backend"
-        };
-        self.chat_widget.add_error_message(format!(
-            "`/{command}` is only supported in the native embedded ilhae runtime; the {backend} cannot mutate runtime state."
-        ));
-    }
-
-    fn native_ilhae_runtime_for_control(
-        &mut self,
-        command: &str,
-    ) -> Option<BootstrappedIlhaeRuntime> {
-        let runtime = native_runtime_context();
-        if runtime.is_none() {
-            self.report_ilhae_runtime_control_unsupported(command);
-        }
-        runtime
-    }
-
-    async fn finish_ilhae_runtime_mutation(&mut self, runtime: &BootstrappedIlhaeRuntime) {
-        notify_engine_state(&runtime.cx_cache, &runtime.settings_store).await;
-        self.sync_backend_capabilities();
-        self.refresh_status_line();
-    }
-
-    async fn mutate_native_ilhae_runtime<F>(&mut self, command: &'static str, mutator: F)
-    where
-        F: FnOnce(&BootstrappedIlhaeRuntime) -> Result<(), String>,
-    {
-        let Some(runtime) = self.native_ilhae_runtime_for_control(command) else {
-            return;
-        };
-
-        if let Err(err) = mutator(&runtime) {
-            self.chat_widget
-                .add_error_message(format!("Failed to apply `/{command}`: {err}"));
-            return;
-        }
-
-        self.finish_ilhae_runtime_mutation(&runtime).await;
-    }
-
-    async fn mutate_native_ilhae_active_profile<F>(&mut self, command: &'static str, mutator: F)
-    where
-        F: FnOnce(&mut codex_ilhae::IlhaeAppProfileDto) -> Result<(), String>,
-    {
-        let Some(runtime) = self.native_ilhae_runtime_for_control(command) else {
-            return;
-        };
-
-        let (active_profile_id, profile) = codex_ilhae::config::get_ilhae_profile(None);
-        let mut profile = profile.unwrap_or_else(|| codex_ilhae::IlhaeAppProfileDto {
-            id: active_profile_id.unwrap_or_else(|| "default".to_string()),
-            ..Default::default()
-        });
-
-        if let Err(err) = mutator(&mut profile) {
-            self.chat_widget
-                .add_error_message(format!("Failed to prepare `/{command}`: {err}"));
-            return;
-        }
-
-        let persisted = match codex_ilhae::config::upsert_ilhae_profile(profile, true) {
-            Ok((_, profile)) => profile,
-            Err(err) => {
-                self.chat_widget
-                    .add_error_message(format!("Failed to apply `/{command}`: {err}"));
-                return;
-            }
-        };
-
-        if let Err(err) =
-            codex_ilhae::config::apply_ilhae_profile_projection(&runtime.settings_store, &persisted)
-        {
-            self.chat_widget
-                .add_error_message(format!("Failed to project `/{command}`: {err}"));
-            return;
-        }
-
-        self.finish_ilhae_runtime_mutation(&runtime).await;
-    }
-
     pub fn chatwidget_init_for_forked_or_resumed_thread(
         &self,
         tui: &mut tui::Tui,
@@ -2079,22 +1993,6 @@ impl App {
         }
     }
 
-    async fn flush_ilhae_runtime_events(&mut self, app_server: &mut AppServerSession) {
-        let Some(runtime) = native_runtime_context() else {
-            return;
-        };
-        while let Some(event) = app_server.next_ilhae_event().await {
-            runtime
-                .cx_cache
-                .notify_desktop_for_session(
-                    NOTIF_APP_SESSION_EVENT,
-                    serde_json::to_value(&event).unwrap_or(serde_json::Value::Null),
-                    event.session_id(),
-                )
-                .await;
-        }
-    }
-
     async fn submit_active_thread_op(
         &mut self,
         app_server: &mut AppServerSession,
@@ -2484,6 +2382,45 @@ impl App {
         self.transcript_cells.remove(index);
         if let Some(Overlay::Transcript(overlay)) = &mut self.overlay {
             overlay.replace_cells(self.transcript_cells.clone());
+        }
+    }
+
+    fn replace_first_session_info_cell(&mut self, cell: Arc<dyn HistoryCell>) -> bool {
+        let Some(index) = self
+            .transcript_cells
+            .iter()
+            .position(|existing| existing.as_any().is::<history_cell::SessionInfoCell>())
+        else {
+            return false;
+        };
+
+        self.transcript_cells[index] = cell;
+        true
+    }
+
+    fn insert_history_cell(&mut self, tui: &mut Tui, cell: Arc<dyn HistoryCell>) {
+        if let Some(Overlay::Transcript(t)) = &mut self.overlay {
+            t.insert_cell(cell.clone());
+            tui.frame_requester().schedule_frame();
+        }
+        self.transcript_cells.push(cell.clone());
+        let mut display = cell.display_lines(tui.terminal.last_known_screen_size.width);
+        if !display.is_empty() {
+            // Only insert a separating blank line for new cells that are not
+            // part of an ongoing stream. Streaming continuations should not
+            // accrue extra blank lines between chunks.
+            if !cell.is_stream_continuation() {
+                if self.has_emitted_history_lines {
+                    display.insert(0, Line::from(""));
+                } else {
+                    self.has_emitted_history_lines = true;
+                }
+            }
+            if self.overlay.is_some() {
+                self.deferred_history_lines.extend(display);
+            } else {
+                tui.insert_history_lines(display);
+            }
         }
     }
 
@@ -4725,28 +4662,17 @@ impl App {
             }
             AppEvent::InsertHistoryCell(cell) => {
                 let cell: Arc<dyn HistoryCell> = cell.into();
-                if let Some(Overlay::Transcript(t)) = &mut self.overlay {
-                    t.insert_cell(cell.clone());
+                self.insert_history_cell(tui, cell);
+            }
+            AppEvent::ReplaceSessionInfoCell(cell) => {
+                let cell: Arc<dyn HistoryCell> = cell.into();
+                if self.replace_first_session_info_cell(cell.clone()) {
+                    if let Some(Overlay::Transcript(overlay)) = &mut self.overlay {
+                        overlay.replace_cells(self.transcript_cells.clone());
+                    }
                     tui.frame_requester().schedule_frame();
-                }
-                self.transcript_cells.push(cell.clone());
-                let mut display = cell.display_lines(tui.terminal.last_known_screen_size.width);
-                if !display.is_empty() {
-                    // Only insert a separating blank line for new cells that are not
-                    // part of an ongoing stream. Streaming continuations should not
-                    // accrue extra blank lines between chunks.
-                    if !cell.is_stream_continuation() {
-                        if self.has_emitted_history_lines {
-                            display.insert(0, Line::from(""));
-                        } else {
-                            self.has_emitted_history_lines = true;
-                        }
-                    }
-                    if self.overlay.is_some() {
-                        self.deferred_history_lines.extend(display);
-                    } else {
-                        tui.insert_history_lines(display);
-                    }
+                } else {
+                    self.insert_history_cell(tui, cell);
                 }
             }
             AppEvent::ApplyThreadRollback { num_turns } => {
@@ -5018,78 +4944,28 @@ impl App {
                 self.refresh_status_line();
             }
             AppEvent::SetIlhaeRuntimeProfile { profile_id } => {
-                self.mutate_native_ilhae_runtime("profile", move |runtime| {
-                    let profile = codex_ilhae::config::set_active_ilhae_profile(&profile_id)?;
-                    codex_ilhae::config::apply_ilhae_profile_projection(
-                        &runtime.settings_store,
-                        &profile,
-                    )
-                })
-                .await;
+                self.set_ilhae_runtime_profile(profile_id).await;
             }
             AppEvent::SetIlhaeAdvisorMode { enabled, preset } => {
-                self.mutate_native_ilhae_active_profile("advisor", move |profile| {
-                    let next_enabled = enabled.unwrap_or(!profile.agent.advisor);
-                    profile.agent.advisor = next_enabled;
-
-                    let next_preset = preset
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(ToOwned::to_owned)
-                        .or_else(|| {
-                            (next_enabled && profile.agent.advisor_preset.trim().is_empty())
-                                .then(codex_ilhae::settings_types::default_advisor_preset)
-                        });
-                    if let Some(next_preset) = next_preset {
-                        profile.agent.advisor_preset = next_preset;
-                    }
-                    Ok(())
-                })
-                .await;
+                self.set_ilhae_advisor_mode(enabled, preset).await;
             }
             AppEvent::SetIlhaeAutoMode { enabled } => {
-                self.mutate_native_ilhae_active_profile("auto", move |profile| {
-                    profile.agent.auto_mode = enabled.unwrap_or(!profile.agent.auto_mode);
-                    Ok(())
-                })
-                .await;
+                self.set_ilhae_auto_mode(enabled).await;
             }
             AppEvent::SetIlhaeTeamMode { enabled } => {
-                self.mutate_native_ilhae_active_profile("team", move |profile| {
-                    profile.agent.team_mode = enabled.unwrap_or(!profile.agent.team_mode);
-                    Ok(())
-                })
-                .await;
+                self.set_ilhae_team_mode(enabled).await;
             }
             AppEvent::SetIlhaeDreamMode { enabled } => {
-                self.mutate_native_ilhae_active_profile("dream", move |profile| {
-                    profile.agent.dream_mode = enabled.unwrap_or(!profile.agent.dream_mode);
-                    Ok(())
-                })
-                .await;
+                self.set_ilhae_dream_mode(enabled).await;
             }
             AppEvent::SetIlhaeEmbedMode { enabled } => {
-                self.mutate_native_ilhae_active_profile("embed", move |profile| {
-                    profile.agent.embed_mode = enabled.unwrap_or(!profile.agent.embed_mode);
-                    Ok(())
-                })
-                .await;
+                self.set_ilhae_embed_mode(enabled).await;
             }
             AppEvent::SetIlhaeKairosMode { enabled } => {
-                self.mutate_native_ilhae_active_profile("kairos", move |profile| {
-                    profile.agent.kairos = enabled.unwrap_or(!profile.agent.kairos);
-                    Ok(())
-                })
-                .await;
+                self.set_ilhae_kairos_mode(enabled).await;
             }
             AppEvent::SetIlhaeImproveMode { enabled } => {
-                self.mutate_native_ilhae_active_profile("improve", move |profile| {
-                    profile.agent.self_improvement =
-                        enabled.unwrap_or(!profile.agent.self_improvement);
-                    Ok(())
-                })
-                .await;
+                self.set_ilhae_improve_mode(enabled).await;
             }
             AppEvent::UpdateCollaborationMode(mask) => {
                 self.chat_widget.set_collaboration_mask(mask);
@@ -7136,6 +7012,85 @@ mod tests {
         }]));
 
         assert_eq!(app.transcript_cells.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn replace_first_session_info_cell_updates_committed_transcript_and_overlay() {
+        let mut app = make_test_app().await;
+        let original = Arc::new(history_cell::new_session_info(
+            &app.config,
+            "ilhae",
+            SessionConfiguredEvent {
+                session_id: ThreadId::new(),
+                forked_from_id: None,
+                thread_name: None,
+                model: "ilhae".to_string(),
+                model_provider_id: "test-provider".to_string(),
+                reasoning_effort: None,
+                service_tier: None,
+                approval_policy: AskForApproval::Never,
+                approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
+                sandbox_policy: SandboxPolicy::DangerFullAccess,
+                cwd: test_absolute_path("/tmp/project"),
+                history_log_id: 1,
+                history_entry_count: 1,
+                initial_messages: None,
+                network_proxy: None,
+                rollout_path: None,
+            },
+            /*is_first_event*/ false,
+            /*tooltip_override*/ None,
+            /*auth_plan*/ None,
+            /*show_fast_status*/ false,
+        )) as Arc<dyn HistoryCell>;
+        let replacement = Arc::new(history_cell::new_session_info(
+            &app.config,
+            "ilhae",
+            SessionConfiguredEvent {
+                session_id: ThreadId::new(),
+                forked_from_id: None,
+                thread_name: None,
+                model: "/home/sk/models/Qwen3.6-35B-A3B".to_string(),
+                model_provider_id: "test-provider".to_string(),
+                reasoning_effort: None,
+                service_tier: None,
+                approval_policy: AskForApproval::Never,
+                approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
+                sandbox_policy: SandboxPolicy::DangerFullAccess,
+                cwd: test_absolute_path("/tmp/project"),
+                history_log_id: 1,
+                history_entry_count: 1,
+                initial_messages: None,
+                network_proxy: None,
+                rollout_path: None,
+            },
+            /*is_first_event*/ false,
+            /*tooltip_override*/ None,
+            /*auth_plan*/ None,
+            /*show_fast_status*/ false,
+        )) as Arc<dyn HistoryCell>;
+        app.transcript_cells = vec![
+            original,
+            Arc::new(UserHistoryCell {
+                message: "hello".to_string(),
+                text_elements: Vec::new(),
+                local_image_paths: Vec::new(),
+                remote_image_urls: Vec::new(),
+            }) as Arc<dyn HistoryCell>,
+        ];
+        app.overlay = Some(Overlay::new_transcript(app.transcript_cells.clone()));
+
+        assert!(app.replace_first_session_info_cell(replacement));
+
+        let header = lines_to_single_string(&app.transcript_cells[0].display_lines(/*width*/ 120));
+        assert!(header.contains("/home/sk/models/Qwen3.6-35B-A3B"));
+        assert!(!header.contains("│ model:       ilhae"));
+        let overlay = match app.overlay.as_mut() {
+            Some(Overlay::Transcript(overlay)) => overlay,
+            None => panic!("expected transcript overlay"),
+        };
+        overlay.replace_cells(app.transcript_cells.clone());
+        assert_eq!(overlay.committed_cell_count(), app.transcript_cells.len());
     }
 
     #[test]

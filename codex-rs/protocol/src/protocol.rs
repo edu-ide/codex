@@ -1444,6 +1444,12 @@ pub enum EventMsg {
     /// Conversation history was compacted (either automatically or manually).
     ContextCompacted(ContextCompactedEvent),
 
+    /// Structured lifecycle event for internal closed-loop orchestration.
+    LoopLifecycleStarted(LoopLifecycleItemEvent),
+    LoopLifecycleProgress(LoopLifecycleProgressEvent),
+    LoopLifecycleCompleted(LoopLifecycleCompletedEvent),
+    LoopLifecycleFailed(LoopLifecycleFailedEvent),
+
     /// Conversation history was rolled back by dropping the last N user turns.
     ThreadRolledBack(ThreadRolledBackEvent),
 
@@ -2071,6 +2077,53 @@ pub struct ModelRerouteEvent {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ContextCompactedEvent;
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopLifecycleKind {
+    ContextInjection,
+    ExecutionLoop,
+    VerificationLoop,
+    Advisor,
+    SuperLoop,
+    ImprovementLoop,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopLifecycleStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct LoopLifecycleItemEvent {
+    pub item: crate::items::LoopLifecycleItem,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct LoopLifecycleProgressEvent {
+    pub item_id: String,
+    pub kind: LoopLifecycleKind,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub counts: Option<std::collections::BTreeMap<String, i64>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct LoopLifecycleCompletedEvent {
+    pub item: crate::items::LoopLifecycleItem,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct LoopLifecycleFailedEvent {
+    pub item: crate::items::LoopLifecycleItem,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct TurnCompleteEvent {

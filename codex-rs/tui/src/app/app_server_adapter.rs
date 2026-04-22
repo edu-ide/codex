@@ -43,6 +43,8 @@ use codex_protocol::items::ContextCompactionItem;
 #[cfg(test)]
 use codex_protocol::items::ImageGenerationItem;
 #[cfg(test)]
+use codex_protocol::items::LoopLifecycleItem;
+#[cfg(test)]
 use codex_protocol::items::PlanItem;
 #[cfg(test)]
 use codex_protocol::items::ReasoningItem;
@@ -80,6 +82,10 @@ use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 #[cfg(test)]
 use codex_protocol::protocol::PlanDeltaEvent;
+#[cfg(test)]
+use codex_protocol::protocol::LoopLifecycleCompletedEvent;
+#[cfg(test)]
+use codex_protocol::protocol::LoopLifecycleProgressEvent;
 #[cfg(test)]
 use codex_protocol::protocol::RealtimeConversationClosedEvent;
 #[cfg(test)]
@@ -373,6 +379,9 @@ fn server_notification_thread_target(
         ServerNotification::McpToolCallProgress(notification) => {
             Some(notification.thread_id.as_str())
         }
+        ServerNotification::LoopLifecycleProgress(notification) => {
+            Some(notification.thread_id.as_str())
+        }
         ServerNotification::ReasoningSummaryTextDelta(notification) => {
             Some(notification.thread_id.as_str())
         }
@@ -608,6 +617,19 @@ fn server_notification_thread_events(
                 }),
             }],
         )),
+        ServerNotification::LoopLifecycleProgress(notification) => Some((
+            ThreadId::from_string(&notification.thread_id).ok()?,
+            vec![Event {
+                id: String::new(),
+                msg: EventMsg::LoopLifecycleProgress(LoopLifecycleProgressEvent {
+                    item_id: notification.item_id,
+                    kind: notification.kind,
+                    summary: notification.summary,
+                    detail: notification.detail,
+                    counts: notification.counts,
+                }),
+            }],
+        )),
         ServerNotification::ThreadRealtimeStarted(notification) => Some((
             ThreadId::from_string(&notification.thread_id).ok()?,
             vec![Event {
@@ -737,6 +759,16 @@ fn turn_snapshot_events(
                             msg,
                         }),
                 );
+            }
+            TurnItem::LoopLifecycle(_) => {
+                events.push(Event {
+                    id: String::new(),
+                    msg: EventMsg::ItemCompleted(ItemCompletedEvent {
+                        thread_id,
+                        turn_id: turn.id.clone(),
+                        item,
+                    }),
+                });
             }
             TurnItem::HookPrompt(_) => {}
         }
@@ -881,6 +913,31 @@ fn thread_item_to_core(item: &ThreadItem) -> Option<TurnItem> {
                 id: id.clone(),
             }))
         }
+        ThreadItem::LoopLifecycle {
+            id,
+            kind,
+            title,
+            summary,
+            detail,
+            status,
+            reason,
+            counts,
+            error,
+            duration_ms,
+            target_profile,
+        } => Some(TurnItem::LoopLifecycle(LoopLifecycleItem {
+            id: id.clone(),
+            kind: kind.clone(),
+            title: title.clone(),
+            summary: summary.clone(),
+            detail: detail.clone(),
+            status: status.clone(),
+            reason: reason.clone(),
+            counts: counts.clone(),
+            error: error.clone(),
+            duration_ms: *duration_ms,
+            target_profile: target_profile.clone(),
+        })),
         ThreadItem::CommandExecution { .. }
         | ThreadItem::FileChange { .. }
         | ThreadItem::McpToolCall { .. }

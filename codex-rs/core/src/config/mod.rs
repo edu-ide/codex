@@ -8,8 +8,6 @@ use crate::config_loader::ConfigRequirements;
 use crate::config_loader::ConfigRequirementsToml;
 use crate::config_loader::ConstrainedWithSource;
 use crate::config_loader::LoaderOverrides;
-use crate::config_loader::McpServerIdentity;
-use crate::config_loader::McpServerRequirement;
 use crate::config_loader::ResidencyRequirement;
 use crate::config_loader::Sourced;
 use crate::config_loader::load_config_layers_state;
@@ -35,8 +33,6 @@ use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::DEFAULT_OTEL_ENVIRONMENT;
 use codex_config::types::History;
 use codex_config::types::McpServerConfig;
-use codex_config::types::McpServerDisabledReason;
-use codex_config::types::McpServerTransportConfig;
 use codex_config::types::MemoriesConfig;
 use codex_config::types::ModelAvailabilityNuxConfig;
 use codex_config::types::Notice;
@@ -102,6 +98,7 @@ use toml_edit::DocumentMut;
 pub(crate) mod agent_roles;
 pub mod edit;
 mod managed_features;
+mod mcp_servers;
 mod network_proxy_spec;
 mod permissions;
 #[cfg(test)]
@@ -115,6 +112,10 @@ pub use codex_sandboxing::system_bwrap_warning;
 pub use managed_features::ManagedFeatures;
 pub use network_proxy_spec::NetworkProxySpec;
 pub use network_proxy_spec::StartedNetworkProxy;
+pub use mcp_servers::load_global_mcp_servers;
+#[cfg(test)]
+pub(crate) use mcp_servers::filter_mcp_servers_by_requirements;
+use mcp_servers::constrain_mcp_servers;
 pub(crate) use permissions::resolve_permission_profile;
 pub use service::ConfigService;
 pub use service::ConfigServiceError;
@@ -925,46 +926,6 @@ fn load_model_catalog(
         .transpose()
 }
 
-fn filter_mcp_servers_by_requirements(
-    mcp_servers: &mut HashMap<String, McpServerConfig>,
-    mcp_requirements: Option<&Sourced<BTreeMap<String, McpServerRequirement>>>,
-) {
-    let Some(allowlist) = mcp_requirements else {
-        return;
-    };
-
-    let source = allowlist.source.clone();
-    for (name, server) in mcp_servers.iter_mut() {
-        let allowed = allowlist
-            .value
-            .get(name)
-            .is_some_and(|requirement| mcp_server_matches_requirement(requirement, server));
-        if allowed {
-            server.disabled_reason = None;
-        } else {
-            server.enabled = false;
-            server.disabled_reason = Some(McpServerDisabledReason::Requirements {
-                source: source.clone(),
-            });
-        }
-    }
-}
-
-fn constrain_mcp_servers(
-    mcp_servers: HashMap<String, McpServerConfig>,
-    mcp_requirements: Option<&Sourced<BTreeMap<String, McpServerRequirement>>>,
-) -> ConstraintResult<Constrained<HashMap<String, McpServerConfig>>> {
-    if mcp_requirements.is_none() {
-        return Ok(Constrained::allow_any(mcp_servers));
-    }
-
-    let mcp_requirements = mcp_requirements.cloned();
-    Constrained::normalized(mcp_servers, move |mut servers| {
-        filter_mcp_servers_by_requirements(&mut servers, mcp_requirements.as_ref());
-        servers
-    })
-}
-
 fn apply_requirement_constrained_value<T>(
     field_name: &'static str,
     configured_value: T,
@@ -995,82 +956,6 @@ where
                 ),
             )
         })?;
-    }
-
-    Ok(())
-}
-
-fn mcp_server_matches_requirement(
-    requirement: &McpServerRequirement,
-    server: &McpServerConfig,
-) -> bool {
-    match &requirement.identity {
-        McpServerIdentity::Command {
-            command: want_command,
-        } => matches!(
-            &server.transport,
-            McpServerTransportConfig::Stdio { command: got_command, .. }
-                if got_command == want_command
-        ),
-        McpServerIdentity::Url { url: want_url } => matches!(
-            &server.transport,
-            McpServerTransportConfig::StreamableHttp { url: got_url, .. }
-                if got_url == want_url
-        ),
-    }
-}
-
-pub async fn load_global_mcp_servers(
-    codex_home: &Path,
-) -> std::io::Result<BTreeMap<String, McpServerConfig>> {
-    // In general, Config::load_with_cli_overrides() should be used to load the
-    // full config with requirements.toml applied, but in this case, we need
-    // access to the raw TOML in order to warn the user about deprecated fields.
-    //
-    // Note that a more precise way to do this would be to audit the individual
-    // config layers for deprecated fields rather than reporting on the merged
-    // result.
-    let cli_overrides = Vec::<(String, TomlValue)>::new();
-    // There is no cwd/project context for this query, so this will not include
-    // MCP servers defined in in-repo .codex/ folders.
-    let cwd: Option<AbsolutePathBuf> = None;
-    let config_layer_stack = load_config_layers_state(
-        codex_home,
-        cwd,
-        &cli_overrides,
-        LoaderOverrides::default(),
-        CloudRequirementsLoader::default(),
-    )
-    .await?;
-    let merged_toml = config_layer_stack.effective_config();
-    let Some(servers_value) = merged_toml.get("mcp_servers") else {
-        return Ok(BTreeMap::new());
-    };
-
-    ensure_no_inline_bearer_tokens(servers_value)?;
-
-    servers_value
-        .clone()
-        .try_into()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-}
-
-/// We briefly allowed plain text bearer_token fields in MCP server configs.
-/// We want to warn people who recently added these fields but can remove this after a few months.
-fn ensure_no_inline_bearer_tokens(value: &TomlValue) -> std::io::Result<()> {
-    let Some(servers_table) = value.as_table() else {
-        return Ok(());
-    };
-
-    for (server_name, server_value) in servers_table {
-        if let Some(server_table) = server_value.as_table()
-            && server_table.contains_key("bearer_token")
-        {
-            let message = format!(
-                "mcp_servers.{server_name} uses unsupported `bearer_token`; set `bearer_token_env_var`."
-            );
-            return Err(std::io::Error::new(ErrorKind::InvalidData, message));
-        }
     }
 
     Ok(())

@@ -6,8 +6,8 @@ use crate::version::CODEX_CLI_VERSION;
 use chrono::DateTime;
 use chrono::Local;
 use codex_core::config::Config;
-use codex_ilhae::native_runtime_context;
 use codex_git_utils::{get_git_repo_root, resolve_root_git_project_for_trust};
+use codex_ilhae::native_runtime_context;
 use codex_model_provider_info::WireApi;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
@@ -290,7 +290,9 @@ impl StatusHistoryCell {
 
         let advisor_mode = format_runtime_mode_value(
             agent.advisor_mode,
-            agent.advisor_mode.then(|| Self::advisor_preset_label(&agent.advisor_preset).to_string()),
+            agent
+                .advisor_mode
+                .then(|| Self::advisor_preset_label(&agent.advisor_preset).to_string()),
             "/advisor",
         );
 
@@ -322,7 +324,8 @@ impl StatusHistoryCell {
 
         let kairos = format_scoped_runtime_mode_value(
             agent.kairos_enabled,
-            agent.task_scope
+            agent
+                .task_scope
                 .as_deref()
                 .filter(|scope| !scope.trim().is_empty())
                 .map(ToString::to_string),
@@ -331,7 +334,8 @@ impl StatusHistoryCell {
 
         let self_improvement = format_scoped_runtime_mode_value(
             agent.self_improvement_enabled,
-            agent.memory_scope
+            agent
+                .memory_scope
                 .as_deref()
                 .filter(|scope| !scope.trim().is_empty())
                 .map(ToString::to_string),
@@ -411,7 +415,9 @@ impl StatusHistoryCell {
         let Some(repo_root) = get_git_repo_root(cwd) else {
             return "none";
         };
-        let Some(trust_root) = tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(resolve_root_git_project_for_trust(cwd))) else {
+        let Some(trust_root) = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(resolve_root_git_project_for_trust(cwd))
+        }) else {
             return "repo";
         };
 
@@ -878,10 +884,7 @@ impl HistoryCell for StatusHistoryCell {
         if let Some(collab_mode) = self.collaboration_mode.as_ref() {
             lines.push(formatter.line("Collaboration mode", vec![Span::from(collab_mode.clone())]));
         }
-        lines.push(formatter.line(
-            "TMUX",
-            vec![Span::from(self.workflow_surface.tmux.clone())],
-        ));
+        lines.push(formatter.line("TMUX", vec![Span::from(self.workflow_surface.tmux.clone())]));
         lines.push(formatter.line(
             "Worktree",
             vec![Span::from(self.workflow_surface.worktree.clone())],
@@ -907,10 +910,7 @@ impl HistoryCell for StatusHistoryCell {
                 "Team mode",
                 vec![Span::from(execution_loop.team_mode.clone())],
             ));
-            lines.push(formatter.line(
-                "Kairos",
-                vec![Span::from(execution_loop.kairos.clone())],
-            ));
+            lines.push(formatter.line("Kairos", vec![Span::from(execution_loop.kairos.clone())]));
             lines.push(formatter.line(
                 "Self-improvement",
                 vec![Span::from(execution_loop.self_improvement.clone())],
@@ -1003,11 +1003,7 @@ fn format_runtime_mode_value(enabled: bool, detail: Option<String>, command: &st
     }
 }
 
-fn format_scoped_runtime_mode_value(
-    enabled: bool,
-    scope: Option<String>,
-    command: &str,
-) -> String {
+fn format_scoped_runtime_mode_value(enabled: bool, scope: Option<String>, command: &str) -> String {
     if !enabled {
         return format!("disabled (use {command})");
     }

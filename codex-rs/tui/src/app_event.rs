@@ -167,6 +167,9 @@ pub(crate) enum AppEvent {
         matches: Vec<FileMatch>,
     },
 
+    /// Replace the primary session info history cell that seeds transcript redraws.
+    ReplaceSessionInfoCell(Box<dyn HistoryCell>),
+
     /// Refresh account rate limits in the background.
     RefreshRateLimits {
         origin: RateLimitRefreshOrigin,

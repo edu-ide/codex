@@ -348,7 +348,7 @@ pub fn built_in_model_providers(
             "sglang",
             ModelProviderInfo {
                 name: "SGLang GPU Server".into(),
-                base_url: Some("http://192.168.219.113:8001/v1".into()),
+                base_url: Some(std::env::var("CODEX_SGLANG_URL").unwrap_or_else(|_| "http://192.168.219.113:30000/v1".into())),
                 wire_api: WireApi::Responses,
                 requires_openai_auth: false,
                 supports_websockets: false,

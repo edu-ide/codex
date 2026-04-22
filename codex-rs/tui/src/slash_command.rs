@@ -163,23 +163,23 @@ impl SlashCommand {
             is_visible: self.is_visible_internal(),
             available_during_task: self.available_during_task(),
             category: match self {
-            SlashCommand::Model | SlashCommand::Fast | SlashCommand::Personality => {
-                CommandCategory::System
-            }
-            SlashCommand::Profile
-            | SlashCommand::Advisor
-            | SlashCommand::Auto
-            | SlashCommand::Team
-            | SlashCommand::Kairos
-            | SlashCommand::Dream
-            | SlashCommand::Embed
-            | SlashCommand::Improve
-            | SlashCommand::Tmux
-            | SlashCommand::Worktree
-            | SlashCommand::Remote => CommandCategory::System,
-            SlashCommand::Mcp | SlashCommand::Apps | SlashCommand::Plugins => {
-                CommandCategory::Mcp
-            }
+                SlashCommand::Model | SlashCommand::Fast | SlashCommand::Personality => {
+                    CommandCategory::System
+                }
+                SlashCommand::Profile
+                | SlashCommand::Advisor
+                | SlashCommand::Auto
+                | SlashCommand::Team
+                | SlashCommand::Kairos
+                | SlashCommand::Dream
+                | SlashCommand::Embed
+                | SlashCommand::Improve
+                | SlashCommand::Tmux
+                | SlashCommand::Worktree
+                | SlashCommand::Remote => CommandCategory::System,
+                SlashCommand::Mcp | SlashCommand::Apps | SlashCommand::Plugins => {
+                    CommandCategory::Mcp
+                }
                 SlashCommand::Review | SlashCommand::Plan => CommandCategory::Experimental,
                 _ => CommandCategory::System,
             },

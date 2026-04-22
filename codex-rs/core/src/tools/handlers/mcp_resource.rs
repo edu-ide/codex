@@ -474,10 +474,7 @@ async fn handle_read_resource(
 
     let payload_result: Result<ReadResourcePayload, FunctionCallError> = async {
         let result = session
-            .read_resource(
-                &server,
-                ReadResourceRequestParams::new(uri.clone()),
-            )
+            .read_resource(&server, ReadResourceRequestParams::new(uri.clone()))
             .await
             .map_err(|err| {
                 FunctionCallError::RespondToModel(format!("resources/read failed: {err:#}"))

@@ -436,330 +436,325 @@ fn session_configured_from_thread_response_uses_review_policy_from_response() {
 
 // Tests from HEAD
 
-    #[test]
-    fn should_process_notification_ignores_followup_turns_without_autonomous_follow() {
-        let notification = ServerNotification::TurnStarted(TurnStartedNotification {
-            thread_id: "thread-1".to_string(),
-            turn: codex_app_server_protocol::Turn {
-                id: "turn-2".to_string(),
-                items: Vec::new(),
-                status: codex_app_server_protocol::TurnStatus::InProgress,
-                error: None,
+#[test]
+fn should_process_notification_ignores_followup_turns_without_autonomous_follow() {
+    let notification = ServerNotification::TurnStarted(TurnStartedNotification {
+        thread_id: "thread-1".to_string(),
+        turn: codex_app_server_protocol::Turn {
+            id: "turn-2".to_string(),
+            items: Vec::new(),
+            status: codex_app_server_protocol::TurnStatus::InProgress,
+            error: None,
+        },
+    });
+
+    assert!(!should_process_notification(
+        &notification,
+        "thread-1",
+        "turn-1",
+        false,
+    ));
+}
+
+#[test]
+fn should_process_notification_accepts_followup_turns_when_autonomous_follow_is_enabled() {
+    let notification =
+        ServerNotification::ItemCompleted(codex_app_server_protocol::ItemCompletedNotification {
+            item: AppServerThreadItem::AgentMessage {
+                id: "msg-2".to_string(),
+                text: "next turn".to_string(),
+                phase: None,
+                memory_citation: None,
             },
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-2".to_string(),
         });
 
-        assert!(!should_process_notification(
-            &notification,
-            "thread-1",
-            "turn-1",
-            false,
-        ));
-    }
+    assert!(should_process_notification(
+        &notification,
+        "thread-1",
+        "turn-1",
+        true,
+    ));
+}
 
-    #[test]
-    fn should_process_notification_accepts_followup_turns_when_autonomous_follow_is_enabled() {
-        let notification = ServerNotification::ItemCompleted(
-            codex_app_server_protocol::ItemCompletedNotification {
-                item: AppServerThreadItem::AgentMessage {
-                    id: "msg-2".to_string(),
-                    text: "next turn".to_string(),
-                    phase: None,
-                    memory_citation: None,
-                },
-                thread_id: "thread-1".to_string(),
-                turn_id: "turn-2".to_string(),
-            },
-        );
+#[test]
+fn should_process_notification_accepts_follow_on_turn_for_same_thread() {
+    let notification = ServerNotification::TurnStarted(TurnStartedNotification {
+        thread_id: "thread-1".to_string(),
+        turn: codex_app_server_protocol::Turn {
+            id: "turn-2".to_string(),
+            items: Vec::new(),
+            status: codex_app_server_protocol::TurnStatus::InProgress,
+            error: None,
+        },
+    });
 
-        assert!(should_process_notification(
-            &notification,
-            "thread-1",
-            "turn-1",
-            true,
-        ));
-    }
+    assert!(
+        should_process_notification(&notification, "thread-1", "turn-1", true),
+        "exec should keep tracking same-thread follow-on turns so autonomous/headless loops can continue"
+    );
+}
 
-    #[test]
-    fn should_process_notification_accepts_follow_on_turn_for_same_thread() {
-        let notification = ServerNotification::TurnStarted(TurnStartedNotification {
-            thread_id: "thread-1".to_string(),
-            turn: codex_app_server_protocol::Turn {
-                id: "turn-2".to_string(),
-                items: Vec::new(),
-                status: codex_app_server_protocol::TurnStatus::InProgress,
-                error: None,
-            },
-        });
+#[test]
+fn turn_items_need_backfill_when_completion_payload_is_empty() {
+    assert!(turn_items_need_backfill(&[]));
+}
 
-        assert!(
-            should_process_notification(&notification, "thread-1", "turn-1", true),
-            "exec should keep tracking same-thread follow-on turns so autonomous/headless loops can continue"
-        );
-    }
-
-    #[test]
-    fn turn_items_need_backfill_when_completion_payload_is_empty() {
-        assert!(turn_items_need_backfill(&[]));
-    }
-
-    #[test]
-    fn turn_items_need_backfill_when_completion_payload_contains_in_progress_item() {
-        let items = vec![AppServerThreadItem::CommandExecution {
-            id: "cmd-1".to_string(),
+#[test]
+fn turn_items_need_backfill_when_completion_payload_contains_in_progress_item() {
+    let items = vec![AppServerThreadItem::CommandExecution {
+        id: "cmd-1".to_string(),
+        command: "find /tmp -name thing".to_string(),
+        aggregated_output: Some(String::new()),
+        exit_code: None,
+        status: codex_app_server_protocol::CommandExecutionStatus::InProgress,
+        duration_ms: None,
+        cwd: PathBuf::from("/tmp"),
+        process_id: None,
+        source: codex_app_server_protocol::CommandExecutionSource::UserShell,
+        command_actions: vec![codex_app_server_protocol::CommandAction::Unknown {
             command: "find /tmp -name thing".to_string(),
-            aggregated_output: Some(String::new()),
-            exit_code: None,
-            status: codex_app_server_protocol::CommandExecutionStatus::InProgress,
-            duration_ms: None,
+        }],
+    }];
+
+    assert!(turn_items_need_backfill(items.as_slice()));
+}
+
+#[test]
+fn turn_items_need_backfill_is_false_when_payload_already_has_completed_items() {
+    let items = vec![
+        AppServerThreadItem::CommandExecution {
+            id: "cmd-1".to_string(),
+            command: "echo done".to_string(),
+            aggregated_output: Some("done".to_string()),
+            exit_code: Some(0),
+            status: codex_app_server_protocol::CommandExecutionStatus::Completed,
+            duration_ms: Some(5),
             cwd: PathBuf::from("/tmp"),
             process_id: None,
             source: codex_app_server_protocol::CommandExecutionSource::UserShell,
             command_actions: vec![codex_app_server_protocol::CommandAction::Unknown {
-                command: "find /tmp -name thing".to_string(),
-            }],
-        }];
-
-        assert!(turn_items_need_backfill(items.as_slice()));
-    }
-
-    #[test]
-    fn turn_items_need_backfill_is_false_when_payload_already_has_completed_items() {
-        let items = vec![
-            AppServerThreadItem::CommandExecution {
-                id: "cmd-1".to_string(),
                 command: "echo done".to_string(),
-                aggregated_output: Some("done".to_string()),
-                exit_code: Some(0),
-                status: codex_app_server_protocol::CommandExecutionStatus::Completed,
-                duration_ms: Some(5),
-                cwd: PathBuf::from("/tmp"),
-                process_id: None,
-                source: codex_app_server_protocol::CommandExecutionSource::UserShell,
-                command_actions: vec![codex_app_server_protocol::CommandAction::Unknown {
-                    command: "echo done".to_string(),
-                }],
-            },
-            AppServerThreadItem::AgentMessage {
-                id: "msg-1".to_string(),
-                text: "완료했습니다.".to_string(),
-                phase: None,
-                memory_citation: None,
-            },
-        ];
-
-        assert!(!turn_items_need_backfill(items.as_slice()));
-    }
-
-    #[test]
-    fn decide_exec_autonomy_followup_stops_when_max_turns_reached() {
-        let decision = decide_exec_autonomy_followup(
-            ExecAutonomySettings {
-                max_turns: 2,
-                timebox: Duration::from_secs(600),
-            },
-            Duration::from_secs(5),
-            2,
-            None,
-            0,
-            "원래 작업",
-            &[AppServerThreadItem::AgentMessage {
-                id: "msg-1".to_string(),
-                text: "다음 단계로 진행하겠습니다.".to_string(),
-                phase: None,
-                memory_citation: None,
             }],
-        );
+        },
+        AppServerThreadItem::AgentMessage {
+            id: "msg-1".to_string(),
+            text: "완료했습니다.".to_string(),
+            phase: None,
+            memory_citation: None,
+        },
+    ];
 
-        assert_eq!(
-            decision,
-            ExecAutonomyDecision::Stop {
-                reason: "max_turns"
-            }
-        );
-    }
+    assert!(!turn_items_need_backfill(items.as_slice()));
+}
 
-    #[test]
-    fn decide_exec_autonomy_followup_stops_when_timebox_exceeded() {
-        let decision = decide_exec_autonomy_followup(
-            ExecAutonomySettings {
-                max_turns: 5,
-                timebox: Duration::from_secs(60),
-            },
-            Duration::from_secs(61),
-            1,
-            None,
-            0,
-            "원래 작업",
-            &[AppServerThreadItem::AgentMessage {
-                id: "msg-1".to_string(),
-                text: "계속 진행하겠습니다.".to_string(),
-                phase: None,
-                memory_citation: None,
-            }],
-        );
+#[test]
+fn decide_exec_autonomy_followup_stops_when_max_turns_reached() {
+    let decision = decide_exec_autonomy_followup(
+        ExecAutonomySettings {
+            max_turns: 2,
+            timebox: Duration::from_secs(600),
+        },
+        Duration::from_secs(5),
+        2,
+        None,
+        0,
+        "원래 작업",
+        &[AppServerThreadItem::AgentMessage {
+            id: "msg-1".to_string(),
+            text: "다음 단계로 진행하겠습니다.".to_string(),
+            phase: None,
+            memory_citation: None,
+        }],
+    );
 
-        assert_eq!(decision, ExecAutonomyDecision::Stop { reason: "timebox" });
-    }
+    assert_eq!(
+        decision,
+        ExecAutonomyDecision::Stop {
+            reason: "max_turns"
+        }
+    );
+}
 
-    #[test]
-    fn decide_exec_autonomy_followup_stops_when_agent_reports_completion() {
-        let decision = decide_exec_autonomy_followup(
-            ExecAutonomySettings {
-                max_turns: 5,
-                timebox: Duration::from_secs(600),
-            },
-            Duration::from_secs(5),
-            1,
-            None,
-            0,
-            "원래 작업",
-            &[AppServerThreadItem::AgentMessage {
-                id: "msg-1".to_string(),
-                text: "모든 작업이 완료되었습니다".to_string(),
-                phase: None,
-                memory_citation: None,
-            }],
-        );
+#[test]
+fn decide_exec_autonomy_followup_stops_when_timebox_exceeded() {
+    let decision = decide_exec_autonomy_followup(
+        ExecAutonomySettings {
+            max_turns: 5,
+            timebox: Duration::from_secs(60),
+        },
+        Duration::from_secs(61),
+        1,
+        None,
+        0,
+        "원래 작업",
+        &[AppServerThreadItem::AgentMessage {
+            id: "msg-1".to_string(),
+            text: "계속 진행하겠습니다.".to_string(),
+            phase: None,
+            memory_citation: None,
+        }],
+    );
 
-        assert_eq!(
-            decision,
-            ExecAutonomyDecision::Stop {
-                reason: "completed"
-            }
-        );
-    }
+    assert_eq!(decision, ExecAutonomyDecision::Stop { reason: "timebox" });
+}
 
-    #[test]
-    fn decide_exec_autonomy_followup_stops_when_progress_stalls() {
-        let signature = exec_autonomy_progress_signature("같은 상태");
-        let decision = decide_exec_autonomy_followup(
-            ExecAutonomySettings {
-                max_turns: 5,
-                timebox: Duration::from_secs(600),
-            },
-            Duration::from_secs(5),
-            2,
-            Some(signature),
-            EXEC_AUTONOMY_STALLED_TURN_LIMIT - 1,
-            "원래 작업",
-            &[AppServerThreadItem::AgentMessage {
-                id: "msg-1".to_string(),
-                text: "같은 상태".to_string(),
-                phase: None,
-                memory_citation: None,
-            }],
-        );
+#[test]
+fn decide_exec_autonomy_followup_stops_when_agent_reports_completion() {
+    let decision = decide_exec_autonomy_followup(
+        ExecAutonomySettings {
+            max_turns: 5,
+            timebox: Duration::from_secs(600),
+        },
+        Duration::from_secs(5),
+        1,
+        None,
+        0,
+        "원래 작업",
+        &[AppServerThreadItem::AgentMessage {
+            id: "msg-1".to_string(),
+            text: "모든 작업이 완료되었습니다".to_string(),
+            phase: None,
+            memory_citation: None,
+        }],
+    );
 
-        assert_eq!(decision, ExecAutonomyDecision::Stop { reason: "stalled" });
-    }
+    assert_eq!(
+        decision,
+        ExecAutonomyDecision::Stop {
+            reason: "completed"
+        }
+    );
+}
 
-    #[test]
-    fn decide_exec_autonomy_followup_continues_with_followup_prompt_for_new_progress() {
-        let decision = decide_exec_autonomy_followup(
-            ExecAutonomySettings {
-                max_turns: 5,
-                timebox: Duration::from_secs(600),
-            },
-            Duration::from_secs(5),
-            1,
-            None,
-            0,
-            "STEP1, STEP2, summary를 모두 완료해야 한다.",
-            &[AppServerThreadItem::AgentMessage {
-                id: "msg-1".to_string(),
-                text: "STEP1 파일을 만들었고 이제 STEP2를 해야 합니다.".to_string(),
-                phase: None,
-                memory_citation: None,
-            }],
-        );
+#[test]
+fn decide_exec_autonomy_followup_stops_when_progress_stalls() {
+    let signature = exec_autonomy_progress_signature("같은 상태");
+    let decision = decide_exec_autonomy_followup(
+        ExecAutonomySettings {
+            max_turns: 5,
+            timebox: Duration::from_secs(600),
+        },
+        Duration::from_secs(5),
+        2,
+        Some(signature),
+        EXEC_AUTONOMY_STALLED_TURN_LIMIT - 1,
+        "원래 작업",
+        &[AppServerThreadItem::AgentMessage {
+            id: "msg-1".to_string(),
+            text: "같은 상태".to_string(),
+            phase: None,
+            memory_citation: None,
+        }],
+    );
 
-        match decision {
-            ExecAutonomyDecision::Continue {
-                reason,
+    assert_eq!(decision, ExecAutonomyDecision::Stop { reason: "stalled" });
+}
+
+#[test]
+fn decide_exec_autonomy_followup_continues_with_followup_prompt_for_new_progress() {
+    let decision = decide_exec_autonomy_followup(
+        ExecAutonomySettings {
+            max_turns: 5,
+            timebox: Duration::from_secs(600),
+        },
+        Duration::from_secs(5),
+        1,
+        None,
+        0,
+        "STEP1, STEP2, summary를 모두 완료해야 한다.",
+        &[AppServerThreadItem::AgentMessage {
+            id: "msg-1".to_string(),
+            text: "STEP1 파일을 만들었고 이제 STEP2를 해야 합니다.".to_string(),
+            phase: None,
+            memory_citation: None,
+        }],
+    );
+
+    match decision {
+        ExecAutonomyDecision::Continue {
+            reason,
+            progress_signature,
+            stalled_turns,
+            followup_prompt,
+        } => {
+            assert_eq!(reason, "progressed");
+            assert_eq!(stalled_turns, 0);
+            assert_eq!(
                 progress_signature,
-                stalled_turns,
-                followup_prompt,
-            } => {
-                assert_eq!(reason, "progressed");
-                assert_eq!(stalled_turns, 0);
-                assert_eq!(
-                    progress_signature,
-                    exec_autonomy_progress_signature(
-                        "STEP1 파일을 만들었고 이제 STEP2를 해야 합니다."
-                    )
-                );
-                assert!(
-                    followup_prompt.contains("STEP1 파일을 만들었고 이제 STEP2를 해야 합니다.")
-                );
-                assert!(followup_prompt.contains("STEP1, STEP2, summary를 모두 완료해야 한다."));
-                assert!(followup_prompt.contains("실제 tool을 호출"));
-            }
-            other => panic!("expected continue decision, got {other:?}"),
+                exec_autonomy_progress_signature("STEP1 파일을 만들었고 이제 STEP2를 해야 합니다.")
+            );
+            assert!(followup_prompt.contains("STEP1 파일을 만들었고 이제 STEP2를 해야 합니다."));
+            assert!(followup_prompt.contains("STEP1, STEP2, summary를 모두 완료해야 한다."));
+            assert!(followup_prompt.contains("실제 tool을 호출"));
         }
+        other => panic!("expected continue decision, got {other:?}"),
     }
+}
 
-    #[test]
-    fn decide_exec_autonomy_followup_continues_with_stalled_retry_reason_before_limit() {
-        let signature = exec_autonomy_progress_signature("같은 상태");
-        let decision = decide_exec_autonomy_followup(
-            ExecAutonomySettings {
-                max_turns: 5,
-                timebox: Duration::from_secs(600),
-            },
-            Duration::from_secs(5),
-            2,
-            Some(signature),
-            0,
-            "원래 작업",
-            &[AppServerThreadItem::AgentMessage {
-                id: "msg-1".to_string(),
-                text: "같은 상태".to_string(),
-                phase: None,
-                memory_citation: None,
-            }],
-        );
+#[test]
+fn decide_exec_autonomy_followup_continues_with_stalled_retry_reason_before_limit() {
+    let signature = exec_autonomy_progress_signature("같은 상태");
+    let decision = decide_exec_autonomy_followup(
+        ExecAutonomySettings {
+            max_turns: 5,
+            timebox: Duration::from_secs(600),
+        },
+        Duration::from_secs(5),
+        2,
+        Some(signature),
+        0,
+        "원래 작업",
+        &[AppServerThreadItem::AgentMessage {
+            id: "msg-1".to_string(),
+            text: "같은 상태".to_string(),
+            phase: None,
+            memory_citation: None,
+        }],
+    );
 
-        match decision {
-            ExecAutonomyDecision::Continue {
-                reason,
-                stalled_turns,
-                ..
-            } => {
-                assert_eq!(reason, "stalled_retry");
-                assert_eq!(stalled_turns, 1);
-            }
-            other => panic!("expected continue decision, got {other:?}"),
+    match decision {
+        ExecAutonomyDecision::Continue {
+            reason,
+            stalled_turns,
+            ..
+        } => {
+            assert_eq!(reason, "stalled_retry");
+            assert_eq!(stalled_turns, 1);
         }
+        other => panic!("expected continue decision, got {other:?}"),
     }
+}
 
-    #[test]
-    fn extract_pseudo_exec_command_reads_json_tool_stub() {
-        let progress = r#"{
+#[test]
+fn extract_pseudo_exec_command_reads_json_tool_stub() {
+    let progress = r#"{
   "tool": "functions.exec_command",
   "arguments": {
     "cmd": "echo STEP1 > /tmp/file"
   }
 }"#;
 
-        assert_eq!(
-            extract_pseudo_exec_command(progress).as_deref(),
-            Some("echo STEP1 > /tmp/file")
-        );
-    }
+    assert_eq!(
+        extract_pseudo_exec_command(progress).as_deref(),
+        Some("echo STEP1 > /tmp/file")
+    );
+}
 
-    #[test]
-    fn build_exec_autonomy_followup_prompt_prioritizes_stubbed_exec_command() {
-        let progress = r#"{
+#[test]
+fn build_exec_autonomy_followup_prompt_prioritizes_stubbed_exec_command() {
+    let progress = r#"{
   "tool": "functions.exec_command",
   "arguments": {
     "cmd": "echo STEP1 > /tmp/file"
   }
 }"#;
 
-        let prompt = build_exec_autonomy_followup_prompt_with_root(progress, "원래 작업 조건");
+    let prompt = build_exec_autonomy_followup_prompt_with_root(progress, "원래 작업 조건");
 
-        assert!(prompt.contains("실제 실행 대신 exec_command tool 호출 JSON만 출력"));
-        assert!(prompt.contains("echo STEP1 > /tmp/file"));
-        assert!(prompt.contains("원래 작업 조건"));
-        assert!(prompt.contains("아직 실행하지 않은 다음 단계로 넘어가지 마세요"));
-    }
+    assert!(prompt.contains("실제 실행 대신 exec_command tool 호출 JSON만 출력"));
+    assert!(prompt.contains("echo STEP1 > /tmp/file"));
+    assert!(prompt.contains("원래 작업 조건"));
+    assert!(prompt.contains("아직 실행하지 않은 다음 단계로 넘어가지 마세요"));
+}

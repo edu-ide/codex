@@ -191,7 +191,9 @@ impl ChatWidget {
         let Some(repo_root) = get_git_repo_root(cwd) else {
             return "none";
         };
-        let Some(trust_root) = tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(resolve_root_git_project_for_trust(cwd))) else {
+        let Some(trust_root) = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(resolve_root_git_project_for_trust(cwd))
+        }) else {
             return "repo";
         };
 

@@ -18,9 +18,9 @@ use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use codex_features::Features;
-use codex_ilhae::IlhaeInteractiveRequestDto;
 use codex_ilhae::IlhaeInteractiveOptionDto;
 use codex_ilhae::IlhaeInteractiveOptionKind;
+use codex_ilhae::IlhaeInteractiveRequestDto;
 use codex_protocol::ThreadId;
 use codex_protocol::mcp::RequestId;
 use codex_protocol::models::PermissionProfile;
@@ -944,15 +944,11 @@ fn acp_permission_options(options: &[IlhaeInteractiveOptionDto]) -> Vec<Approval
                 IlhaeInteractiveOptionKind::ApproveSession => {
                     Some(key_hint::plain(KeyCode::Char('a')))
                 }
-                IlhaeInteractiveOptionKind::RejectOnce => {
-                    Some(key_hint::plain(KeyCode::Char('d')))
-                }
+                IlhaeInteractiveOptionKind::RejectOnce => Some(key_hint::plain(KeyCode::Char('d'))),
                 IlhaeInteractiveOptionKind::RejectSession => {
                     Some(key_hint::plain(KeyCode::Char('r')))
                 }
-                IlhaeInteractiveOptionKind::Cancel => {
-                    Some(key_hint::plain(KeyCode::Esc))
-                }
+                IlhaeInteractiveOptionKind::Cancel => Some(key_hint::plain(KeyCode::Esc)),
                 IlhaeInteractiveOptionKind::Custom => None,
             },
             additional_shortcuts: Vec::new(),

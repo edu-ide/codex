@@ -50,6 +50,7 @@ use codex_app_server_protocol::InterruptConversationResponse;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCErrorError;
+use codex_app_server_protocol::LoopLifecycleProgressNotification;
 use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
 use codex_app_server_protocol::McpServerElicitationRequestResponse;
@@ -123,6 +124,10 @@ use codex_protocol::protocol::CodexErrorInfo as CoreCodexErrorInfo;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecApprovalRequestEvent;
+use codex_protocol::protocol::LoopLifecycleCompletedEvent;
+use codex_protocol::protocol::LoopLifecycleFailedEvent;
+use codex_protocol::protocol::LoopLifecycleItemEvent;
+use codex_protocol::protocol::LoopLifecycleProgressEvent;
 use codex_protocol::protocol::McpToolCallBeginEvent;
 use codex_protocol::protocol::McpToolCallEndEvent;
 use codex_protocol::protocol::Op;
@@ -133,6 +138,8 @@ use codex_protocol::protocol::TokenCountEvent;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnDiffEvent;
+use codex_protocol::protocol::WebSearchBeginEvent;
+use codex_protocol::protocol::WebSearchEndEvent;
 use codex_protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionsResponse as CoreRequestPermissionsResponse;
@@ -1481,6 +1488,66 @@ pub(crate) async fn apply_bespoke_event_handling(
             };
             outgoing
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
+                .await;
+        }
+        EventMsg::WebSearchBegin(web_search_event) => {
+            let notification = construct_web_search_begin_notification(
+                web_search_event,
+                conversation_id.to_string(),
+                event_turn_id.clone(),
+            );
+            outgoing
+                .send_server_notification(ServerNotification::ItemStarted(notification))
+                .await;
+        }
+        EventMsg::WebSearchEnd(web_search_event) => {
+            let notification = construct_web_search_end_notification(
+                web_search_event,
+                conversation_id.to_string(),
+                event_turn_id.clone(),
+            );
+            outgoing
+                .send_server_notification(ServerNotification::ItemCompleted(notification))
+                .await;
+        }
+        EventMsg::LoopLifecycleStarted(loop_event) => {
+            let notification = construct_loop_lifecycle_started_notification(
+                loop_event,
+                conversation_id.to_string(),
+                event_turn_id.clone(),
+            );
+            outgoing
+                .send_server_notification(ServerNotification::ItemStarted(notification))
+                .await;
+        }
+        EventMsg::LoopLifecycleProgress(loop_event) => {
+            let notification = construct_loop_lifecycle_progress_notification(
+                loop_event,
+                conversation_id.to_string(),
+                event_turn_id.clone(),
+            );
+            outgoing
+                .send_server_notification(ServerNotification::LoopLifecycleProgress(notification))
+                .await;
+        }
+        EventMsg::LoopLifecycleCompleted(loop_event) => {
+            let notification = construct_loop_lifecycle_completed_notification(
+                loop_event,
+                conversation_id.to_string(),
+                event_turn_id.clone(),
+            );
+            outgoing
+                .send_server_notification(ServerNotification::ItemCompleted(notification))
+                .await;
+        }
+        EventMsg::LoopLifecycleFailed(loop_event) => {
+            let notification = construct_loop_lifecycle_failed_notification(
+                loop_event,
+                conversation_id.to_string(),
+                event_turn_id.clone(),
+            );
+            outgoing
+                .send_server_notification(ServerNotification::ItemCompleted(notification))
                 .await;
         }
         EventMsg::EnteredReviewMode(review_request) => {
@@ -2971,6 +3038,90 @@ async fn construct_mcp_tool_call_end_notification(
     }
 }
 
+fn construct_web_search_begin_notification(
+    begin_event: WebSearchBeginEvent,
+    thread_id: String,
+    turn_id: String,
+) -> ItemStartedNotification {
+    ItemStartedNotification {
+        thread_id,
+        turn_id,
+        item: ThreadItem::WebSearch {
+            id: begin_event.call_id,
+            query: String::new(),
+            action: None,
+        },
+    }
+}
+
+fn construct_web_search_end_notification(
+    end_event: WebSearchEndEvent,
+    thread_id: String,
+    turn_id: String,
+) -> ItemCompletedNotification {
+    ItemCompletedNotification {
+        thread_id,
+        turn_id,
+        item: ThreadItem::WebSearch {
+            id: end_event.call_id,
+            query: end_event.query,
+            action: Some(end_event.action.into()),
+        },
+    }
+}
+
+fn construct_loop_lifecycle_started_notification(
+    event: LoopLifecycleItemEvent,
+    thread_id: String,
+    turn_id: String,
+) -> ItemStartedNotification {
+    ItemStartedNotification {
+        thread_id,
+        turn_id,
+        item: ThreadItem::from(codex_protocol::items::TurnItem::LoopLifecycle(event.item)),
+    }
+}
+
+fn construct_loop_lifecycle_progress_notification(
+    event: LoopLifecycleProgressEvent,
+    thread_id: String,
+    turn_id: String,
+) -> LoopLifecycleProgressNotification {
+    LoopLifecycleProgressNotification {
+        thread_id,
+        turn_id,
+        item_id: event.item_id,
+        kind: event.kind,
+        summary: event.summary,
+        detail: event.detail,
+        counts: event.counts,
+    }
+}
+
+fn construct_loop_lifecycle_completed_notification(
+    event: LoopLifecycleCompletedEvent,
+    thread_id: String,
+    turn_id: String,
+) -> ItemCompletedNotification {
+    ItemCompletedNotification {
+        thread_id,
+        turn_id,
+        item: ThreadItem::from(codex_protocol::items::TurnItem::LoopLifecycle(event.item)),
+    }
+}
+
+fn construct_loop_lifecycle_failed_notification(
+    event: LoopLifecycleFailedEvent,
+    thread_id: String,
+    turn_id: String,
+) -> ItemCompletedNotification {
+    ItemCompletedNotification {
+        thread_id,
+        turn_id,
+        item: ThreadItem::from(codex_protocol::items::TurnItem::LoopLifecycle(event.item)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2989,10 +3140,12 @@ mod tests {
     use codex_login::AuthManager;
     use codex_login::CodexAuth;
     use codex_protocol::items::HookPromptFragment;
+    use codex_protocol::items::LoopLifecycleItem;
     use codex_protocol::items::build_hook_prompt_message;
     use codex_protocol::mcp::CallToolResult;
     use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
     use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
+    use codex_protocol::models::WebSearchAction;
     use codex_protocol::plan_tool::PlanItemArg;
     use codex_protocol::plan_tool::StepStatus;
     use codex_protocol::protocol::CollabResumeBeginEvent;
@@ -3000,11 +3153,17 @@ mod tests {
     use codex_protocol::protocol::CreditsSnapshot;
     use codex_protocol::protocol::GuardianAssessmentEvent;
     use codex_protocol::protocol::GuardianAssessmentStatus;
+    use codex_protocol::protocol::LoopLifecycleCompletedEvent;
+    use codex_protocol::protocol::LoopLifecycleKind;
+    use codex_protocol::protocol::LoopLifecycleProgressEvent;
+    use codex_protocol::protocol::LoopLifecycleStatus;
     use codex_protocol::protocol::McpInvocation;
     use codex_protocol::protocol::RateLimitSnapshot;
     use codex_protocol::protocol::RateLimitWindow;
     use codex_protocol::protocol::TokenUsage;
     use codex_protocol::protocol::TokenUsageInfo;
+    use codex_protocol::protocol::WebSearchBeginEvent;
+    use codex_protocol::protocol::WebSearchEndEvent;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
@@ -4518,6 +4677,146 @@ mod tests {
         };
 
         assert_eq!(notification, expected);
+    }
+
+    #[test]
+    fn test_construct_web_search_begin_notification() {
+        let notification = construct_web_search_begin_notification(
+            WebSearchBeginEvent {
+                call_id: "search_1".to_string(),
+            },
+            "thread_1".to_string(),
+            "turn_1".to_string(),
+        );
+
+        assert_eq!(
+            notification,
+            ItemStartedNotification {
+                thread_id: "thread_1".to_string(),
+                turn_id: "turn_1".to_string(),
+                item: ThreadItem::WebSearch {
+                    id: "search_1".to_string(),
+                    query: String::new(),
+                    action: None,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn test_construct_web_search_end_notification() {
+        let notification = construct_web_search_end_notification(
+            WebSearchEndEvent {
+                call_id: "search_1".to_string(),
+                query: "duckduckgo search".to_string(),
+                action: WebSearchAction::Search {
+                    query: Some("duckduckgo search".to_string()),
+                    queries: None,
+                },
+            },
+            "thread_1".to_string(),
+            "turn_1".to_string(),
+        );
+
+        assert_eq!(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread_1".to_string(),
+                turn_id: "turn_1".to_string(),
+                item: ThreadItem::WebSearch {
+                    id: "search_1".to_string(),
+                    query: "duckduckgo search".to_string(),
+                    action: Some(codex_app_server_protocol::WebSearchAction::Search {
+                        query: Some("duckduckgo search".to_string()),
+                        queries: None,
+                    }),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn test_construct_loop_lifecycle_progress_notification() {
+        let notification = construct_loop_lifecycle_progress_notification(
+            LoopLifecycleProgressEvent {
+                item_id: "loop_1".to_string(),
+                kind: LoopLifecycleKind::Advisor,
+                summary: "Consulting minimax".to_string(),
+                detail: Some("multi_file_refactor".to_string()),
+                counts: Some(std::collections::BTreeMap::from([(
+                    "attempts".to_string(),
+                    1,
+                )])),
+            },
+            "thread_1".to_string(),
+            "turn_1".to_string(),
+        );
+
+        assert_eq!(
+            notification,
+            LoopLifecycleProgressNotification {
+                thread_id: "thread_1".to_string(),
+                turn_id: "turn_1".to_string(),
+                item_id: "loop_1".to_string(),
+                kind: LoopLifecycleKind::Advisor,
+                summary: "Consulting minimax".to_string(),
+                detail: Some("multi_file_refactor".to_string()),
+                counts: Some(std::collections::BTreeMap::from([(
+                    "attempts".to_string(),
+                    1,
+                )])),
+            }
+        );
+    }
+
+    #[test]
+    fn test_construct_loop_lifecycle_completed_notification() {
+        let notification = construct_loop_lifecycle_completed_notification(
+            LoopLifecycleCompletedEvent {
+                item: LoopLifecycleItem {
+                    id: "loop_2".to_string(),
+                    kind: LoopLifecycleKind::VerificationLoop,
+                    title: "Running verification".to_string(),
+                    summary: "Checks passed".to_string(),
+                    detail: Some("cargo check".to_string()),
+                    status: LoopLifecycleStatus::Completed,
+                    reason: None,
+                    counts: Some(std::collections::BTreeMap::from([(
+                        "checks".to_string(),
+                        2,
+                    )])),
+                    error: None,
+                    duration_ms: Some(900),
+                    target_profile: None,
+                },
+            },
+            "thread_2".to_string(),
+            "turn_2".to_string(),
+        );
+
+        assert_eq!(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread_2".to_string(),
+                turn_id: "turn_2".to_string(),
+                item: ThreadItem::LoopLifecycle {
+                    id: "loop_2".to_string(),
+                    kind: LoopLifecycleKind::VerificationLoop,
+                    title: "Running verification".to_string(),
+                    summary: "Checks passed".to_string(),
+                    detail: Some("cargo check".to_string()),
+                    status: LoopLifecycleStatus::Completed,
+                    reason: None,
+                    counts: Some(std::collections::BTreeMap::from([(
+                        "checks".to_string(),
+                        2,
+                    )])),
+                    error: None,
+                    duration_ms: Some(900),
+                    target_profile: None,
+                },
+            }
+        );
     }
 
     #[tokio::test]

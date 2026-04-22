@@ -48,8 +48,14 @@ features = [ "derive",]
 [dependencies.serde_json]
 workspace = true
 
+[dependencies.tempfile]
+workspace = true
+
 [dependencies.tiny_http]
 workspace = true
 
 [dependencies.zeroize]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
 workspace = true

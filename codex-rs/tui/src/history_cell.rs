@@ -63,6 +63,8 @@ use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::FileChange;
+use codex_protocol::protocol::LoopLifecycleKind;
+use codex_protocol::protocol::LoopLifecycleStatus;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_protocol::protocol::McpInvocation;
 use codex_protocol::protocol::SandboxPolicy;
@@ -83,6 +85,7 @@ use ratatui::style::Stylize;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
@@ -369,12 +372,16 @@ impl HistoryCell for UserHistoryCell {
             (!wrapped.is_empty()).then_some(wrapped)
         } else {
             let shift = self.message.len().saturating_sub(stripped_message.len());
-            let adjusted_elements: Vec<_> = self.text_elements.iter().map(|e| {
-                let mut new_e = e.clone();
-                new_e.byte_range.start = new_e.byte_range.start.saturating_sub(shift);
-                new_e.byte_range.end = new_e.byte_range.end.saturating_sub(shift);
-                new_e
-            }).collect();
+            let adjusted_elements: Vec<_> = self
+                .text_elements
+                .iter()
+                .map(|e| {
+                    let mut new_e = e.clone();
+                    new_e.byte_range.start = new_e.byte_range.start.saturating_sub(shift);
+                    new_e.byte_range.end = new_e.byte_range.end.saturating_sub(shift);
+                    new_e
+                })
+                .collect();
 
             let raw_lines = build_user_message_lines_with_elements(
                 &stripped_message,
@@ -1615,11 +1622,7 @@ impl HistoryCell for McpToolCallCell {
             Some(false) => "•".red().bold(),
             None => spinner(Some(self.start_time), self.animations_enabled),
         };
-        let header_text = if status.is_some() {
-            "Called"
-        } else {
-            "Calling"
-        };
+        let header_text = mcp_header_text(&self.invocation, status.is_some());
 
         let invocation_line = line_to_static(&format_mcp_invocation(self.invocation.clone()));
         let mut compact_spans = vec![bullet.clone(), " ".into(), header_text.bold(), " ".into()];
@@ -1801,6 +1804,291 @@ pub(crate) fn new_web_search_call(
     );
     cell.complete();
     cell
+}
+
+fn loop_lifecycle_header(
+    kind: LoopLifecycleKind,
+    status: LoopLifecycleStatus,
+    title: &str,
+) -> String {
+    let trimmed = title.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+
+    match (kind, status) {
+        (LoopLifecycleKind::ContextInjection, LoopLifecycleStatus::InProgress) => {
+            "Injecting Context".to_string()
+        }
+        (LoopLifecycleKind::ContextInjection, LoopLifecycleStatus::Completed) => {
+            "Injected Context".to_string()
+        }
+        (LoopLifecycleKind::ContextInjection, LoopLifecycleStatus::Failed) => {
+            "Context Injection Failed".to_string()
+        }
+        (LoopLifecycleKind::ExecutionLoop, LoopLifecycleStatus::InProgress) => {
+            "Running Execution Loop".to_string()
+        }
+        (LoopLifecycleKind::ExecutionLoop, LoopLifecycleStatus::Completed) => {
+            "Execution Loop Completed".to_string()
+        }
+        (LoopLifecycleKind::ExecutionLoop, LoopLifecycleStatus::Failed) => {
+            "Execution Loop Failed".to_string()
+        }
+        (LoopLifecycleKind::VerificationLoop, LoopLifecycleStatus::InProgress) => {
+            "Running Verification".to_string()
+        }
+        (LoopLifecycleKind::VerificationLoop, LoopLifecycleStatus::Completed) => {
+            "Verification Completed".to_string()
+        }
+        (LoopLifecycleKind::VerificationLoop, LoopLifecycleStatus::Failed) => {
+            "Verification Failed".to_string()
+        }
+        (LoopLifecycleKind::Advisor, LoopLifecycleStatus::InProgress) => {
+            "Escalating to Advisor".to_string()
+        }
+        (LoopLifecycleKind::Advisor, LoopLifecycleStatus::Completed) => {
+            "Advisor Returned".to_string()
+        }
+        (LoopLifecycleKind::Advisor, LoopLifecycleStatus::Failed) => {
+            "Advisor Failed".to_string()
+        }
+        (LoopLifecycleKind::SuperLoop, LoopLifecycleStatus::InProgress) => {
+            "Running Super Loop".to_string()
+        }
+        (LoopLifecycleKind::SuperLoop, LoopLifecycleStatus::Completed) => {
+            "Super Loop Completed".to_string()
+        }
+        (LoopLifecycleKind::SuperLoop, LoopLifecycleStatus::Failed) => {
+            "Super Loop Failed".to_string()
+        }
+        (LoopLifecycleKind::ImprovementLoop, LoopLifecycleStatus::InProgress) => {
+            "Running Improvement Loop".to_string()
+        }
+        (LoopLifecycleKind::ImprovementLoop, LoopLifecycleStatus::Completed) => {
+            "Improvement Loop Completed".to_string()
+        }
+        (LoopLifecycleKind::ImprovementLoop, LoopLifecycleStatus::Failed) => {
+            "Improvement Loop Failed".to_string()
+        }
+    }
+}
+
+fn loop_lifecycle_counts_summary(counts: Option<&BTreeMap<String, i64>>) -> Option<String> {
+    let counts = counts?;
+    if counts.is_empty() {
+        return None;
+    }
+
+    Some(
+        counts
+            .iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+#[derive(Debug)]
+pub(crate) struct LoopLifecycleCell {
+    call_id: String,
+    kind: LoopLifecycleKind,
+    title: String,
+    summary: String,
+    detail: Option<String>,
+    reason: Option<String>,
+    counts: Option<BTreeMap<String, i64>>,
+    error: Option<String>,
+    duration_ms: Option<i64>,
+    target_profile: Option<String>,
+    status: LoopLifecycleStatus,
+    start_time: Instant,
+    animations_enabled: bool,
+}
+
+impl LoopLifecycleCell {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        call_id: String,
+        kind: LoopLifecycleKind,
+        title: String,
+        summary: String,
+        detail: Option<String>,
+        reason: Option<String>,
+        counts: Option<BTreeMap<String, i64>>,
+        error: Option<String>,
+        duration_ms: Option<i64>,
+        target_profile: Option<String>,
+        status: LoopLifecycleStatus,
+        animations_enabled: bool,
+    ) -> Self {
+        Self {
+            call_id,
+            kind,
+            title,
+            summary,
+            detail,
+            reason,
+            counts,
+            error,
+            duration_ms,
+            target_profile,
+            status,
+            start_time: Instant::now(),
+            animations_enabled,
+        }
+    }
+
+    pub(crate) fn call_id(&self) -> &str {
+        &self.call_id
+    }
+
+    pub(crate) fn update_progress(
+        &mut self,
+        summary: String,
+        detail: Option<String>,
+        counts: Option<BTreeMap<String, i64>>,
+    ) {
+        self.summary = summary;
+        self.detail = detail;
+        self.counts = counts;
+        self.status = LoopLifecycleStatus::InProgress;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn complete(
+        &mut self,
+        summary: String,
+        detail: Option<String>,
+        reason: Option<String>,
+        counts: Option<BTreeMap<String, i64>>,
+        error: Option<String>,
+        duration_ms: Option<i64>,
+        target_profile: Option<String>,
+        status: LoopLifecycleStatus,
+    ) {
+        self.summary = summary;
+        self.detail = detail;
+        self.reason = reason;
+        self.counts = counts;
+        self.error = error;
+        self.duration_ms = duration_ms;
+        self.target_profile = target_profile;
+        self.status = status;
+    }
+}
+
+impl HistoryCell for LoopLifecycleCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let bullet = match self.status {
+            LoopLifecycleStatus::InProgress => {
+                spinner(Some(self.start_time), self.animations_enabled)
+            }
+            LoopLifecycleStatus::Completed => "•".dim(),
+            LoopLifecycleStatus::Failed => "•".red().bold(),
+        };
+
+        let header =
+            loop_lifecycle_header(self.kind.clone(), self.status.clone(), &self.title);
+        let mut first_line = Line::from(vec![header.bold()]);
+        if !self.summary.trim().is_empty() {
+            first_line.push_span(" ");
+            first_line.push_span(self.summary.clone());
+        }
+
+        let mut text = Text::from(vec![line_to_static(&first_line)]);
+        let mut meta_parts = Vec::new();
+        if let Some(target_profile) = self.target_profile.as_deref().filter(|value| !value.is_empty())
+        {
+            meta_parts.push(format!("target={target_profile}"));
+        }
+        if let Some(reason) = self.reason.as_deref().filter(|value| !value.is_empty()) {
+            meta_parts.push(format!("reason={reason}"));
+        }
+        if let Some(counts) = loop_lifecycle_counts_summary(self.counts.as_ref()) {
+            meta_parts.push(counts);
+        }
+        if let Some(duration_ms) = self.duration_ms.filter(|value| *value >= 0) {
+            meta_parts.push(format!("{} ms", duration_ms));
+        }
+        if !meta_parts.is_empty() {
+            text.lines
+                .push(Line::from(meta_parts.join(" | ").dim()));
+        }
+        if let Some(detail) = self.detail.as_deref().filter(|value| !value.trim().is_empty()) {
+            text.lines.push(Line::from(detail.trim().to_string().dim()));
+        }
+        if let Some(error) = self.error.as_deref().filter(|value| !value.trim().is_empty()) {
+            text.lines.push(Line::from(format!("Error: {}", error.trim()).red()));
+        }
+
+        PrefixedWrappedHistoryCell::new(text, vec![bullet, " ".into()], "  ").display_lines(width)
+    }
+
+    fn transcript_animation_tick(&self) -> Option<u64> {
+        if !self.animations_enabled || !matches!(self.status, LoopLifecycleStatus::InProgress) {
+            return None;
+        }
+        Some((self.start_time.elapsed().as_millis() / 50) as u64)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn new_active_loop_lifecycle_call(
+    call_id: String,
+    kind: LoopLifecycleKind,
+    title: String,
+    summary: String,
+    detail: Option<String>,
+    reason: Option<String>,
+    counts: Option<BTreeMap<String, i64>>,
+    target_profile: Option<String>,
+    animations_enabled: bool,
+) -> LoopLifecycleCell {
+    LoopLifecycleCell::new(
+        call_id,
+        kind,
+        title,
+        summary,
+        detail,
+        reason,
+        counts,
+        /*error*/ None,
+        /*duration_ms*/ None,
+        target_profile,
+        LoopLifecycleStatus::InProgress,
+        animations_enabled,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn new_loop_lifecycle_call(
+    call_id: String,
+    kind: LoopLifecycleKind,
+    title: String,
+    summary: String,
+    detail: Option<String>,
+    reason: Option<String>,
+    counts: Option<BTreeMap<String, i64>>,
+    error: Option<String>,
+    duration_ms: Option<i64>,
+    target_profile: Option<String>,
+    status: LoopLifecycleStatus,
+) -> LoopLifecycleCell {
+    LoopLifecycleCell::new(
+        call_id,
+        kind,
+        title,
+        summary,
+        detail,
+        reason,
+        counts,
+        error,
+        duration_ms,
+        target_profile,
+        status,
+        /*animations_enabled*/ false,
+    )
 }
 
 /// Returns an additional history cell if an MCP tool result includes a decodable image.
@@ -2866,6 +3154,16 @@ fn pluralize(count: u64, singular: &'static str, plural: &'static str) -> &'stat
 }
 
 fn format_mcp_invocation<'a>(invocation: McpInvocation) -> Line<'a> {
+    if let Some(kind) = classify_internal_mcp_tool(&invocation.server) {
+        let args_str = invocation
+            .arguments
+            .as_ref()
+            .map(|v: &serde_json::Value| serde_json::to_string(v).unwrap_or_else(|_| v.to_string()))
+            .unwrap_or_default();
+        let tool = strip_internal_tool_prefix(kind, &invocation.tool);
+        return vec![tool.cyan(), "(".into(), args_str.dim(), ")".into()].into();
+    }
+
     let args_str = invocation
         .arguments
         .as_ref()
@@ -2884,6 +3182,59 @@ fn format_mcp_invocation<'a>(invocation: McpInvocation) -> Line<'a> {
         ")".into(),
     ];
     invocation_spans.into()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InternalMcpToolKind {
+    Browser,
+    Computer,
+    Brain,
+}
+
+impl InternalMcpToolKind {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Browser => "Browser",
+            Self::Computer => "Computer",
+            Self::Brain => "Brain",
+        }
+    }
+}
+
+fn classify_internal_mcp_tool(server: &str) -> Option<InternalMcpToolKind> {
+    let normalized = server.trim().to_ascii_lowercase();
+    if normalized == "browser" || normalized == "ilhae-browser" {
+        Some(InternalMcpToolKind::Browser)
+    } else if normalized == "computer" || normalized == "ilhae-computer" {
+        Some(InternalMcpToolKind::Computer)
+    } else if normalized == "brain" || normalized == "ilhae-brain" {
+        Some(InternalMcpToolKind::Brain)
+    } else {
+        None
+    }
+}
+
+fn strip_internal_tool_prefix(kind: InternalMcpToolKind, tool: &str) -> String {
+    let stripped = match kind {
+        InternalMcpToolKind::Browser => tool.strip_prefix("browser_"),
+        InternalMcpToolKind::Computer => tool.strip_prefix("computer_"),
+        InternalMcpToolKind::Brain => tool.strip_prefix("brain_"),
+    };
+    stripped.unwrap_or(tool).to_string()
+}
+
+fn mcp_header_text(invocation: &McpInvocation, completed: bool) -> String {
+    if let Some(kind) = classify_internal_mcp_tool(&invocation.server) {
+        if completed {
+            format!("Used {}", kind.title())
+        } else {
+            format!("Using {}", kind.title())
+        }
+    } else if completed {
+        "Called".to_string()
+    } else {
+        "Calling".to_string()
+    }
 }
 
 #[cfg(test)]
@@ -3749,6 +4100,76 @@ mod tests {
         let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
 
         insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn active_browser_mcp_tool_call_renders_as_internal_tool() {
+        let invocation = McpInvocation {
+            server: "browser".into(),
+            tool: "browser_snapshot".into(),
+            arguments: Some(json!({ "full_page": true })),
+        };
+
+        let cell = new_active_mcp_tool_call(
+            "call-browser".into(),
+            invocation,
+            /*animations_enabled*/ false,
+        );
+        let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+
+        assert!(rendered.contains("Using Browser"));
+        assert!(rendered.contains("snapshot({\"full_page\":true})"));
+    }
+
+    #[test]
+    fn completed_computer_mcp_tool_call_renders_as_internal_tool() {
+        let invocation = McpInvocation {
+            server: "computer".into(),
+            tool: "computer_screenshot".into(),
+            arguments: Some(json!({ "path": "/tmp/test.png" })),
+        };
+
+        let result = CallToolResult {
+            content: vec![text_block("saved screenshot")],
+            is_error: None,
+            structured_content: None,
+            meta: None,
+        };
+
+        let mut cell = new_active_mcp_tool_call(
+            "call-computer".into(),
+            invocation,
+            /*animations_enabled*/ false,
+        );
+        assert!(
+            cell.complete(Duration::from_millis(200), Ok(result))
+                .is_none()
+        );
+        let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+
+        assert!(rendered.contains("Used Computer"));
+        assert!(rendered.contains("screenshot({\"path\":\"/tmp/test.png\"})"));
+    }
+
+    #[test]
+    fn active_brain_mcp_tool_call_renders_as_internal_tool() {
+        let invocation = McpInvocation {
+            server: "brain".into(),
+            tool: "brain_memory_ops".into(),
+            arguments: Some(json!({ "action": "search", "query": "advisor routing" })),
+        };
+
+        let cell = new_active_mcp_tool_call(
+            "call-brain".into(),
+            invocation,
+            /*animations_enabled*/ false,
+        );
+        let rendered = render_lines(&cell.display_lines(/*width*/ 96)).join("\n");
+
+        assert!(rendered.contains("Using Brain"));
+        assert!(
+            rendered.contains("memory_ops({\"action\":\"search\",\"query\":\"advisor routing\"})")
+        );
     }
 
     #[test]

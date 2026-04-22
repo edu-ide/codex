@@ -1,6 +1,6 @@
 #[macro_export]
 macro_rules! register_misc_tools {
-    ($builder:expr, $brain_service:expr, $bt_settings:expr, $notify_relay_tx:expr, $notif_store:expr) => {{
+    ($builder:expr, $brain_service:expr, $bt_settings:expr, $notify_relay_tx:expr, $notif_store:expr, $state:expr) => {{
         use $crate::{EmptyInput, SkillViewInput, UiNotifyInput};
         use crate::relay_server::{RelayEvent, broadcast_event};
 
@@ -276,6 +276,61 @@ fn skills_root() -> std::path::PathBuf {
     crate::config::get_active_vault_dir().join("skills")
 }
 
+pub fn advisor_context_summary_from_value(
+    value: &serde_json::Value,
+    max_messages: usize,
+) -> String {
+    let Some(items) = value.as_array() else {
+        return String::new();
+    };
+
+    let mut remaining = max_messages;
+    let mut skip_latest_assistant = true;
+    let mut lines = Vec::new();
+    for item in items.iter().rev() {
+        let role = item
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        if role.is_empty() || role.eq_ignore_ascii_case("system") {
+            continue;
+        }
+        if skip_latest_assistant && role.eq_ignore_ascii_case("assistant") {
+            skip_latest_assistant = false;
+            continue;
+        }
+        skip_latest_assistant = false;
+
+        let content = item
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                item.pointer("/message/content")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+
+        let Some(content) = content else {
+            continue;
+        };
+
+        lines.push(format!("{}: {}", role.to_ascii_lowercase(), content));
+        remaining = remaining.saturating_sub(1);
+        if remaining == 0 {
+            break;
+        }
+    }
+
+    lines.reverse();
+    lines.join("\n")
+}
+
 fn parse_skill_frontmatter(content: &str) -> (Option<String>, Option<String>) {
     if !content.starts_with("---\n") {
         return (None, None);
@@ -431,4 +486,26 @@ pub fn skill_view_json(name: &str, file_path: Option<&str>) -> Result<String, sa
         "linked_files": linked_files,
     }))
     .unwrap_or_else(|_| "{}".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn advisor_context_summary_keeps_recent_relevant_messages() {
+        let messages = serde_json::json!([
+            { "role": "system", "content": "system prompt" },
+            { "role": "user", "content": "first user ask" },
+            { "role": "assistant", "content": "first reply" },
+            { "role": "user", "content": "second user ask" },
+            { "role": "assistant", "content": "second reply" }
+        ]);
+
+        let summary = super::advisor_context_summary_from_value(&messages, 3);
+
+        assert!(summary.contains("user: first user ask"));
+        assert!(summary.contains("assistant: first reply"));
+        assert!(summary.contains("user: second user ask"));
+        assert!(!summary.contains("system prompt"));
+        assert!(!summary.contains("assistant: second reply"));
+    }
 }

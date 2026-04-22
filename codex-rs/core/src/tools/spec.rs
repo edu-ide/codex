@@ -1,4 +1,3 @@
-use codex_model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
 use crate::shell::Shell;
 use crate::shell::ShellType;
 use crate::tools::code_mode::PUBLIC_TOOL_NAME;
@@ -8,7 +7,6 @@ use crate::tools::handlers::multi_agents_common::DEFAULT_WAIT_TIMEOUT_MS;
 use crate::tools::handlers::multi_agents_common::MAX_WAIT_TIMEOUT_MS;
 use crate::tools::handlers::multi_agents_common::MIN_WAIT_TIMEOUT_MS;
 use crate::tools::registry::ToolRegistryBuilder;
-use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::ToolInfo;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
@@ -18,12 +16,8 @@ use codex_protocol::openai_models::WebSearchToolType;
 use codex_protocol::{CommandCategory, CommandMeta};
 use codex_tools::CommandToolOptions;
 use codex_tools::DiscoverableTool;
-use codex_tools::DiscoverableToolType;
-use codex_tools::ResponsesApiTool;
 use codex_tools::ShellToolOptions;
 use codex_tools::SpawnAgentToolOptions;
-use codex_tools::ToolSearchSourceInfo;
-use codex_tools::ToolSuggestEntry;
 use codex_tools::ViewImageToolOptions;
 use codex_tools::ToolHandlerKind;
 use codex_tools::ToolName;
@@ -31,9 +25,12 @@ use codex_tools::ToolNamespace;
 use codex_tools::ToolRegistryPlanDeferredTool;
 use codex_tools::ToolRegistryPlanMcpTool;
 use codex_tools::ToolRegistryPlanParams;
+use codex_tools::ToolSearchSource;
 use codex_tools::ToolsConfig;
 use codex_tools::WaitAgentTimeoutOptions;
 use codex_tools::augment_tool_spec_for_code_mode;
+use codex_tools::collect_tool_search_source_infos;
+use codex_tools::collect_tool_suggest_entries;
 use codex_tools::create_apply_patch_freeform_tool;
 use codex_tools::create_apply_patch_json_tool;
 use codex_tools::create_followup_task_tool;
@@ -85,8 +82,13 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
+mod helper_builders;
+
 pub type JsonSchema = codex_tools::JsonSchema;
 pub(crate) use codex_tools::ToolsConfigParams;
+pub use helper_builders::create_tools_json_for_responses_api_with_provider;
+use helper_builders::create_advisor_request_tool;
+use helper_builders::create_self_check_tool;
 
 #[cfg(test)]
 pub(crate) use codex_tools::mcp_call_tool_result_output_schema;
@@ -110,147 +112,6 @@ pub(crate) struct ApplyPatchToolArgs {
     /// The expected last modified time of the file being patched.
     /// If provided, the tool will fail if the file has been modified since this time.
     pub(crate) expected_mtime: Option<String>,
-}
-
-pub fn create_tools_json_for_responses_api_with_provider(
-    tools: &[ToolSpec],
-    provider_id: &str,
-) -> codex_protocol::error::Result<Vec<serde_json::Value>> {
-    if provider_id == LLAMA_SERVER_OSS_PROVIDER_ID {
-        return create_tools_json_for_llama_server(tools);
-    }
-
-    codex_tools::create_tools_json_for_responses_api(tools)
-        .map_err(|e| codex_protocol::error::CodexErr::Fatal(e.to_string()))
-}
-
-fn create_tools_json_for_llama_server(
-    tools: &[ToolSpec],
-) -> codex_protocol::error::Result<Vec<serde_json::Value>> {
-    let mut tools_json = Vec::new();
-
-    for tool in tools {
-        let Some(tool) = llama_server_tool_spec(tool) else {
-            continue;
-        };
-        let json = serde_json::to_value(tool)?;
-        tools_json.push(json);
-    }
-
-    Ok(tools_json)
-}
-
-fn llama_server_tool_spec(tool: &ToolSpec) -> Option<ToolSpec> {
-    match tool {
-        ToolSpec::Function(tool) => Some(ToolSpec::Function(tool.clone())),
-        ToolSpec::LocalShell {} => Some(create_local_shell_json_tool()),
-        ToolSpec::Freeform(tool) if tool.name == "apply_patch" => {
-            Some(create_apply_patch_json_tool())
-        }
-        ToolSpec::Freeform(tool) if tool.name == "js_repl" => Some(create_js_repl_json_tool()),
-        ToolSpec::ToolSearch { .. }
-        | ToolSpec::ImageGeneration { .. }
-        | ToolSpec::WebSearch { .. }
-        | ToolSpec::Namespace(_)
-        | ToolSpec::Freeform(_) => None,
-    }
-}
-
-fn create_local_shell_json_tool() -> ToolSpec {
-    let properties = BTreeMap::from([
-        (
-            "command".to_string(),
-            JsonSchema::array(
-                JsonSchema::string(None),
-                Some("The command to execute.".to_string()),
-            ),
-        ),
-        (
-            "workdir".to_string(),
-            JsonSchema::string(Some("The working directory to execute the command in.".to_string())),
-        ),
-        (
-            "timeout_ms".to_string(),
-            JsonSchema::number(Some("The timeout for the command in milliseconds.".to_string())),
-        ),
-    ]);
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "local_shell".to_string(),
-        description:
-            "Runs a local shell command and returns its output. The command is passed directly to execvp(). Always set `workdir` when possible."
-                .to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: JsonSchema::object(
-            properties,
-            Some(vec!["command".to_string()]),
-            Some(codex_tools::AdditionalProperties::Boolean(false)),
-        ),
-        output_schema: None,
-    })
-}
-
-fn create_js_repl_json_tool() -> ToolSpec {
-    let properties = BTreeMap::from([
-        (
-            "code".to_string(),
-            codex_tools::JsonSchema::string(Some(
-                "Raw JavaScript source to execute in the persistent Node kernel.".to_string(),
-            )),
-        ),
-        (
-            "timeout_ms".to_string(),
-            codex_tools::JsonSchema::number(Some(
-                "Optional timeout override in milliseconds for this execution.".to_string(),
-            )),
-        ),
-    ]);
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "js_repl".to_string(),
-        description:
-            "Runs JavaScript in a persistent Node kernel with top-level await. Send JSON with a `code` string and optional `timeout_ms`."
-                .to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: codex_tools::JsonSchema::object(
-            properties,
-            Some(vec!["code".to_string()]),
-            Some(codex_tools::AdditionalProperties::Boolean(false)),
-        ),
-        output_schema: None,
-    })
-}
-fn create_self_check_tool() -> ToolSpec {
-    let mut properties = BTreeMap::new();
-    properties.insert(
-        "status".to_string(),
-        codex_tools::JsonSchema::string(Some("The evaluation status ('passed', 'failed', 'blocked').".to_string())),
-    );
-    properties.insert(
-        "errors_encountered".to_string(),
-        codex_tools::JsonSchema::array(codex_tools::JsonSchema::string(None), Some("Any errors or failures you encountered during this step.".to_string())),
-    );
-    properties.insert(
-        "mitigation_plan".to_string(),
-        codex_tools::JsonSchema::string(Some(
-                "Proposed strategy to recover, retry, or ask for user help.".to_string(),
-            )),
-    );
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "self_check".to_string(),
-        description: "Run an autonomous self-check to evaluate success, mitigate errors, and trigger tool-call retries. This harness provides autonomous error recovery feedback.".to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: codex_tools::JsonSchema::object(
-            properties,
-            Some(vec!["status".to_string()]),
-            Some(codex_tools::AdditionalProperties::Boolean(false)),
-        ),
-        output_schema: None,
-    })
 }
 
 fn push_tool_spec(
@@ -307,6 +168,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
     use crate::tools::handlers::PlanHandler;
+    use crate::tools::handlers::AdvisorRequestHandler;
     use crate::tools::handlers::RequestPermissionsHandler;
     use crate::tools::handlers::RequestUserInputHandler;
     use crate::tools::handlers::SelfCheckHandler;
@@ -355,6 +217,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
         default_mode_request_user_input: config.default_mode_request_user_input,
     });
     let self_check_handler = Arc::new(SelfCheckHandler);
+    let advisor_request_handler = Arc::new(AdvisorRequestHandler);
     let tool_suggest_handler = Arc::new(ToolSuggestHandler);
     let code_mode_handler = Arc::new(CodeModeExecuteHandler);
     let code_mode_wait_handler = Arc::new(CodeModeWaitHandler);
@@ -748,6 +611,33 @@ pub(crate) fn build_specs_with_discoverable_tools(
         },
     );
 
+    if crate::tools::handlers::advisor_target_from_env().is_some() {
+        push_tool_spec(
+            &mut builder,
+            create_advisor_request_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        builder.register_handler(
+            "advisor_request",
+            advisor_request_handler,
+            CommandMeta {
+                name: "advisor_request".to_string(),
+                help_text: "Request planning advice from the configured system2 advisor."
+                    .to_string(),
+                usage_example: None,
+                is_experimental: false,
+                is_visible: true,
+                available_during_task: true,
+                category: CommandCategory::System,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
+            },
+        );
+    }
+
     if config.search_tool
         && let Some(deferred_mcp_tools) = deferred_mcp_tools
     {
@@ -755,7 +645,13 @@ pub(crate) fn build_specs_with_discoverable_tools(
         push_tool_spec(
             &mut builder,
             create_tool_search_tool(
-                &tool_search_source_infos(&deferred_mcp_tools),
+                &collect_tool_search_source_infos(
+                    deferred_mcp_tools.values().map(|tool| ToolSearchSource {
+                        server_name: &tool.server_name,
+                        connector_name: tool.connector_name.as_deref(),
+                        connector_description: tool.connector_description.as_deref(),
+                    }),
+                ),
                 TOOL_SEARCH_DEFAULT_LIMIT,
             ),
             /*supports_parallel_tool_calls*/ true,
@@ -809,7 +705,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
             .filter(|tools| !tools.is_empty())
     {
         builder.push_spec_with_parallel_support(
-            create_tool_suggest_tool(&tool_suggest_entries(discoverable_tools)),
+            create_tool_suggest_tool(&collect_tool_suggest_entries(discoverable_tools)),
             /*supports_parallel_tool_calls*/ true,
         );
         builder.register_handler(
@@ -1442,55 +1338,6 @@ pub(crate) fn build_specs_with_discoverable_tools(
 
     builder
 }
-
-fn tool_search_source_infos(app_tools: &HashMap<String, ToolInfo>) -> Vec<ToolSearchSourceInfo> {
-    app_tools
-        .values()
-        .filter(|tool| tool.server_name == CODEX_APPS_MCP_SERVER_NAME)
-        .filter_map(|tool| {
-            let name = tool
-                .connector_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|connector_name: &&str| !connector_name.is_empty())?
-                .to_string();
-            let description = tool
-                .connector_description
-                .as_deref()
-                .map(str::trim)
-                .filter(|connector_description: &&str| !connector_description.is_empty())
-                .map(str::to_string);
-            Some(ToolSearchSourceInfo { name, description })
-        })
-        .collect()
-}
-
-fn tool_suggest_entries(discoverable_tools: &[DiscoverableTool]) -> Vec<ToolSuggestEntry> {
-    discoverable_tools
-        .iter()
-        .map(|tool| match tool {
-            DiscoverableTool::Connector(connector) => ToolSuggestEntry {
-                id: connector.id.clone(),
-                name: connector.name.clone(),
-                description: connector.description.clone(),
-                tool_type: DiscoverableToolType::Connector,
-                has_skills: false,
-                mcp_server_names: Vec::new(),
-                app_connector_ids: Vec::new(),
-            },
-            DiscoverableTool::Plugin(plugin) => ToolSuggestEntry {
-                id: plugin.id.clone(),
-                name: plugin.name.clone(),
-                description: plugin.description.clone(),
-                tool_type: DiscoverableToolType::Plugin,
-                has_skills: plugin.has_skills,
-                mcp_server_names: plugin.mcp_server_names.clone(),
-                app_connector_ids: plugin.app_connector_ids.clone(),
-            },
-        })
-        .collect()
-}
-
 #[cfg(test)]
 #[path = "spec_tests.rs"]
 mod tests;

@@ -80,10 +80,12 @@ impl AgentTransportFactory for AcpTransportFactory {
                     .unwrap();
 
                 let config = rt
-                    .block_on(codex_core::config::Config::load_default_with_cli_overrides(Vec::new()))
+                    .block_on(codex_core::config::Config::load_default_with_cli_overrides(
+                        Vec::new(),
+                    ))
                     .unwrap_or_else(|e| {
-                            panic!("Failed to load ilhae config from {:?}: {:?}", ilhae_dir, e)
-                        });
+                        panic!("Failed to load ilhae config from {:?}: {:?}", ilhae_dir, e)
+                    });
 
                 tracing::info!("ilhae-agent background thread started.");
                 let _ = rt.block_on(async move {

@@ -65,6 +65,8 @@ use codex_protocol::protocol::HookOutputEntryKind as CoreHookOutputEntryKind;
 use codex_protocol::protocol::HookRunStatus as CoreHookRunStatus;
 use codex_protocol::protocol::HookRunSummary as CoreHookRunSummary;
 use codex_protocol::protocol::HookScope as CoreHookScope;
+use codex_protocol::protocol::LoopLifecycleKind;
+use codex_protocol::protocol::LoopLifecycleStatus;
 use codex_protocol::protocol::ModelRerouteReason as CoreModelRerouteReason;
 use codex_protocol::protocol::NetworkAccess as CoreNetworkAccess;
 use codex_protocol::protocol::NonSteerableTurnKind as CoreNonSteerableTurnKind;
@@ -4653,6 +4655,33 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
+    LoopLifecycle {
+        id: String,
+        kind: LoopLifecycleKind,
+        title: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        detail: Option<String>,
+        status: LoopLifecycleStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        counts: Option<BTreeMap<String, i64>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        duration_ms: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        target_profile: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
     EnteredReviewMode { id: String, review: String },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
@@ -4686,6 +4715,7 @@ impl ThreadItem {
             | ThreadItem::WebSearch { id, .. }
             | ThreadItem::ImageView { id, .. }
             | ThreadItem::ImageGeneration { id, .. }
+            | ThreadItem::LoopLifecycle { id, .. }
             | ThreadItem::EnteredReviewMode { id, .. }
             | ThreadItem::ExitedReviewMode { id, .. }
             | ThreadItem::ContextCompaction { id, .. } => id,
@@ -5093,6 +5123,19 @@ impl From<CoreTurnItem> for ThreadItem {
                 revised_prompt: image.revised_prompt,
                 result: image.result,
                 saved_path: image.saved_path,
+            },
+            CoreTurnItem::LoopLifecycle(loop_item) => ThreadItem::LoopLifecycle {
+                id: loop_item.id,
+                kind: loop_item.kind,
+                title: loop_item.title,
+                summary: loop_item.summary,
+                detail: loop_item.detail,
+                status: loop_item.status,
+                reason: loop_item.reason,
+                counts: loop_item.counts,
+                error: loop_item.error,
+                duration_ms: loop_item.duration_ms,
+                target_profile: loop_item.target_profile,
             },
             CoreTurnItem::ContextCompaction(compaction) => {
                 ThreadItem::ContextCompaction { id: compaction.id }
@@ -5672,6 +5715,23 @@ pub struct McpToolCallProgressNotification {
     pub turn_id: String,
     pub item_id: String,
     pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct LoopLifecycleProgressNotification {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    pub kind: LoopLifecycleKind,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub counts: Option<BTreeMap<String, i64>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -6585,12 +6645,15 @@ mod tests {
     use super::*;
     use codex_protocol::items::AgentMessageContent;
     use codex_protocol::items::AgentMessageItem;
+    use codex_protocol::items::LoopLifecycleItem as CoreLoopLifecycleItem;
     use codex_protocol::items::ReasoningItem;
     use codex_protocol::items::TurnItem;
     use codex_protocol::items::UserMessageItem;
     use codex_protocol::items::WebSearchItem;
     use codex_protocol::models::WebSearchAction as CoreWebSearchAction;
     use codex_protocol::protocol::NetworkAccess as CoreNetworkAccess;
+    use codex_protocol::protocol::LoopLifecycleKind as CoreLoopLifecycleKind;
+    use codex_protocol::protocol::LoopLifecycleStatus as CoreLoopLifecycleStatus;
     use codex_protocol::protocol::ReadOnlyAccess as CoreReadOnlyAccess;
     use codex_protocol::user_input::UserInput as CoreUserInput;
     use codex_utils_absolute_path::test_support::PathBufExt;
@@ -8368,6 +8431,37 @@ mod tests {
                     query: Some("docs".to_string()),
                     queries: None,
                 }),
+            }
+        );
+
+        let loop_item = TurnItem::LoopLifecycle(CoreLoopLifecycleItem {
+            id: "loop-1".to_string(),
+            kind: CoreLoopLifecycleKind::Advisor,
+            title: "Escalating to advisor".to_string(),
+            summary: "Need deeper planning".to_string(),
+            detail: Some("multi_file_refactor".to_string()),
+            status: CoreLoopLifecycleStatus::Completed,
+            reason: Some("ambiguity".to_string()),
+            counts: Some(BTreeMap::from([("attempts".to_string(), 2)])),
+            error: None,
+            duration_ms: Some(1200),
+            target_profile: Some("minimax-m2.7-turboquant".to_string()),
+        });
+
+        assert_eq!(
+            ThreadItem::from(loop_item),
+            ThreadItem::LoopLifecycle {
+                id: "loop-1".to_string(),
+                kind: CoreLoopLifecycleKind::Advisor,
+                title: "Escalating to advisor".to_string(),
+                summary: "Need deeper planning".to_string(),
+                detail: Some("multi_file_refactor".to_string()),
+                status: CoreLoopLifecycleStatus::Completed,
+                reason: Some("ambiguity".to_string()),
+                counts: Some(BTreeMap::from([("attempts".to_string(), 2)])),
+                error: None,
+                duration_ms: Some(1200),
+                target_profile: Some("minimax-m2.7-turboquant".to_string()),
             }
         );
     }

@@ -11,11 +11,11 @@ use crate::register_browser_tools;
 use crate::{
     ArtifactEditInput, ArtifactGetInput, ArtifactListInput, ArtifactSaveInput, EmptyInput, IdInput,
     MemoryReadInput, MemoryToolDreamAnalyzeInput, MemoryToolDreamApplyInput,
-    MemoryToolDreamPreviewInput, MemoryToolDreamPromoteInput, MemoryToolExtractInput, MemoryToolForgetInput,
-    MemoryToolListInput, MemoryToolPinInput, MemoryToolPromoteInput, MemoryToolSearchInput,
-    MemoryToolStatsInput, MemoryToolStoreInput, MemoryWriteInput, SessionIdInput,
-    SessionRenameInput, TaskAddHistoryInput, TaskCreateInput, TaskUpdateInput, TeamDelegateInput,
-    TeamProposeInput, UiNotifyInput, tool_to_plugin_id,
+    MemoryToolDreamPreviewInput, MemoryToolDreamPromoteInput, MemoryToolExtractInput,
+    MemoryToolForgetInput, MemoryToolListInput, MemoryToolPinInput, MemoryToolPromoteInput,
+    MemoryToolSearchInput, MemoryToolStatsInput, MemoryToolStoreInput, MemoryWriteInput,
+    SessionIdInput, SessionRenameInput, TaskAddHistoryInput, TaskCreateInput, TaskUpdateInput,
+    TeamDelegateInput, TeamProposeInput, UiNotifyInput, tool_to_plugin_id,
 };
 
 // ─── ToolsProxy state ──────────────────────────────────────────────────
@@ -67,7 +67,8 @@ impl ConnectTo<Conductor> for ToolsProxy {
                     brain,
                     bt_settings,
                     notify_relay_tx,
-                    notif_store
+                    notif_store,
+                    s.clone()
                 );
 
                 builder.build()

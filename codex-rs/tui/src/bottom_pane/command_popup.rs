@@ -64,10 +64,7 @@ impl CommandPopup {
     pub(crate) fn new(flags: CommandPopupFlags) -> Self {
         // Keep built-in availability in sync with the composer.
         let builtins = slash_commands::builtins_for_popup(flags.into());
-        let commands = builtins
-            .into_iter()
-            .map(|(_, cmd)| cmd.to_meta())
-            .collect();
+        let commands = builtins.into_iter().map(|(_, cmd)| cmd.to_meta()).collect();
 
         Self {
             command_filter: String::new(),
@@ -196,9 +193,11 @@ impl CommandPopup {
             .into_iter()
             .map(|(item, indices)| {
                 let (name, description, category) = match item {
-                    CommandItem::Builtin(cmd) => {
-                        (format!("/{}", cmd.command()), cmd.description().to_string(), None)
-                    }
+                    CommandItem::Builtin(cmd) => (
+                        format!("/{}", cmd.command()),
+                        cmd.description().to_string(),
+                        None,
+                    ),
                     CommandItem::Custom(meta) => (
                         format!("/{}", meta.name),
                         meta.help_text.clone(),

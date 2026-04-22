@@ -8,7 +8,7 @@ use sacp::DynConnectTo;
 
 use moka::sync::Cache;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, OnceLock, atomic::AtomicU64};
+use std::sync::{atomic::AtomicU64, Arc, OnceLock};
 use std::{process::Stdio, time::Duration};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -17,9 +17,10 @@ use tracing::{info, warn};
 static LEADER_READY: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 use crate::browser_manager::BrowserManager;
-use crate::relay_server::{RelayEvent, RelayState, broadcast_event, start_relay_server};
+use crate::relay_server::{broadcast_event, start_relay_server, RelayEvent, RelayState};
 use crate::settings_store::SettingsStore;
 use crate::startup::{build_agent_transport, cleanup_redundant_sessions};
+use tokio::sync::broadcast;
 
 // ═════════════════════════════════════════════════════════════════════════
 
@@ -45,10 +46,30 @@ pub struct BootstrappedIlhaeRuntime {
 
 static NATIVE_RUNTIME_CONTEXT: OnceLock<BootstrappedIlhaeRuntime> = OnceLock::new();
 static NATIVE_RUNTIME_BACKGROUND_WORKERS_STARTED: OnceLock<()> = OnceLock::new();
+static NATIVE_LOOP_LIFECYCLE_BUS: OnceLock<
+    broadcast::Sender<crate::IlhaeLoopLifecycleNotification>,
+> = OnceLock::new();
 const DEFAULT_GEPA_OPTIMIZER_INTERVAL_SECS: u64 = 1800;
 
 pub fn native_runtime_context() -> Option<BootstrappedIlhaeRuntime> {
     NATIVE_RUNTIME_CONTEXT.get().cloned()
+}
+
+fn native_loop_lifecycle_bus() -> &'static broadcast::Sender<crate::IlhaeLoopLifecycleNotification>
+{
+    NATIVE_LOOP_LIFECYCLE_BUS.get_or_init(|| {
+        let (tx, _rx) = broadcast::channel(256);
+        tx
+    })
+}
+
+pub fn subscribe_native_loop_lifecycle(
+) -> broadcast::Receiver<crate::IlhaeLoopLifecycleNotification> {
+    native_loop_lifecycle_bus().subscribe()
+}
+
+pub fn emit_native_loop_lifecycle(notification: crate::IlhaeLoopLifecycleNotification) {
+    let _ = native_loop_lifecycle_bus().send(notification);
 }
 
 fn spawn_native_runtime_background_workers(runtime: &BootstrappedIlhaeRuntime) {
@@ -92,8 +113,8 @@ pub fn current_native_backend_engine() -> Option<String> {
         .map(|runtime| infer_agent_id_from_command(&runtime.settings_store.get().agent.command))
 }
 
-pub fn current_native_backend_capability_profile()
--> Option<crate::capabilities::EngineCapabilityProfile> {
+pub fn current_native_backend_capability_profile(
+) -> Option<crate::capabilities::EngineCapabilityProfile> {
     current_native_backend_engine()
         .map(|engine| crate::capabilities::engine_capability_profile(&engine))
 }
@@ -250,8 +271,8 @@ fn spawn_native_runtime_server(
     Ok(())
 }
 
-pub async fn ensure_native_runtime_for_cli() -> anyhow::Result<()> {
-    let Some((profile_id, config)) = crate::config::get_active_native_runtime_config() else {
+pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Result<()> {
+    let Some((profile_id, config)) = crate::config::get_native_runtime_config(profile_id) else {
         return Ok(());
     };
 
@@ -295,15 +316,18 @@ pub async fn ensure_native_runtime_for_cli() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn stop_native_runtime_for_cli() -> anyhow::Result<()> {
-    let Some((profile_id, config)) = crate::config::get_active_native_runtime_config() else {
+pub async fn stop_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Result<()> {
+    let Some((profile_id, config)) = crate::config::get_native_runtime_config(profile_id) else {
         println!("No active native runtime profile found.");
         return Ok(());
     };
 
     let path = std::path::Path::new(&config.server_bin);
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        println!("Stopping native runtime: {} (profile: {})", name, profile_id);
+        println!(
+            "Stopping native runtime: {} (profile: {})",
+            name, profile_id
+        );
 
         let mut cmd = std::process::Command::new("killall");
         cmd.arg(name);
