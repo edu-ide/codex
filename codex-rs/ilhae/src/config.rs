@@ -951,11 +951,44 @@ fn user_mcp_servers_for_managed_config() -> toml::value::Table {
     let Ok(config) = config_str.parse::<toml::Value>() else {
         return toml::value::Table::new();
     };
-    config
+    let mut servers = config
         .get("mcp_servers")
         .and_then(toml::Value::as_table)
         .cloned()
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    disable_duplicate_legacy_fortune_mcp_server(&mut servers);
+    servers
+}
+
+fn is_fortune_mcp_server(value: &toml::Value) -> bool {
+    let Some(table) = value.as_table() else {
+        return false;
+    };
+    table
+        .get("url")
+        .and_then(toml::Value::as_str)
+        .is_some_and(|url| url.trim_end_matches('/') == "https://fortune.ugot.uk/mcp")
+        || table
+            .get("oauth_resource")
+            .and_then(toml::Value::as_str)
+            .is_some_and(|url| url.trim_end_matches('/') == "https://fortune.ugot.uk/mcp")
+}
+
+fn disable_duplicate_legacy_fortune_mcp_server(servers: &mut toml::value::Table) {
+    let has_canonical_fortune = servers
+        .get("ugot_fortune")
+        .is_some_and(is_fortune_mcp_server);
+    let has_legacy_fortune = servers.get("fortune").is_some_and(is_fortune_mcp_server);
+
+    if has_canonical_fortune
+        && has_legacy_fortune
+        && let Some(table) = servers
+            .get_mut("fortune")
+            .and_then(toml::Value::as_table_mut)
+    {
+        table.insert("enabled".to_string(), toml::Value::Boolean(false));
+    }
 }
 
 fn user_model_providers_for_managed_config() -> toml::value::Table {
@@ -1539,6 +1572,60 @@ requires_openai_auth = false
             std::fs::read_to_string(tmp.path().join("codex-home/auth.json"))
                 .expect("read codex auth"),
             r#"{"auth":"token"}"#
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_disables_duplicate_legacy_fortune_server() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        save_ilhae_toml_config(&IlhaeTomlConfig::default()).expect("save config");
+        let config_path = tmp.path().join("config.toml");
+        let mut config_toml = std::fs::read_to_string(&config_path).expect("read config");
+        config_toml.push_str(
+            r#"
+[mcp_servers.fortune]
+url = "https://fortune.ugot.uk/mcp"
+enabled = true
+scopes = ["openid", "profile", "email", "mcp.read", "mcp.write"]
+oauth_resource = "https://fortune.ugot.uk/mcp"
+
+[mcp_servers.ugot_fortune]
+url = "https://fortune.ugot.uk/mcp"
+enabled = true
+scopes = ["openid", "profile", "email", "offline_access", "mcp.read", "mcp.write"]
+oauth_resource = "https://fortune.ugot.uk/mcp"
+"#,
+        );
+        std::fs::write(config_path, config_toml).expect("write config with duplicate fortune");
+
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
+            .expect("read managed config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let mcp_servers = parsed
+            .get("mcp_servers")
+            .and_then(toml::Value::as_table)
+            .expect("mcp servers table");
+        let legacy = mcp_servers
+            .get("fortune")
+            .and_then(toml::Value::as_table)
+            .expect("legacy fortune server");
+        let canonical = mcp_servers
+            .get("ugot_fortune")
+            .and_then(toml::Value::as_table)
+            .expect("canonical fortune server");
+
+        assert_eq!(
+            legacy.get("enabled").and_then(toml::Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            canonical.get("enabled").and_then(toml::Value::as_bool),
+            Some(true)
         );
     }
 
