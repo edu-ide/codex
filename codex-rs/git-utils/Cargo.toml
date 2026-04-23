@@ -1,59 +1,36 @@
 [package]
 name = "codex-git-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 readme = "README.md"
 
 [lints]
 workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+codex-exec-server = { workspace = true }
+codex-protocol = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }
+gix = { workspace = true }
+once_cell = { workspace = true }
 regex = "1"
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+similar = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "process", "rt", "time"] }
+ts-rs = { workspace = true, features = [
+    "uuid-impl",
+    "serde-json-impl",
+    "no-serde-warnings",
+] }
+walkdir = { workspace = true }
 
-[package.version]
-workspace = true
-
-[package.edition]
-workspace = true
-
-[package.license]
-workspace = true
-
-[dependencies.codex-utils-absolute-path]
-workspace = true
-
-[dependencies.futures]
-version = "0.3"
-default-features = false
-features = [ "alloc",]
-
-[dependencies.once_cell]
-workspace = true
-
-[dependencies.schemars]
-version = "0.8.22"
-
-[dependencies.serde]
-version = "1"
-features = [ "derive",]
-
-[dependencies.tempfile]
-workspace = true
-
-[dependencies.thiserror]
-version = "2.0.17"
-
-[dependencies.tokio]
-version = "1"
-features = [ "macros", "process", "rt", "time",]
-
-[dependencies.ts-rs]
-workspace = true
-features = [ "uuid-impl", "serde-json-impl", "no-serde-warnings",]
-
-[dependencies.walkdir]
-workspace = true
-
-[dev-dependencies.assert_matches]
-workspace = true
-
-[dev-dependencies.pretty_assertions]
-workspace = true
+[dev-dependencies]
+assert_matches = { workspace = true }
+pretty_assertions = { workspace = true }

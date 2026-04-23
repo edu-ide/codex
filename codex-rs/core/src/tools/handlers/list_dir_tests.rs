@@ -1,6 +1,20 @@
 use super::*;
+use codex_protocol::permissions::FileSystemAccessMode;
+use codex_protocol::permissions::FileSystemPath;
+use codex_protocol::permissions::FileSystemSandboxEntry;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::ReadDenyMatcher;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
+
+async fn list_dir_slice(
+    path: &Path,
+    offset: usize,
+    limit: usize,
+    depth: usize,
+) -> Result<Vec<String>, FunctionCallError> {
+    list_dir_slice_with_policy(path, offset, limit, depth, /*read_deny_matcher*/ None).await
+}
 
 #[tokio::test]
 async fn lists_directory_entries() {
@@ -260,36 +274,58 @@ async fn truncation_respects_sorted_order() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn ignores_vcs_and_dependency_directories() -> anyhow::Result<()> {
-    let temp = tempdir()?;
+async fn hides_denied_entries_and_prunes_denied_subtrees() {
+    let temp = tempdir().expect("create tempdir");
     let dir_path = temp.path();
+    let visible_dir = dir_path.join("visible");
+    let denied_dir = dir_path.join("private");
+    tokio::fs::create_dir(&visible_dir)
+        .await
+        .expect("create visible dir");
+    tokio::fs::create_dir(&denied_dir)
+        .await
+        .expect("create denied dir");
+    tokio::fs::write(visible_dir.join("ok.txt"), b"ok")
+        .await
+        .expect("write visible file");
+    tokio::fs::write(denied_dir.join("secret.txt"), b"secret")
+        .await
+        .expect("write denied file");
+    tokio::fs::write(dir_path.join("top_secret.txt"), b"secret")
+        .await
+        .expect("write denied top-level file");
 
-    let git_dir = dir_path.join(".git");
-    let node_modules_dir = dir_path.join("node_modules");
-    let normal_dir = dir_path.join("normal");
+    let policy = FileSystemSandboxPolicy::restricted(vec![
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: denied_dir.try_into().expect("absolute denied dir"),
+            },
+            access: FileSystemAccessMode::None,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: dir_path
+                    .join("top_secret.txt")
+                    .try_into()
+                    .expect("absolute denied file"),
+            },
+            access: FileSystemAccessMode::None,
+        },
+    ]);
 
-    tokio::fs::create_dir(&git_dir).await?;
-    tokio::fs::create_dir(&node_modules_dir).await?;
-    tokio::fs::create_dir(&normal_dir).await?;
-
-    tokio::fs::write(git_dir.join("config"), b"git config").await?;
-    tokio::fs::write(node_modules_dir.join("package.json"), b"package").await?;
-    tokio::fs::write(normal_dir.join("child.txt"), b"child").await?;
-
-    let entries = list_dir_slice(
-        dir_path, /*offset*/ 1, /*limit*/ 10, /*depth*/ 3,
+    let read_deny_matcher = ReadDenyMatcher::new(&policy, dir_path);
+    let entries = list_dir_slice_with_policy(
+        dir_path,
+        /*offset*/ 1,
+        /*limit*/ 20,
+        /*depth*/ 3,
+        read_deny_matcher.as_ref(),
     )
-    .await?;
+    .await
+    .expect("list directory");
 
     assert_eq!(
         entries,
-        vec![
-            ".git/".to_string(),
-            "node_modules/".to_string(),
-            "normal/".to_string(),
-            "  child.txt".to_string(),
-        ]
+        vec!["visible/".to_string(), "  ok.txt".to_string(),]
     );
-
-    Ok(())
 }

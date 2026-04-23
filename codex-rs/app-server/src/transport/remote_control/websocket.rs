@@ -172,6 +172,10 @@ impl RemoteControlWebsocket {
         }
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "remote-control client shutdown must serialize tracker state"
+    )]
     pub(crate) async fn run(
         mut self,
         app_server_client_name_rx: Option<oneshot::Receiver<String>>,
@@ -381,6 +385,10 @@ impl RemoteControlWebsocket {
         }
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "remote-control server event receiver is shared across reconnects"
+    )]
     async fn run_server_writer_inner(
         state: Arc<Mutex<WebsocketState>>,
         server_event_rx: Arc<Mutex<mpsc::Receiver<super::QueuedServerEnvelope>>>,
@@ -392,7 +400,14 @@ impl RemoteControlWebsocket {
         ping_interval: std::time::Duration,
         shutdown_token: CancellationToken,
     ) -> io::Result<()> {
-        for server_envelope in state.lock().await.outbound_buffer.server_envelopes() {
+        let server_envelopes = state
+            .lock()
+            .await
+            .outbound_buffer
+            .server_envelopes()
+            .cloned()
+            .collect::<Vec<_>>();
+        for server_envelope in server_envelopes {
             let payload = match serde_json::to_string(&server_envelope) {
                 Ok(payload) => payload,
                 Err(err) => {
@@ -515,6 +530,10 @@ impl RemoteControlWebsocket {
         }
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "remote-control client tracking must stay serialized while processing inbound events"
+    )]
     async fn run_websocket_reader_inner(
         client_tracker: Arc<Mutex<ClientTracker>>,
         state: Arc<Mutex<WebsocketState>>,
@@ -594,21 +613,22 @@ impl RemoteControlWebsocket {
                 }
             };
 
-            let mut websocket_state = state.lock().await;
-            if let Some(cursor) = client_envelope.cursor.as_deref() {
-                websocket_state.subscribe_cursor = Some(cursor.to_string());
-            }
-            if let ClientEvent::Ack = &client_envelope.event
-                && let Some(acked_seq_id) = client_envelope.seq_id
-                && let Some(stream_id) = client_envelope.stream_id.as_ref()
             {
-                websocket_state.outbound_buffer.ack(
-                    &client_envelope.client_id,
-                    stream_id,
-                    acked_seq_id,
-                );
+                let mut websocket_state = state.lock().await;
+                if let Some(cursor) = client_envelope.cursor.as_deref() {
+                    websocket_state.subscribe_cursor = Some(cursor.to_string());
+                }
+                if let ClientEvent::Ack = &client_envelope.event
+                    && let Some(acked_seq_id) = client_envelope.seq_id
+                    && let Some(stream_id) = client_envelope.stream_id.as_ref()
+                {
+                    websocket_state.outbound_buffer.ack(
+                        &client_envelope.client_id,
+                        stream_id,
+                        acked_seq_id,
+                    );
+                }
             }
-            drop(websocket_state);
 
             if client_tracker
                 .handle_message(client_envelope)
@@ -933,6 +953,13 @@ mod tests {
     use tokio::time::timeout;
     use tokio_tungstenite::accept_async;
 
+    // Windows Bazel CI can take longer than a few seconds for the websocket
+    // client connection attempt to reach the local test listener.
+    #[cfg(windows)]
+    const TEST_HTTP_ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+    #[cfg(not(windows))]
+    const TEST_HTTP_ACCEPT_TIMEOUT: Duration = Duration::from_secs(5);
+
     async fn remote_control_state_runtime(codex_home: &TempDir) -> Arc<StateRuntime> {
         StateRuntime::init(codex_home.path().to_path_buf(), "test-provider".to_string())
             .await
@@ -1064,6 +1091,7 @@ mod tests {
             codex_home.path().to_path_buf(),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
+            /*chatgpt_base_url*/ None,
         );
         let mut auth_recovery = auth_manager.unauthorized_recovery();
         let mut enrollment = Some(RemoteControlEnrollment {
@@ -1145,6 +1173,7 @@ mod tests {
             codex_home.path().to_path_buf(),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
+            /*chatgpt_base_url*/ None,
         );
         let mut auth_recovery = auth_manager.unauthorized_recovery();
         let mut enrollment = None;
@@ -1489,7 +1518,7 @@ mod tests {
     }
 
     async fn accept_http_request(listener: &TcpListener) -> (TcpStream, String) {
-        let (stream, _) = timeout(Duration::from_secs(5), listener.accept())
+        let (stream, _) = timeout(TEST_HTTP_ACCEPT_TIMEOUT, listener.accept())
             .await
             .expect("HTTP request should arrive in time")
             .expect("listener accept should succeed");

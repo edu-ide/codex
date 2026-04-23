@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,13 +9,22 @@ use crate::hook_runtime::run_post_tool_use_hooks;
 use crate::hook_runtime::run_pre_tool_use_hooks;
 use crate::memories::usage::emit_metric_for_tool_read;
 use crate::sandbox_tags::sandbox_tag;
+use crate::session::turn_context::TurnContext;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
-pub use codex_protocol::CommandCategory;
-pub use codex_protocol::CommandMeta;
+use crate::tools::hook_names::HookToolName;
+use codex_hooks::HookEvent;
+use codex_hooks::HookEventAfterToolUse;
+use codex_hooks::HookPayload;
+use codex_hooks::HookResult;
+use codex_hooks::HookToolInput;
+use codex_hooks::HookToolInputLocalShell;
+use codex_hooks::HookToolKind;
 use codex_protocol::models::ResponseInputItem;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::SandboxPolicy;
 use codex_tools::ConfiguredToolSpec;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
@@ -26,14 +33,7 @@ use futures::future::BoxFuture;
 use serde_json::Value;
 use tracing::warn;
 
-mod brain_bridge;
-mod hook_dispatch;
-
-use self::hook_dispatch::dispatch_after_tool_use_hook;
-use self::hook_dispatch::sandbox_policy_tag;
-use self::hook_dispatch::unsupported_tool_call_message;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ToolKind {
     Function,
     Mcp,
@@ -72,8 +72,13 @@ pub trait ToolHandler: Send + Sync {
         &self,
         _call_id: &str,
         _payload: &ToolPayload,
-        _result: &dyn ToolOutput,
+        _result: &Self::Output,
     ) -> Option<PostToolUsePayload> {
+        None
+    }
+
+    /// Creates an optional consumer for streamed tool argument diffs.
+    fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
         None
     }
 
@@ -85,10 +90,24 @@ pub trait ToolHandler: Send + Sync {
     ) -> impl std::future::Future<Output = Result<Self::Output, FunctionCallError>> + Send;
 }
 
+/// Consumes streamed argument diffs for a tool call and emits protocol events
+/// derived from partial tool input.
+pub(crate) trait ToolArgumentDiffConsumer: Send {
+    /// Consume the next argument diff for a tool call.
+    fn consume_diff(&mut self, turn: &TurnContext, call_id: String, diff: &str)
+    -> Option<EventMsg>;
+
+    /// Flush any buffered event before the tool call completes.
+    fn flush_on_complete(&mut self) -> Option<EventMsg> {
+        None
+    }
+}
+
 pub(crate) struct AnyToolResult {
     pub(crate) call_id: String,
     pub(crate) payload: ToolPayload,
     pub(crate) result: Box<dyn ToolOutput>,
+    pub(crate) post_tool_use_payload: Option<PostToolUsePayload>,
 }
 
 impl AnyToolResult {
@@ -112,12 +131,27 @@ impl AnyToolResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PreToolUsePayload {
+    /// Hook-facing tool name model.
+    ///
+    /// The canonical name is serialized to hook stdin, while aliases are used
+    /// only for matcher compatibility.
+    pub(crate) tool_name: HookToolName,
+    /// Command-shaped input exposed at `tool_input.command`.
     pub(crate) command: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PostToolUsePayload {
+    /// Hook-facing tool name model.
+    ///
+    /// The canonical name is serialized to hook stdin, while aliases are used
+    /// only for matcher compatibility.
+    pub(crate) tool_name: HookToolName,
+    /// The originating tool-use id exposed at `tool_use_id`.
+    pub(crate) tool_use_id: String,
+    /// Command-shaped input exposed at `tool_input.command`.
     pub(crate) command: String,
+    /// Tool result exposed at `tool_response`.
     pub(crate) tool_response: Value,
 }
 
@@ -128,13 +162,7 @@ trait AnyToolHandler: Send + Sync {
 
     fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload>;
 
-    fn post_tool_use_payload(
-        &self,
-        call_id: &str,
-        payload: &ToolPayload,
-        result: &dyn ToolOutput,
-    ) -> Option<PostToolUsePayload>;
-
+    fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>>;
     fn handle_any<'a>(
         &'a self,
         invocation: ToolInvocation,
@@ -157,15 +185,9 @@ where
         ToolHandler::pre_tool_use_payload(self, invocation)
     }
 
-    fn post_tool_use_payload(
-        &self,
-        call_id: &str,
-        payload: &ToolPayload,
-        result: &dyn ToolOutput,
-    ) -> Option<PostToolUsePayload> {
-        ToolHandler::post_tool_use_payload(self, call_id, payload, result)
+    fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
+        ToolHandler::create_diff_consumer(self)
     }
-
     fn handle_any<'a>(
         &'a self,
         invocation: ToolInvocation,
@@ -174,10 +196,13 @@ where
             let call_id = invocation.call_id.clone();
             let payload = invocation.payload.clone();
             let output = self.handle(invocation).await?;
+            let post_tool_use_payload =
+                ToolHandler::post_tool_use_payload(self, &call_id, &payload, &output);
             Ok(AnyToolResult {
                 call_id,
                 payload,
                 result: Box::new(output),
+                post_tool_use_payload,
             })
         })
     }
@@ -185,15 +210,11 @@ where
 
 pub struct ToolRegistry {
     handlers: HashMap<ToolName, Arc<dyn AnyToolHandler>>,
-    metas: HashMap<String, CommandMeta>,
 }
 
 impl ToolRegistry {
-    fn new(
-        handlers: HashMap<ToolName, Arc<dyn AnyToolHandler>>,
-        metas: HashMap<String, CommandMeta>,
-    ) -> Self {
-        Self { handlers, metas }
+    fn new(handlers: HashMap<ToolName, Arc<dyn AnyToolHandler>>) -> Self {
+        Self { handlers }
     }
 
     fn handler(&self, name: &ToolName) -> Option<Arc<dyn AnyToolHandler>> {
@@ -205,108 +226,25 @@ impl ToolRegistry {
         self.handler(name).is_some()
     }
 
-    pub fn get_metadata(&self, name: &str) -> Option<&CommandMeta> {
-        self.get_metadata_with_namespace(name, None)
-    }
-
-    pub fn get_metadata_with_namespace(
+    pub(crate) fn create_diff_consumer(
         &self,
-        name: &str,
-        namespace: Option<&str>,
-    ) -> Option<&CommandMeta> {
-        self.metas.get(&match namespace { Some(ns) => codex_tools::ToolName::namespaced(ns, name.to_string()), None => codex_tools::ToolName::plain(name.to_string()) }.display())
+        name: &ToolName,
+    ) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
+        self.handler(name)?.create_diff_consumer()
     }
 
-    pub fn list_metadata(&self) -> Vec<CommandMeta> {
-        let mut metas: Vec<_> = self.metas.values().cloned().collect();
-        metas.sort_by(|a, b| a.name.cmp(&b.name));
-        metas
-    }
+    // TODO(jif) for dynamic tools.
+    // pub fn register(&mut self, name: impl Into<String>, handler: Arc<dyn ToolHandler>) {
+    //     let name = name.into();
+    //     if self.handlers.insert(name.clone(), handler).is_some() {
+    //         warn!("overwriting handler for tool {name}");
+    //     }
+    // }
 
-    pub fn register<H>(&mut self, name: impl Into<String>, handler: Arc<H>, meta: CommandMeta)
-    where
-        H: ToolHandler + 'static,
-    {
-        self.register_with_namespace(codex_tools::ToolName::plain(name.into()), handler, meta, None);
-    }
-
-    pub fn register_with_namespace<H>(
-        &mut self,
-        name: impl Into<ToolName>,
-        handler: Arc<H>,
-        meta: CommandMeta,
-        namespace: Option<&str>,
-    ) where
-        H: ToolHandler + 'static,
-    {
-        let mut name = name.into();
-        if let Some(ns) = namespace {
-            name.namespace = Some(ns.to_string());
-        }
-        let display_name = name.display();
-        let key = name.display();
-        let handler: Arc<dyn AnyToolHandler> = handler;
-        if self.handlers.insert(name, handler).is_some() {
-            warn!("overwriting handler for tool {display_name}");
-        }
-        self.metas.insert(key, meta);
-    }
-
-    pub fn register_many<I, H>(&mut self, names: I, handler: Arc<H>, meta: CommandMeta)
-    where
-        I: IntoIterator,
-        I::Item: Into<ToolName>,
-        H: ToolHandler + 'static,
-    {
-        self.register_many_with_namespace(names, handler, meta, None);
-    }
-
-    pub fn register_many_with_namespace<I, H>(
-        &mut self,
-        names: I,
-        handler: Arc<H>,
-        meta: CommandMeta,
-        namespace: Option<&str>,
-    ) where
-        I: IntoIterator,
-        I::Item: Into<ToolName>,
-        H: ToolHandler + 'static,
-    {
-        let handler: Arc<dyn AnyToolHandler> = handler;
-        for name in names {
-            let name = name.into();
-            let display_name = name.display();
-            let key = name.display();
-            if self
-                .handlers
-                .insert(name, Arc::clone(&handler))
-                .is_some()
-            {
-                warn!("overwriting handler for tool {display_name}");
-            }
-            self.metas.insert(key, meta.clone());
-        }
-    }
-
-    pub fn deregister(&mut self, name: impl Into<String>, namespace: Option<&str>) -> bool {
-        let name_str = name.into();
-        let key = match namespace {
-            Some(ns) => codex_tools::ToolName::namespaced(ns, &name_str),
-            None => codex_tools::ToolName::plain(&name_str),
-        };
-        let removed_handler = self.handlers.remove(&key).is_some();
-        let removed_meta = self.metas.remove(&key.display()).is_some();
-
-        removed_handler || removed_meta
-    }
-
-    /// Synchronize the registered tools and skills with the Brain MCP subsystem.
-    /// This allows the autonomous self-improving agent loop to recall memories
-    /// and dynamically load specialized toolsets or generated skills.
-    pub async fn sync_with_brain(&self) -> Result<(), String> {
-        brain_bridge::sync_with_brain_cli().await
-    }
-
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "tool dispatch must keep active-turn accounting atomic"
+    )]
     pub(crate) async fn dispatch_any(
         &self,
         invocation: ToolInvocation,
@@ -394,6 +332,8 @@ impl ToolRegistry {
                 &invocation.session,
                 &invocation.turn,
                 invocation.call_id.clone(),
+                pre_tool_use_payload.tool_name.name().to_string(),
+                pre_tool_use_payload.tool_name.matcher_aliases().to_vec(),
                 pre_tool_use_payload.command.clone(),
             )
             .await
@@ -448,13 +388,9 @@ impl ToolRegistry {
         emit_metric_for_tool_read(&invocation, success).await;
         let post_tool_use_payload = if success {
             let guard = response_cell.lock().await;
-            guard.as_ref().and_then(|result| {
-                handler.post_tool_use_payload(
-                    &result.call_id,
-                    &result.payload,
-                    result.result.as_ref(),
-                )
-            })
+            guard
+                .as_ref()
+                .and_then(|result| result.post_tool_use_payload.clone())
         } else {
             None
         };
@@ -463,7 +399,9 @@ impl ToolRegistry {
                 run_post_tool_use_hooks(
                     &invocation.session,
                     &invocation.turn,
-                    invocation.call_id.clone(),
+                    post_tool_use_payload.tool_use_id,
+                    post_tool_use_payload.tool_name.name().to_string(),
+                    post_tool_use_payload.tool_name.matcher_aliases().to_vec(),
                     post_tool_use_payload.command,
                     post_tool_use_payload.tool_response,
                 )
@@ -473,14 +411,14 @@ impl ToolRegistry {
             None
         };
         // Deprecated: this is the legacy AfterToolUse hook. Prefer the new PostToolUse
-        let hook_abort_error = dispatch_after_tool_use_hook(
-            &invocation,
+        let hook_abort_error = dispatch_after_tool_use_hook(AfterToolUseHookDispatch {
+            invocation: &invocation,
             output_preview,
             success,
-            /*executed*/ true,
+            executed: true,
             duration,
-            is_mutating,
-        )
+            mutating: is_mutating,
+        })
         .await;
 
         if let Some(err) = hook_abort_error {
@@ -532,7 +470,6 @@ impl ToolRegistry {
 
 pub struct ToolRegistryBuilder {
     handlers: HashMap<ToolName, Arc<dyn AnyToolHandler>>,
-    metas: HashMap<String, CommandMeta>,
     specs: Vec<ConfiguredToolSpec>,
 }
 
@@ -540,7 +477,6 @@ impl ToolRegistryBuilder {
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
-            metas: HashMap::new(),
             specs: Vec::new(),
         }
     }
@@ -558,76 +494,181 @@ impl ToolRegistryBuilder {
             .push(ConfiguredToolSpec::new(spec, supports_parallel_tool_calls));
     }
 
-    pub fn register_handler<H>(
-        &mut self,
-        name: impl Into<ToolName>,
-        handler: Arc<H>,
-        meta: CommandMeta,
-    ) where
-        H: ToolHandler + 'static,
-    {
-        self.register_handler_with_namespace(name, handler, meta, None);
-    }
-
-    pub fn register_handler_with_namespace<H>(
-        &mut self,
-        name: impl Into<ToolName>,
-        handler: Arc<H>,
-        meta: CommandMeta,
-        namespace: Option<&str>,
-    ) where
+    pub fn register_handler<H>(&mut self, name: impl Into<ToolName>, handler: Arc<H>)
+    where
         H: ToolHandler + 'static,
     {
         let name = name.into();
         let display_name = name.display();
-        let key = name.display();
         let handler: Arc<dyn AnyToolHandler> = handler;
         if self.handlers.insert(name, handler).is_some() {
             warn!("overwriting handler for tool {display_name}");
         }
-        self.metas.insert(key, meta);
     }
 
-    pub fn register_many<I, H>(&mut self, names: I, handler: Arc<H>, meta: CommandMeta)
-    where
-        I: IntoIterator,
-        I::Item: Into<ToolName>,
-        H: ToolHandler + 'static,
-    {
-        self.register_many_with_namespace(names, handler, meta, None);
-    }
+    // TODO(jif) for dynamic tools.
+    // pub fn register_many<I>(&mut self, names: I, handler: Arc<dyn ToolHandler>)
+    // where
+    //     I: IntoIterator,
+    //     I::Item: Into<String>,
+    // {
+    //     for name in names {
+    //         let name = name.into();
+    //         if self
+    //             .handlers
+    //             .insert(name.clone(), handler.clone())
+    //             .is_some()
+    //         {
+    //             warn!("overwriting handler for tool {name}");
+    //         }
+    //     }
+    // }
 
-    pub fn register_many_with_namespace<I, H>(
-        &mut self,
-        names: I,
-        handler: Arc<H>,
-        meta: CommandMeta,
-        namespace: Option<&str>,
-    ) where
-        I: IntoIterator,
-        I::Item: Into<ToolName>,
-        H: ToolHandler + 'static,
-    {
-        let handler: Arc<dyn AnyToolHandler> = handler;
-        for name in names {
-            let name = name.into();
-            let display_name = name.display();
-            let key = name.display();
-            if self
-                .handlers
-                .insert(name, Arc::clone(&handler))
-                .is_some()
-            {
-                warn!("overwriting handler for tool {display_name}");
+    pub fn build(self) -> (Vec<ConfiguredToolSpec>, ToolRegistry) {
+        let registry = ToolRegistry::new(self.handlers);
+        (self.specs, registry)
+    }
+}
+
+fn unsupported_tool_call_message(payload: &ToolPayload, tool_name: &ToolName) -> String {
+    let tool_name = tool_name.display();
+    match payload {
+        ToolPayload::Custom { .. } => format!("unsupported custom tool call: {tool_name}"),
+        _ => format!("unsupported call: {tool_name}"),
+    }
+}
+
+fn sandbox_policy_tag(policy: &SandboxPolicy) -> &'static str {
+    match policy {
+        SandboxPolicy::ReadOnly { .. } => "read-only",
+        SandboxPolicy::WorkspaceWrite { .. } => "workspace-write",
+        SandboxPolicy::DangerFullAccess => "danger-full-access",
+        SandboxPolicy::ExternalSandbox { .. } => "external-sandbox",
+    }
+}
+
+// Hooks use a separate wire-facing input type so hook payload JSON stays stable
+// and decoupled from core's internal tool runtime representation.
+impl From<&ToolPayload> for HookToolInput {
+    fn from(payload: &ToolPayload) -> Self {
+        match payload {
+            ToolPayload::Function { arguments } => HookToolInput::Function {
+                arguments: arguments.clone(),
+            },
+            ToolPayload::ToolSearch { arguments } => HookToolInput::Function {
+                arguments: serde_json::json!({
+                    "query": arguments.query,
+                    "limit": arguments.limit,
+                })
+                .to_string(),
+            },
+            ToolPayload::Custom { input } => HookToolInput::Custom {
+                input: input.clone(),
+            },
+            ToolPayload::LocalShell { params } => HookToolInput::LocalShell {
+                params: HookToolInputLocalShell {
+                    command: params.command.clone(),
+                    workdir: params.workdir.clone(),
+                    timeout_ms: params.timeout_ms,
+                    sandbox_permissions: params.sandbox_permissions,
+                    prefix_rule: params.prefix_rule.clone(),
+                    justification: params.justification.clone(),
+                },
+            },
+            ToolPayload::Mcp {
+                server,
+                tool,
+                raw_arguments,
+            } => HookToolInput::Mcp {
+                server: server.clone(),
+                tool: tool.clone(),
+                arguments: raw_arguments.clone(),
+            },
+        }
+    }
+}
+
+fn hook_tool_kind(tool_input: &HookToolInput) -> HookToolKind {
+    match tool_input {
+        HookToolInput::Function { .. } => HookToolKind::Function,
+        HookToolInput::Custom { .. } => HookToolKind::Custom,
+        HookToolInput::LocalShell { .. } => HookToolKind::LocalShell,
+        HookToolInput::Mcp { .. } => HookToolKind::Mcp,
+    }
+}
+
+struct AfterToolUseHookDispatch<'a> {
+    invocation: &'a ToolInvocation,
+    output_preview: String,
+    success: bool,
+    executed: bool,
+    duration: Duration,
+    mutating: bool,
+}
+
+async fn dispatch_after_tool_use_hook(
+    dispatch: AfterToolUseHookDispatch<'_>,
+) -> Option<FunctionCallError> {
+    let AfterToolUseHookDispatch { invocation, .. } = dispatch;
+    let session = invocation.session.as_ref();
+    let turn = invocation.turn.as_ref();
+    let tool_input = HookToolInput::from(&invocation.payload);
+    let hook_outcomes = session
+        .hooks()
+        .dispatch(HookPayload {
+            session_id: session.conversation_id,
+            cwd: turn.cwd.clone(),
+            client: turn.app_server_client_name.clone(),
+            triggered_at: chrono::Utc::now(),
+            hook_event: HookEvent::AfterToolUse {
+                event: HookEventAfterToolUse {
+                    turn_id: turn.sub_id.clone(),
+                    call_id: invocation.call_id.clone(),
+                    tool_name: invocation.tool_name.display(),
+                    tool_kind: hook_tool_kind(&tool_input),
+                    tool_input,
+                    executed: dispatch.executed,
+                    success: dispatch.success,
+                    duration_ms: u64::try_from(dispatch.duration.as_millis()).unwrap_or(u64::MAX),
+                    mutating: dispatch.mutating,
+                    sandbox: sandbox_tag(&turn.sandbox_policy, turn.windows_sandbox_level)
+                        .to_string(),
+                    sandbox_policy: sandbox_policy_tag(&turn.sandbox_policy).to_string(),
+                    output_preview: dispatch.output_preview.clone(),
+                },
+            },
+        })
+        .await;
+
+    for hook_outcome in hook_outcomes {
+        let hook_name = hook_outcome.hook_name;
+        match hook_outcome.result {
+            HookResult::Success => {}
+            HookResult::FailedContinue(error) => {
+                warn!(
+                    call_id = %invocation.call_id,
+                    tool_name = %invocation.tool_name.display(),
+                    hook_name = %hook_name,
+                    error = %error,
+                    "after_tool_use hook failed; continuing"
+                );
             }
-            self.metas.insert(key, meta.clone());
+            HookResult::FailedAbort(error) => {
+                warn!(
+                    call_id = %invocation.call_id,
+                    tool_name = %invocation.tool_name.display(),
+                    hook_name = %hook_name,
+                    error = %error,
+                    "after_tool_use hook failed; aborting operation"
+                );
+                return Some(FunctionCallError::Fatal(format!(
+                    "after_tool_use hook '{hook_name}' failed and aborted operation: {error}"
+                )));
+            }
         }
     }
 
-    pub fn build(self) -> (Vec<ConfiguredToolSpec>, ToolRegistry) {
-        let registry = ToolRegistry::new(self.handlers, self.metas);
-        (self.specs, registry)
-    }
+    None
 }
 
 #[cfg(test)]

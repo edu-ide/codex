@@ -1,4 +1,3 @@
-use codex_protocol::commands::{CommandCategory, CommandMeta};
 use strum::IntoEnumIterator;
 use strum_macros::AsRefStr;
 use strum_macros::EnumIter;
@@ -15,19 +14,6 @@ pub enum SlashCommand {
     // more frequently used commands should be listed first.
     Model,
     Fast,
-    Profile,
-    Advisor,
-    Auto,
-    Team,
-    Kairos,
-    #[strum(serialize = "dream-bg")]
-    BgDream,
-    Dream,
-    Embed,
-    Improve,
-    Tmux,
-    Worktree,
-    Remote,
     Approvals,
     Permissions,
     #[strum(serialize = "setup-default-sandbox")]
@@ -47,11 +33,11 @@ pub enum SlashCommand {
     Plan,
     Collab,
     Agent,
+    Side,
     // Undo,
     Copy,
     Diff,
     Mention,
-    Help,
     Status,
     DebugConfig,
     Title,
@@ -100,7 +86,6 @@ impl SlashCommand {
             SlashCommand::Copy => "copy last response as markdown",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
-            SlashCommand::Help => "show available slash commands",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::DebugConfig => "show config layers and requirement sources for debugging",
@@ -112,24 +97,16 @@ impl SlashCommand {
             SlashCommand::MemoryDrop => "DO NOT USE",
             SlashCommand::MemoryUpdate => "DO NOT USE",
             SlashCommand::Model => "choose what model and reasoning effort to use",
-            SlashCommand::Fast => "toggle Fast mode to enable fastest inference at 2X plan usage",
-            SlashCommand::Profile => "choose the active profile",
-            SlashCommand::Advisor => "cycle the advisor preset",
-            SlashCommand::Auto => "toggle autonomous mode",
-            SlashCommand::Team => "toggle team mode",
-            SlashCommand::Kairos => "toggle kairos scheduling",
-            SlashCommand::Dream => "toggle background dream mode (unconscious memory hygiene)",
-            SlashCommand::Embed => "toggle semantic embedding indexing (Right Brain)",
-            SlashCommand::Improve => "toggle self-improvement mode",
-            SlashCommand::Tmux => "show tmux workflow guidance",
-            SlashCommand::Worktree => "show git worktree workflow guidance",
-            SlashCommand::Remote => "show remote-control workflow guidance",
+            SlashCommand::Fast => {
+                "toggle Fast mode to enable fastest inference with increased plan usage"
+            }
             SlashCommand::Personality => "choose a communication style for Codex",
             SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
             SlashCommand::Settings => "configure realtime microphone/speaker",
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Collab => "change collaboration mode (experimental)",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
+            SlashCommand::Side => "start a side conversation in an ephemeral fork",
             SlashCommand::Approvals => "choose what Codex is allowed to do",
             SlashCommand::Permissions => "choose what Codex is allowed to do",
             SlashCommand::ElevateSandbox => "set up elevated agent sandbox",
@@ -138,55 +115,12 @@ impl SlashCommand {
             }
             SlashCommand::Experimental => "toggle experimental features",
             SlashCommand::Memories => "configure memory use and generation",
-            SlashCommand::Mcp => "list configured MCP tools",
+            SlashCommand::Mcp => "list configured MCP tools; use /mcp verbose for details",
             SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
             SlashCommand::Logout => "log out of Codex",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
-            SlashCommand::BgDream => "",
-        }
-    }
-
-    pub fn to_meta(self) -> CommandMeta {
-        let name = self.command().to_string();
-        let help_text = self.description().to_string();
-
-        CommandMeta {
-            name,
-            help_text,
-            usage_example: None,
-            is_experimental: matches!(
-                self,
-                SlashCommand::Realtime | SlashCommand::Collab | SlashCommand::Plan
-            ),
-            is_visible: self.is_visible_internal(),
-            available_during_task: self.available_during_task(),
-            category: match self {
-                SlashCommand::Model | SlashCommand::Fast | SlashCommand::Personality => {
-                    CommandCategory::System
-                }
-                SlashCommand::Profile
-                | SlashCommand::Advisor
-                | SlashCommand::Auto
-                | SlashCommand::Team
-                | SlashCommand::Kairos
-                | SlashCommand::Dream
-                | SlashCommand::Embed
-                | SlashCommand::Improve
-                | SlashCommand::Tmux
-                | SlashCommand::Worktree
-                | SlashCommand::Remote => CommandCategory::System,
-                SlashCommand::Mcp | SlashCommand::Apps | SlashCommand::Plugins => {
-                    CommandCategory::Mcp
-                }
-                SlashCommand::Review | SlashCommand::Plan => CommandCategory::Experimental,
-                _ => CommandCategory::System,
-            },
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }
     }
 
@@ -204,8 +138,18 @@ impl SlashCommand {
                 | SlashCommand::Rename
                 | SlashCommand::Plan
                 | SlashCommand::Fast
+                | SlashCommand::Mcp
+                | SlashCommand::Side
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
+        )
+    }
+
+    /// Whether this command remains available inside an active side conversation.
+    pub fn available_in_side_conversation(self) -> bool {
+        matches!(
+            self,
+            SlashCommand::Copy | SlashCommand::Diff | SlashCommand::Mention | SlashCommand::Status
         )
     }
 
@@ -220,14 +164,6 @@ impl SlashCommand {
             // | SlashCommand::Undo
             | SlashCommand::Model
             | SlashCommand::Fast
-            | SlashCommand::Profile
-            | SlashCommand::Advisor
-            | SlashCommand::Auto
-            | SlashCommand::Team
-            | SlashCommand::Kairos
-            | SlashCommand::Dream
-            | SlashCommand::Embed
-            | SlashCommand::Improve
             | SlashCommand::Personality
             | SlashCommand::Approvals
             | SlashCommand::Permissions
@@ -245,13 +181,9 @@ impl SlashCommand {
             | SlashCommand::Copy
             | SlashCommand::Rename
             | SlashCommand::Mention
-            | SlashCommand::Help
             | SlashCommand::Skills
             | SlashCommand::Status
             | SlashCommand::DebugConfig
-            | SlashCommand::Tmux
-            | SlashCommand::Worktree
-            | SlashCommand::Remote
             | SlashCommand::Ps
             | SlashCommand::Stop
             | SlashCommand::Mcp
@@ -259,7 +191,8 @@ impl SlashCommand {
             | SlashCommand::Plugins
             | SlashCommand::Feedback
             | SlashCommand::Quit
-            | SlashCommand::Exit => true,
+            | SlashCommand::Exit
+            | SlashCommand::Side => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Realtime => true,
@@ -269,15 +202,10 @@ impl SlashCommand {
             SlashCommand::Statusline => false,
             SlashCommand::Theme => false,
             SlashCommand::Title => false,
-            SlashCommand::BgDream => false,
         }
     }
 
-    pub fn is_visible(self) -> bool {
-        self.is_visible_internal()
-    }
-
-    fn is_visible_internal(self) -> bool {
+    fn is_visible(self) -> bool {
         match self {
             SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
             SlashCommand::Copy => !cfg!(target_os = "android"),
@@ -310,63 +238,5 @@ mod tests {
     #[test]
     fn clean_alias_parses_to_stop_command() {
         assert_eq!(SlashCommand::from_str("clean"), Ok(SlashCommand::Stop));
-    }
-
-    #[test]
-    fn runtime_mode_commands_are_system_commands() {
-        use codex_protocol::commands::CommandCategory;
-
-        for command in [
-            SlashCommand::Profile,
-            SlashCommand::Advisor,
-            SlashCommand::Auto,
-            SlashCommand::Team,
-            SlashCommand::Kairos,
-            SlashCommand::Improve,
-        ] {
-            let meta = command.to_meta();
-            assert_eq!(meta.category, CommandCategory::System);
-            assert!(!meta.available_during_task);
-        }
-    }
-
-    #[test]
-    fn workflow_surface_commands_are_system_commands() {
-        use codex_protocol::commands::CommandCategory;
-
-        for command in [
-            SlashCommand::Tmux,
-            SlashCommand::Worktree,
-            SlashCommand::Remote,
-        ] {
-            let meta = command.to_meta();
-            assert_eq!(meta.category, CommandCategory::System);
-            assert!(meta.available_during_task);
-        }
-    }
-
-    #[test]
-    fn runtime_mode_descriptions_match_trigger_semantics() {
-        let cases = [
-            (SlashCommand::Profile, "choose the active profile"),
-            (SlashCommand::Advisor, "cycle the advisor preset"),
-            (SlashCommand::Auto, "toggle autonomous mode"),
-            (SlashCommand::Team, "toggle team mode"),
-            (SlashCommand::Kairos, "toggle kairos scheduling"),
-            (SlashCommand::Improve, "toggle self-improvement mode"),
-            (SlashCommand::Tmux, "show tmux workflow guidance"),
-            (
-                SlashCommand::Worktree,
-                "show git worktree workflow guidance",
-            ),
-            (
-                SlashCommand::Remote,
-                "show remote-control workflow guidance",
-            ),
-        ];
-
-        for (command, expected) in cases {
-            assert_eq!(command.description(), expected);
-        }
     }
 }

@@ -15,6 +15,7 @@ pub use cli::Command;
 pub use cli::ReviewArgs;
 use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 use codex_app_server_client::EnvironmentManager;
+use codex_app_server_client::EnvironmentManagerArgs;
 use codex_app_server_client::ExecServerRuntimePaths;
 use codex_app_server_client::InProcessAppServerClient;
 use codex_app_server_client::InProcessClientStartArgs;
@@ -51,13 +52,12 @@ use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStartedNotification;
 use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
-use codex_core::LLAMA_SERVER_OSS_PROVIDER_ID;
 use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::load_config_as_toml_with_cli_and_loader_overrides;
 use codex_core::config::resolve_oss_provider;
 use codex_core::config_loader::ConfigLoadError;
 use codex_core::config_loader::LoaderOverrides;
@@ -87,9 +87,9 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::canonicalize_existing_preserving_symlinks;
+use codex_utils_cli::SharedCliOptions;
 use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
-use codex_utils_oss::hydrate_oss_model_name;
 use event_processor_with_human_output::EventProcessorWithHumanOutput;
 pub use event_processor_with_jsonl_output::CodexStatus;
 pub use event_processor_with_jsonl_output::CollectedThreadEvents;
@@ -129,15 +129,10 @@ pub use exec_events::Usage;
 pub use exec_events::WebSearchItem;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::Hash;
-use std::hash::Hasher;
 use std::io::IsTerminal;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::Duration;
-use std::time::Instant;
 use supports_color::Stream;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -154,28 +149,6 @@ use crate::cli::Command as ExecCommand;
 use crate::event_processor::EventProcessor;
 
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
-const AUTONOMOUS_IDLE_GRACE_SECS: u64 = 15;
-const DEFAULT_EXEC_AUTO_MAX_TURNS: u32 = 100;
-const DEFAULT_EXEC_AUTO_TIMEBOX_MINUTES: u32 = 600;
-const EXEC_AUTONOMY_STALLED_TURN_LIMIT: u32 = 5;
-
-#[derive(Debug, Clone, Copy)]
-struct ExecAutonomySettings {
-    max_turns: u32,
-    timebox: Duration,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ExecAutonomyDecision {
-    Stop {
-        reason: &'static str,
-    },
-    Continue {
-        progress_signature: u64,
-        stalled_turns: u32,
-        followup_prompt: String,
-    },
-}
 
 enum InitialOperation {
     UserTurn {
@@ -248,25 +221,31 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
 
     let Cli {
         command,
+        shared,
+        skip_git_repo_check,
+        ephemeral,
+        ignore_user_config,
+        ignore_rules,
+        color,
+        last_message_file,
+        json: json_mode,
+        prompt,
+        output_schema: output_schema_path,
+        config_overrides,
+    } = cli;
+    let shared = shared.into_inner();
+    let SharedCliOptions {
         images,
         model: model_cli_arg,
         oss,
         oss_provider,
         config_profile,
+        sandbox_mode: sandbox_mode_cli_arg,
         full_auto,
         dangerously_bypass_approvals_and_sandbox,
         cwd,
-        skip_git_repo_check,
         add_dir,
-        ephemeral,
-        color,
-        last_message_file,
-        json: json_mode,
-        sandbox_mode: sandbox_mode_cli_arg,
-        prompt,
-        output_schema: output_schema_path,
-        config_overrides,
-    } = cli;
+    } = shared;
 
     let (_stdout_with_ansi, stderr_with_ansi) = match color {
         cli::Color::Always => (true, true),
@@ -326,10 +305,17 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     };
 
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_overrides(
+    let loader_overrides = LoaderOverrides {
+        ignore_user_config,
+        ignore_user_and_project_exec_policy_rules: ignore_rules,
+        ..Default::default()
+    };
+
+    let config_toml = match load_config_as_toml_with_cli_and_loader_overrides(
         &codex_home,
         Some(&config_cwd),
         cli_kv_overrides.clone(),
+        loader_overrides.clone(),
     )
     .await
     {
@@ -363,7 +349,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         chatgpt_base_url,
     );
     let run_cli_overrides = cli_kv_overrides.clone();
-    let run_loader_overrides = LoaderOverrides::default();
+    let run_loader_overrides = loader_overrides.clone();
     let run_cloud_requirements = cloud_requirements.clone();
 
     let model_provider = if oss {
@@ -377,7 +363,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
             Some(provider)
         } else {
             return Err(anyhow::anyhow!(
-                "No default OSS provider configured. Use --local-provider=provider or set oss_provider to one of: {LMSTUDIO_OSS_PROVIDER_ID}, {OLLAMA_OSS_PROVIDER_ID}, {LLAMA_SERVER_OSS_PROVIDER_ID} in config.toml"
+                "No default OSS provider configured. Use --local-provider=provider or set oss_provider to one of: {LMSTUDIO_OSS_PROVIDER_ID}, {OLLAMA_OSS_PROVIDER_ID} in config.toml"
             ));
         }
     } else {
@@ -405,6 +391,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         approval_policy: Some(AskForApproval::Never),
         approvals_reviewer: None,
         sandbox_mode,
+        permission_profile: None,
         cwd: resolved_cwd,
         model_provider: model_provider.clone(),
         service_tier: None,
@@ -425,29 +412,13 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         additional_writable_roots: add_dir,
     };
 
-    let mut config = ConfigBuilder::default()
+    let config = ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
+        .loader_overrides(loader_overrides)
         .cloud_requirements(cloud_requirements)
         .build()
         .await?;
-
-    let _sglang_qwen_proxy = codex_responses_api_proxy::maybe_start_sglang_qwen_proxy(
-        &config.model_provider_id,
-        config.model_provider.base_url.as_deref(),
-        arg0_paths.codex_self_exe.as_deref(),
-    )?;
-    if let Some(proxy) = _sglang_qwen_proxy.as_ref() {
-        let proxy_base_url = proxy.base_url().to_string();
-        config.model_provider.base_url = Some(proxy_base_url.clone());
-        if let Some(provider) = config.model_providers.get_mut(&config.model_provider_id) {
-            provider.base_url = Some(proxy_base_url.clone());
-        }
-    }
-
-    if oss && let Err(err) = hydrate_oss_model_name(&mut config).await {
-        warn!(error = %err, "failed to resolve OSS model name");
-    }
 
     #[allow(clippy::print_stderr)]
     match check_execpolicy_for_warnings(&config.config_layer_stack).await {
@@ -528,8 +499,8 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         cloud_requirements: run_cloud_requirements,
         feedback: CodexFeedback::new(),
         log_db: None,
-        environment_manager: std::sync::Arc::new(EnvironmentManager::from_env_with_runtime_paths(
-            Some(local_runtime_paths),
+        environment_manager: std::sync::Arc::new(EnvironmentManager::new(
+            EnvironmentManagerArgs::from_env(local_runtime_paths),
         )),
         config_warnings,
         session_source: SessionSource::Exec,
@@ -762,21 +733,15 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         }
     });
 
-    let user_turn_requested = matches!(&initial_operation, InitialOperation::UserTurn { .. });
-    let follow_autonomous_thread =
-        user_turn_requested && follow_autonomous_thread_from_config(&config);
-    let autonomous_root_prompt = follow_autonomous_thread.then(|| prompt_summary.clone());
-    let autonomous_settings = follow_autonomous_thread.then(|| {
-        exec_autonomy_settings_from_config(&config)
-            .expect("autonomous settings should exist when autonomous follow is enabled")
-    });
-    let autonomous_started_at = autonomous_settings.map(|_| Instant::now());
-
     let task_id = match initial_operation {
         InitialOperation::UserTurn {
             items,
             output_schema,
         } => {
+            let permission_profile = permission_profile_override_from_config(&config);
+            let sandbox_policy = permission_profile
+                .is_none()
+                .then(|| default_sandbox_policy.clone().into());
             let response: TurnStartResponse = send_request_with_response(
                 &client,
                 ClientRequest::TurnStart {
@@ -785,10 +750,12 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                         thread_id: primary_thread_id_for_span.clone(),
                         input: items.into_iter().map(Into::into).collect(),
                         responsesapi_client_metadata: None,
-                        cwd: Some(default_cwd.clone()),
+                        environments: None,
+                        cwd: Some(default_cwd),
                         approval_policy: Some(default_approval_policy.into()),
                         approvals_reviewer: None,
-                        sandbox_policy: Some(default_sandbox_policy.clone().into()),
+                        sandbox_policy,
+                        permission_profile,
                         model: None,
                         service_tier: None,
                         effort: default_effort,
@@ -840,91 +807,31 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     let mut error_seen = false;
     let mut interrupt_channel_open = true;
     let primary_thread_id_for_requests = primary_thread_id.to_string();
-    let mut current_turn_id = task_id.clone();
-    let mut awaiting_autonomous_quiescence = false;
-    let mut last_completed_turn_id: Option<String> = None;
-    let mut autonomous_turns_started = u32::from(autonomous_settings.is_some());
-    let mut last_progress_signature: Option<u64> = None;
-    let mut stalled_autonomous_turns = 0u32;
     loop {
-        let server_event = if follow_autonomous_thread && awaiting_autonomous_quiescence {
-            tokio::select! {
-                maybe_interrupt = interrupt_rx.recv(), if interrupt_channel_open => {
-                    if maybe_interrupt.is_none() {
-                        interrupt_channel_open = false;
-                        continue;
-                    }
-                    if let Err(err) = send_request_with_response::<TurnInterruptResponse>(
-                        &client,
-                        ClientRequest::TurnInterrupt {
-                            request_id: request_ids.next(),
-                            params: TurnInterruptParams {
-                                thread_id: primary_thread_id_for_requests.clone(),
-                                turn_id: current_turn_id.clone(),
-                            },
-                        },
-                        "turn/interrupt",
-                    )
-                    .await
-                    {
-                        warn!("turn/interrupt failed: {err}");
-                    }
+        let server_event = tokio::select! {
+            maybe_interrupt = interrupt_rx.recv(), if interrupt_channel_open => {
+                if maybe_interrupt.is_none() {
+                    interrupt_channel_open = false;
                     continue;
                 }
-                maybe_event = tokio::time::timeout(
-                    std::time::Duration::from_secs(AUTONOMOUS_IDLE_GRACE_SECS),
-                    client.next_event(),
-                ) => {
-                    match maybe_event {
-                        Ok(event) => event,
-                        Err(_) => {
-                            if let Err(err) = maybe_process_latest_thread_turn_completion(
-                                &client,
-                                &mut request_ids,
-                                &primary_thread_id_for_requests,
-                                last_completed_turn_id.as_deref(),
-                                event_processor.as_mut(),
-                            ).await {
-                                warn!("thread/read refresh failed during autonomous shutdown: {err}");
-                            }
-                            if let Err(err) = request_shutdown(
-                                &client,
-                                &mut request_ids,
-                                &primary_thread_id_for_requests,
-                            ).await {
-                                warn!("thread/unsubscribe failed during autonomous shutdown: {err}");
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        } else {
-            tokio::select! {
-                maybe_interrupt = interrupt_rx.recv(), if interrupt_channel_open => {
-                    if maybe_interrupt.is_none() {
-                        interrupt_channel_open = false;
-                        continue;
-                    }
-                    if let Err(err) = send_request_with_response::<TurnInterruptResponse>(
-                        &client,
-                        ClientRequest::TurnInterrupt {
-                            request_id: request_ids.next(),
-                            params: TurnInterruptParams {
-                                thread_id: primary_thread_id_for_requests.clone(),
-                                turn_id: current_turn_id.clone(),
-                            },
+                if let Err(err) = send_request_with_response::<TurnInterruptResponse>(
+                    &client,
+                    ClientRequest::TurnInterrupt {
+                        request_id: request_ids.next(),
+                        params: TurnInterruptParams {
+                            thread_id: primary_thread_id_for_requests.clone(),
+                            turn_id: task_id.clone(),
                         },
-                        "turn/interrupt",
-                    )
-                    .await
-                    {
-                        warn!("turn/interrupt failed: {err}");
-                    }
-                    continue;
+                    },
+                    "turn/interrupt",
+                )
+                .await
+                {
+                    warn!("turn/interrupt failed: {err}");
                 }
-                maybe_event = client.next_event() => maybe_event,
+                continue;
             }
+            maybe_event = client.next_event() => maybe_event,
         };
 
         let Some(server_event) = server_event else {
@@ -936,35 +843,23 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 handle_server_request(&client, request, &mut error_seen).await;
             }
             InProcessServerEvent::ServerNotification(mut notification) => {
-                if let ServerNotification::TurnStarted(payload) = &notification
-                    && payload.thread_id == primary_thread_id_for_requests
-                {
-                    current_turn_id = payload.turn.id.clone();
-                    awaiting_autonomous_quiescence = false;
-                }
-
                 if let ServerNotification::Error(payload) = &notification {
                     if payload.thread_id == primary_thread_id_for_requests
-                        && payload.turn_id == current_turn_id
+                        && payload.turn_id == task_id
                         && !payload.will_retry
                     {
                         error_seen = true;
                     }
                 } else if let ServerNotification::TurnCompleted(payload) = &notification
                     && payload.thread_id == primary_thread_id_for_requests
-                {
-                    current_turn_id = payload.turn.id.clone();
-                    last_completed_turn_id = Some(payload.turn.id.clone());
-                    if follow_autonomous_thread {
-                        awaiting_autonomous_quiescence = true;
-                    }
-                    if matches!(
+                    && payload.turn.id == task_id
+                    && matches!(
                         payload.turn.status,
                         codex_app_server_protocol::TurnStatus::Failed
                             | codex_app_server_protocol::TurnStatus::Interrupted
-                    ) {
-                        error_seen = true;
-                    }
+                    )
+                {
+                    error_seen = true;
                 }
 
                 maybe_backfill_turn_completed_items(
@@ -975,84 +870,14 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 )
                 .await;
 
-                let autonomous_decision =
-                    match (&notification, autonomous_settings, autonomous_started_at) {
-                        (
-                            ServerNotification::TurnCompleted(payload),
-                            Some(settings),
-                            Some(started_at),
-                        ) if payload.thread_id == primary_thread_id_for_requests
-                            && payload.turn.status
-                                == codex_app_server_protocol::TurnStatus::Completed =>
-                        {
-                            Some(decide_exec_autonomy_followup(
-                                settings,
-                                started_at.elapsed(),
-                                autonomous_turns_started,
-                                last_progress_signature,
-                                stalled_autonomous_turns,
-                                autonomous_root_prompt.as_deref().unwrap_or_default(),
-                                payload.turn.items.as_slice(),
-                            ))
-                        }
-                        _ => None,
-                    };
-
                 if should_process_notification(
                     &notification,
                     &primary_thread_id_for_requests,
-                    &current_turn_id,
-                    follow_autonomous_thread,
+                    &task_id,
                 ) {
                     match event_processor.process_server_notification(notification) {
                         CodexStatus::Running => {}
                         CodexStatus::InitiateShutdown => {
-                            if let Some(decision) = autonomous_decision {
-                                match decision {
-                                    ExecAutonomyDecision::Continue {
-                                        progress_signature,
-                                        stalled_turns,
-                                        followup_prompt,
-                                    } => {
-                                        match start_exec_autonomous_followup_turn(
-                                            &client,
-                                            &mut request_ids,
-                                            &primary_thread_id_for_requests,
-                                            &default_cwd,
-                                            default_approval_policy,
-                                            &default_sandbox_policy,
-                                            default_effort,
-                                            followup_prompt,
-                                        )
-                                        .await
-                                        {
-                                            Ok(next_turn_id) => {
-                                                current_turn_id = next_turn_id;
-                                                autonomous_turns_started =
-                                                    autonomous_turns_started.saturating_add(1);
-                                                last_progress_signature = Some(progress_signature);
-                                                stalled_autonomous_turns = stalled_turns;
-                                                awaiting_autonomous_quiescence = false;
-                                                continue;
-                                            }
-                                            Err(err) => {
-                                                warn!(
-                                                    "turn/start failed for autonomous exec continuation: {err}"
-                                                );
-                                                error_seen = true;
-                                            }
-                                        }
-                                    }
-                                    ExecAutonomyDecision::Stop { reason } => {
-                                        info!(
-                                            reason,
-                                            autonomous_turns_started,
-                                            stalled_autonomous_turns,
-                                            "headless exec autonomous loop stopping"
-                                        );
-                                    }
-                                }
-                            }
                             if let Err(err) = request_shutdown(
                                 &client,
                                 &mut request_ids,
@@ -1104,13 +929,19 @@ fn sandbox_mode_from_policy(
 }
 
 fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
+    let permission_profile = permission_profile_override_from_config(config);
+    let sandbox = permission_profile
+        .is_none()
+        .then(|| sandbox_mode_from_policy(config.permissions.sandbox_policy.get()))
+        .flatten();
     ThreadStartParams {
         model: config.model.clone(),
         model_provider: Some(config.model_provider_id.clone()),
         cwd: Some(config.cwd.to_string_lossy().to_string()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(config),
-        sandbox: sandbox_mode_from_policy(config.permissions.sandbox_policy.get()),
+        sandbox,
+        permission_profile,
         config: config_request_overrides_from_config(config),
         ephemeral: Some(config.ephemeral),
         ..ThreadStartParams::default()
@@ -1118,6 +949,11 @@ fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
 }
 
 fn thread_resume_params_from_config(config: &Config, thread_id: String) -> ThreadResumeParams {
+    let permission_profile = permission_profile_override_from_config(config);
+    let sandbox = permission_profile
+        .is_none()
+        .then(|| sandbox_mode_from_policy(config.permissions.sandbox_policy.get()))
+        .flatten();
     ThreadResumeParams {
         thread_id,
         model: config.model.clone(),
@@ -1125,9 +961,23 @@ fn thread_resume_params_from_config(config: &Config, thread_id: String) -> Threa
         cwd: Some(config.cwd.to_string_lossy().to_string()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(config),
-        sandbox: sandbox_mode_from_policy(config.permissions.sandbox_policy.get()),
+        sandbox,
+        permission_profile,
         config: config_request_overrides_from_config(config),
         ..ThreadResumeParams::default()
+    }
+}
+
+fn permission_profile_override_from_config(
+    config: &Config,
+) -> Option<codex_app_server_protocol::PermissionProfile> {
+    if matches!(
+        config.permissions.sandbox_policy.get(),
+        SandboxPolicy::ExternalSandbox { .. }
+    ) {
+        None
+    } else {
+        Some(config.permissions.permission_profile().into())
     }
 }
 
@@ -1250,327 +1100,11 @@ fn lagged_event_warning_message(skipped: usize) -> String {
     format!("in-process app-server event stream lagged; dropped {skipped} events")
 }
 
-fn resolve_ilhae_config_dir() -> Option<PathBuf> {
-    if !std::env::var("ILHAE_RUNTIME")
-        .ok()
-        .is_some_and(|value| value.trim() == "1")
-    {
-        return None;
-    }
-
-    if let Ok(from_env) = std::env::var("ILHAE_CONFIG_DIR") {
-        let trimmed = from_env.trim();
-        if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed));
-        }
-    }
-
-    std::env::var("HOME")
-        .ok()
-        .map(|home| PathBuf::from(home).join(".ilhae"))
-}
-
-fn profile_auto_mode_from_config_path(config_path: &Path, active_profile: &str) -> Option<bool> {
-    let content = std::fs::read_to_string(config_path).ok()?;
-    let parsed: toml::Value = toml::from_str(&content).ok()?;
-
-    parsed
-        .get("profiles")
-        .and_then(toml::Value::as_table)
-        .and_then(|profiles| profiles.get(active_profile))
-        .and_then(toml::Value::as_table)
-        .and_then(|profile| profile.get("agent"))
-        .and_then(toml::Value::as_table)
-        .and_then(|agent| agent.get("auto_mode"))
-        .and_then(toml::Value::as_bool)
-}
-
-fn codex_active_profile_from_config_path(config_path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(config_path).ok()?;
-    let parsed: toml::Value = toml::from_str(&content).ok()?;
-
-    parsed
-        .get("profile")
-        .and_then(toml::Value::as_str)
-        .map(str::to_string)
-}
-
-fn ilhae_active_profile_from_config_path(config_path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(config_path).ok()?;
-    let parsed: toml::Value = toml::from_str(&content).ok()?;
-
-    parsed
-        .get("profile")
-        .and_then(toml::Value::as_table)
-        .and_then(|profile| profile.get("active"))
-        .and_then(toml::Value::as_str)
-        .map(str::to_string)
-}
-
-fn codex_profile_auto_mode_from_config(config: &Config, active_profile: &str) -> Option<bool> {
-    profile_auto_mode_from_config_path(
-        &config.codex_home.join(codex_core::config::CONFIG_TOML_FILE),
-        active_profile,
-    )
-}
-
-fn codex_active_profile_from_config(config: &Config) -> Option<String> {
-    codex_active_profile_from_config_path(
-        &config.codex_home.join(codex_core::config::CONFIG_TOML_FILE),
-    )
-}
-
-fn ilhae_active_profile_from_native_config() -> Option<String> {
-    let config_dir = resolve_ilhae_config_dir()?;
-    let config_path = config_dir.join(codex_core::config::CONFIG_TOML_FILE);
-    ilhae_active_profile_from_config_path(&config_path)
-}
-
-fn ilhae_profile_auto_mode_from_native_config(active_profile: &str) -> Option<bool> {
-    let config_dir = resolve_ilhae_config_dir()?;
-    let config_path = config_dir.join(codex_core::config::CONFIG_TOML_FILE);
-    profile_auto_mode_from_config_path(&config_path, active_profile)
-}
-
-fn active_profile_from_merged_config(merged: &toml::Value) -> Option<String> {
-    merged
-        .get("profile")
-        .and_then(toml::Value::as_str)
-        .map(str::to_string)
-        .or_else(|| {
-            merged
-                .get("profile")
-                .and_then(toml::Value::as_table)
-                .and_then(|profile| profile.get("active"))
-                .and_then(toml::Value::as_str)
-                .map(str::to_string)
-        })
-}
-
-fn follow_autonomous_thread_from_config(config: &Config) -> bool {
-    let merged = config.config_layer_stack.effective_config();
-
-    if let Some(enabled) = merged
-        .get("agent")
-        .and_then(toml::Value::as_table)
-        .and_then(|agent| agent.get("autonomous_mode"))
-        .and_then(toml::Value::as_bool)
-    {
-        return enabled;
-    }
-
-    let active_profile = config
-        .active_profile
-        .clone()
-        .or_else(|| active_profile_from_merged_config(&merged))
-        .or_else(|| codex_active_profile_from_config(config))
-        .or_else(ilhae_active_profile_from_native_config);
-
-    let Some(active_profile) = active_profile.as_deref() else {
-        return false;
-    };
-
-    merged
-        .get("profiles")
-        .and_then(toml::Value::as_table)
-        .and_then(|profiles| profiles.get(active_profile))
-        .and_then(toml::Value::as_table)
-        .and_then(|profile| profile.get("agent"))
-        .and_then(toml::Value::as_table)
-        .and_then(|agent| agent.get("auto_mode"))
-        .and_then(toml::Value::as_bool)
-        .or_else(|| codex_profile_auto_mode_from_config(config, active_profile))
-        .or_else(|| ilhae_profile_auto_mode_from_native_config(active_profile))
-        .unwrap_or(false)
-}
-
-fn exec_autonomy_settings_from_config(config: &Config) -> Option<ExecAutonomySettings> {
-    if !follow_autonomous_thread_from_config(config) {
-        return None;
-    }
-
-    let merged = config.config_layer_stack.effective_config();
-    let agent = merged.get("agent").and_then(toml::Value::as_table);
-    let max_turns = agent
-        .and_then(|agent| agent.get("auto_max_turns"))
-        .and_then(toml::Value::as_integer)
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(DEFAULT_EXEC_AUTO_MAX_TURNS)
-        .max(1);
-    let timebox_minutes = agent
-        .and_then(|agent| agent.get("auto_timebox_minutes"))
-        .and_then(toml::Value::as_integer)
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(DEFAULT_EXEC_AUTO_TIMEBOX_MINUTES)
-        .max(1);
-
-    Some(ExecAutonomySettings {
-        max_turns,
-        timebox: Duration::from_secs(u64::from(timebox_minutes) * 60),
-    })
-}
-
-fn latest_turn_progress_text(items: &[AppServerThreadItem]) -> Option<String> {
-    items.iter().rev().find_map(|item| match item {
-        AppServerThreadItem::AgentMessage { text, .. } => {
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        }
-        AppServerThreadItem::Plan { text, .. } => {
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        }
-        _ => None,
-    })
-}
-
-fn exec_autonomy_progress_signature(text: &str) -> u64 {
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut hasher = DefaultHasher::new();
-    normalized.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn exec_autonomy_should_stop(progress: &str) -> bool {
-    let trimmed = progress.trim();
-    !trimmed.is_empty()
-        && (trimmed == "모든 작업이 완료되었습니다"
-            || trimmed.contains("모든 작업이 완료되었습니다")
-            || trimmed.contains("작업이 완료되었습니다"))
-}
-
-fn extract_pseudo_exec_command(progress: &str) -> Option<String> {
-    let parsed: Value = serde_json::from_str(progress).ok()?;
-    let tool = parsed.get("tool")?.as_str()?;
-    if tool != "functions.exec_command" {
-        return None;
-    }
-
-    parsed
-        .get("arguments")
-        .and_then(|arguments| arguments.get("cmd"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-}
-
-fn build_exec_autonomy_followup_prompt_with_root(progress: &str, root_prompt: &str) -> String {
-    let original_task_block = if root_prompt.trim().is_empty() {
-        String::new()
-    } else {
-        format!("원래 사용자 작업:\n{root_prompt}\n\n")
-    };
-
-    if let Some(command) = extract_pseudo_exec_command(progress) {
-        return format!(
-            "[HEADLESS AUTO LOOP]\n\n{original_task_block}직전 턴이 실제 실행 대신 exec_command tool 호출 JSON만 출력했습니다.\n이번 턴에서는 아래 명령을 exec_command로 실제 실행하세요.\n- command: {command}\n- 먼저 이 명령만 실제로 실행하고, 실행 결과를 짧게 보고한 뒤 종료하세요.\n- 원래 사용자 작업의 나머지 단계와 완료 조건을 계속 만족해야 합니다.\n- 아직 실행하지 않은 다음 단계로 넘어가지 마세요.\n- 사용자의 본 작업이 모두 끝났다면, 즉시 종료하지 마세요. 1. 만약 당신에게 memory_dream_preview 도구와 memory_dream_promote 도구가 제공되었다면(도구 목록에 있다면), 이를 호출하여 요약 대기 중인 메모리 청크 그룹을 확인하고 정식 LLM Wiki(지식 문서)로 모두 승격시키세요. 도구가 없다면 이 단계는 건너뛰세요. 3. 더 이상 정리할 메모리가 없고 모든 지식 승격이 완벽히 끝났을 때만, 정확히 '모든 작업이 완료되었습니다'라고만 답하여 세션을 종료하세요."
-        );
-    }
-
-    format!(
-        "[HEADLESS AUTO LOOP]
-
-{original_task_block}최근 결과:
-{progress}
-
-다음 미완료 작업을 같은 thread에서 계속 수행하세요.
-- 실제 tool을 호출해 작업을 수행하세요. tool 호출을 텍스트로 흉내만 내지 마세요.
-- 직전 턴이 tool 호출 설명만 하고 끝났다면, 이번 턴에서는 그 tool을 실제로 실행하세요.
-- **작업 추적 및 검증 (Task Tracking & Verification):**
-  1. 아직 전체 계획(Plan)을 세우지 않았다면, 전체 작업을 작고 독립적인 단위(Sub-tasks)로 쪼개어 번호를 매긴 체크리스트를 먼저 작성하세요.
-  2. 한 번에 하나의 Sub-task만 집중해서 구현하세요.
-  3. 하나의 Sub-task 구현이 끝나면, **반드시 관련된 품질 검사 도구(예: `cargo check`, `npm run build`, `pytest` 등 해당 프로젝트에 맞는 명령어)를 실행하여 코드가 깨지지 않았는지 스스로 검증**하세요. 검증에 실패하면 다음 Sub-task로 넘어가지 말고 오류를 수정하세요.
-  4. 매 턴마다 현재 남은 작업 목록과 진행 상황을 명시적으로 요약하여 출력하세요.
-- 원래 사용자 작업의 완료 조건을 끝까지 유지하세요.
-- 이미 끝난 단계는 반복하지 마세요.
-- 사용자의 본 작업이 모두 끝났다면, 즉시 종료하지 마세요. 1. 만약 당신에게 memory_dream_preview 도구와 memory_dream_promote 도구가 제공되었다면(도구 목록에 있다면), 이를 호출하여 요약 대기 중인 메모리 청크 그룹을 확인하고 정식 LLM Wiki(지식 문서)로 모두 승격시키세요. 도구가 없다면 이 단계는 건너뛰세요. 3. 더 이상 정리할 메모리가 없고 모든 지식 승격이 완벽히 끝났을 때만, 정확히 '모든 작업이 완료되었습니다'라고만 답하여 세션을 종료하세요."
-    )
-}
-
-fn decide_exec_autonomy_followup(
-    settings: ExecAutonomySettings,
-    elapsed: Duration,
-    turns_started: u32,
-    last_progress_signature: Option<u64>,
-    stalled_turns: u32,
-    root_prompt: &str,
-    items: &[AppServerThreadItem],
-) -> ExecAutonomyDecision {
-    if turns_started >= settings.max_turns {
-        return ExecAutonomyDecision::Stop {
-            reason: "max_turns",
-        };
-    }
-
-    if elapsed >= settings.timebox {
-        return ExecAutonomyDecision::Stop { reason: "timebox" };
-    }
-
-    let progress = latest_turn_progress_text(items)
-        .unwrap_or_else(|| "직전 턴에서 명시적 진행 요약이 없었습니다.".to_string());
-    if exec_autonomy_should_stop(&progress) {
-        return ExecAutonomyDecision::Stop {
-            reason: "completed",
-        };
-    }
-
-    let progress_signature = exec_autonomy_progress_signature(&progress);
-    let stalled_turns = if last_progress_signature == Some(progress_signature) {
-        stalled_turns.saturating_add(1)
-    } else {
-        0
-    };
-    if stalled_turns >= EXEC_AUTONOMY_STALLED_TURN_LIMIT {
-        return ExecAutonomyDecision::Stop { reason: "stalled" };
-    }
-
-    ExecAutonomyDecision::Continue {
-        progress_signature,
-        stalled_turns,
-        followup_prompt: build_exec_autonomy_followup_prompt_with_root(&progress, root_prompt),
-    }
-}
-
 fn should_process_notification(
     notification: &ServerNotification,
     thread_id: &str,
     turn_id: &str,
-    follow_thread_turns: bool,
 ) -> bool {
-    if follow_thread_turns {
-        return match notification {
-            ServerNotification::ConfigWarning(_) | ServerNotification::DeprecationNotice(_) => true,
-            ServerNotification::Error(notification) => notification.thread_id == thread_id,
-            ServerNotification::HookCompleted(notification) => notification.thread_id == thread_id,
-            ServerNotification::HookStarted(notification) => notification.thread_id == thread_id,
-            ServerNotification::ItemCompleted(notification) => notification.thread_id == thread_id,
-            ServerNotification::ItemStarted(notification) => notification.thread_id == thread_id,
-            ServerNotification::ModelRerouted(notification) => notification.thread_id == thread_id,
-            ServerNotification::ThreadStatusChanged(notification) => {
-                notification.thread_id == thread_id
-            }
-            ServerNotification::ThreadTokenUsageUpdated(notification) => {
-                notification.thread_id == thread_id
-            }
-            ServerNotification::TurnCompleted(notification) => notification.thread_id == thread_id,
-            ServerNotification::TurnDiffUpdated(notification) => {
-                notification.thread_id == thread_id
-            }
-            ServerNotification::TurnPlanUpdated(notification) => {
-                notification.thread_id == thread_id
-            }
-            ServerNotification::TurnStarted(notification) => notification.thread_id == thread_id,
-            _ => false,
-        };
-    }
-
     match notification {
         ServerNotification::ConfigWarning(_) | ServerNotification::DeprecationNotice(_) => true,
         ServerNotification::Error(notification) => {
@@ -1618,91 +1152,6 @@ fn should_process_notification(
     }
 }
 
-async fn maybe_process_latest_thread_turn_completion(
-    client: &InProcessAppServerClient,
-    request_ids: &mut RequestIdSequencer,
-    thread_id: &str,
-    last_completed_turn_id: Option<&str>,
-    event_processor: &mut dyn EventProcessor,
-) -> Result<(), String> {
-    let response = send_request_with_response::<ThreadReadResponse>(
-        client,
-        ClientRequest::ThreadRead {
-            request_id: request_ids.next(),
-            params: ThreadReadParams {
-                thread_id: thread_id.to_string(),
-                include_turns: true,
-            },
-        },
-        "thread/read",
-    )
-    .await?;
-
-    let Some(latest_turn) = response.thread.turns.last().cloned() else {
-        return Ok(());
-    };
-
-    if last_completed_turn_id == Some(latest_turn.id.as_str()) {
-        return Ok(());
-    }
-
-    let _ = event_processor.process_server_notification(ServerNotification::TurnCompleted(
-        codex_app_server_protocol::TurnCompletedNotification {
-            thread_id: thread_id.to_string(),
-            turn: latest_turn,
-        },
-    ));
-    Ok(())
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "turn/start requires explicit request parameters"
-)]
-async fn start_exec_autonomous_followup_turn(
-    client: &InProcessAppServerClient,
-    request_ids: &mut RequestIdSequencer,
-    thread_id: &str,
-    cwd: &Path,
-    approval_policy: AskForApproval,
-    sandbox_policy: &SandboxPolicy,
-    effort: Option<codex_protocol::openai_models::ReasoningEffort>,
-    followup_prompt: String,
-) -> Result<String, String> {
-    let response: TurnStartResponse = send_request_with_response(
-        client,
-        ClientRequest::TurnStart {
-            request_id: request_ids.next(),
-            params: TurnStartParams {
-                responsesapi_client_metadata: None,
-                thread_id: thread_id.to_string(),
-                input: vec![
-                    UserInput::Text {
-                        text: followup_prompt,
-                        text_elements: Vec::new(),
-                    }
-                    .into(),
-                ],
-                cwd: Some(cwd.to_path_buf()),
-                approval_policy: Some(approval_policy.into()),
-                approvals_reviewer: None,
-                sandbox_policy: Some(sandbox_policy.clone().into()),
-                model: None,
-                service_tier: None,
-                effort,
-                summary: None,
-                personality: None,
-                output_schema: None,
-                collaboration_mode: None,
-            },
-        },
-        "turn/start",
-    )
-    .await?;
-
-    Ok(response.turn.id)
-}
-
 async fn maybe_backfill_turn_completed_items(
     thread_ephemeral: bool,
     client: &InProcessAppServerClient,
@@ -1720,9 +1169,6 @@ async fn maybe_backfill_turn_completed_items(
     let ServerNotification::TurnCompleted(payload) = notification else {
         return;
     };
-    if !turn_items_need_backfill(payload.turn.items.as_slice()) {
-        return;
-    }
 
     let response = send_request_with_response::<ThreadReadResponse>(
         client,
@@ -1747,40 +1193,6 @@ async fn maybe_backfill_turn_completed_items(
             warn!("thread/read failed while backfilling turn items for turn completion: {err}");
         }
     }
-}
-
-fn turn_items_need_backfill(items: &[AppServerThreadItem]) -> bool {
-    if items.is_empty() {
-        return true;
-    }
-
-    items.iter().any(|item| match item {
-        AppServerThreadItem::CommandExecution { status, .. } => {
-            matches!(
-                status,
-                codex_app_server_protocol::CommandExecutionStatus::InProgress
-            )
-        }
-        AppServerThreadItem::FileChange { status, .. } => {
-            matches!(
-                status,
-                codex_app_server_protocol::PatchApplyStatus::InProgress
-            )
-        }
-        AppServerThreadItem::McpToolCall { status, .. } => {
-            matches!(
-                status,
-                codex_app_server_protocol::McpToolCallStatus::InProgress
-            )
-        }
-        AppServerThreadItem::CollabAgentToolCall { status, .. } => {
-            matches!(
-                status,
-                codex_app_server_protocol::CollabAgentToolCallStatus::InProgress
-            )
-        }
-        _ => false,
-    })
 }
 
 /// Returns true only when `exec` can safely recover missing turn items from
@@ -1870,10 +1282,12 @@ async fn resolve_resume_thread_id(
                         cursor,
                         limit: Some(100),
                         sort_key: Some(ThreadSortKey::UpdatedAt),
+                        sort_direction: None,
                         model_providers: model_providers.clone(),
                         source_kinds: Some(all_thread_source_kinds()),
                         archived: Some(false),
                         cwd: None,
+                        use_state_db_only: false,
                         search_term: None,
                     },
                 },
@@ -1932,10 +1346,12 @@ async fn resolve_resume_thread_id(
                     cursor,
                     limit: Some(100),
                     sort_key: Some(ThreadSortKey::UpdatedAt),
+                    sort_direction: None,
                     model_providers: model_providers.clone(),
                     source_kinds: Some(all_thread_source_kinds()),
                     archived: Some(false),
                     cwd: None,
+                    use_state_db_only: false,
                     search_term: Some(session_id.to_string()),
                 },
             },
@@ -2264,8 +1680,6 @@ fn decode_utf16(
 
 fn read_prompt_from_stdin(behavior: StdinPromptBehavior) -> Option<String> {
     let stdin_is_terminal = std::io::stdin().is_terminal();
-    let announce_optional_append =
-        matches!(behavior, StdinPromptBehavior::OptionalAppend) && !stdin_is_terminal;
 
     match behavior {
         StdinPromptBehavior::RequiredIfPiped if stdin_is_terminal => {
@@ -2279,7 +1693,9 @@ fn read_prompt_from_stdin(behavior: StdinPromptBehavior) -> Option<String> {
         }
         StdinPromptBehavior::Forced => {}
         StdinPromptBehavior::OptionalAppend if stdin_is_terminal => return None,
-        StdinPromptBehavior::OptionalAppend => {}
+        StdinPromptBehavior::OptionalAppend => {
+            eprintln!("Reading additional input from stdin...");
+        }
     }
 
     let mut bytes = Vec::new();
@@ -2305,9 +1721,6 @@ fn read_prompt_from_stdin(behavior: StdinPromptBehavior) -> Option<String> {
             }
         }
     } else {
-        if announce_optional_append {
-            eprintln!("Reading additional input from stdin...");
-        }
         Some(buffer)
     }
 }

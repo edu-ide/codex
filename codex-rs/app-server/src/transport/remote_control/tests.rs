@@ -12,6 +12,7 @@ use super::*;
 use crate::outgoing_message::OutgoingMessage;
 use crate::outgoing_message::QueuedOutgoingMessage;
 use crate::transport::CHANNEL_CAPACITY;
+use crate::transport::ConnectionOrigin;
 use crate::transport::TransportEvent;
 use base64::Engine;
 use codex_app_server_protocol::AuthMode;
@@ -226,9 +227,13 @@ async fn remote_control_transport_manages_virtual_clients_and_routes_messages() 
     {
         TransportEvent::ConnectionOpened {
             connection_id,
+            origin,
             writer,
             ..
-        } => (connection_id, writer),
+        } => {
+            assert_eq!(origin, ConnectionOrigin::RemoteControl);
+            (connection_id, writer)
+        }
         other => panic!("expected connection open event, got {other:?}"),
     };
 
@@ -472,6 +477,45 @@ async fn remote_control_start_allows_remote_control_invalid_url_when_disabled() 
     )
     .await
     .expect("disabled remote control should not validate the URL at startup");
+
+    shutdown_token.cancel();
+    timeout(Duration::from_secs(1), remote_task)
+        .await
+        .expect("remote control task should stop")
+        .expect("remote control task should join");
+}
+
+#[tokio::test]
+async fn remote_control_start_allows_missing_auth_when_enabled() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let remote_control_url = remote_control_url_for_listener(&listener);
+    let codex_home = TempDir::new().expect("temp dir should create");
+    let auth_manager = AuthManager::shared(
+        codex_home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*chatgpt_base_url*/ None,
+    );
+    let (transport_event_tx, _transport_event_rx) =
+        mpsc::channel::<TransportEvent>(CHANNEL_CAPACITY);
+    let shutdown_token = CancellationToken::new();
+    let (remote_task, _remote_handle) = start_remote_control(
+        remote_control_url,
+        /*state_db*/ None,
+        auth_manager,
+        transport_event_tx,
+        shutdown_token.clone(),
+        /*app_server_client_name_rx*/ None,
+        /*initial_enabled*/ true,
+    )
+    .await
+    .expect("remote control should start before ChatGPT auth is available");
+
+    timeout(Duration::from_millis(100), listener.accept())
+        .await
+        .expect_err("remote control should wait for auth before connecting");
 
     shutdown_token.cancel();
     timeout(Duration::from_secs(1), remote_task)
@@ -1040,6 +1084,7 @@ async fn remote_control_waits_for_account_id_before_enrolling() {
         codex_home.path().to_path_buf(),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
+        /*chatgpt_base_url*/ None,
     );
     let expected_server_name = gethostname().to_string_lossy().trim().to_string();
     let expected_enrollment = RemoteControlEnrollment {

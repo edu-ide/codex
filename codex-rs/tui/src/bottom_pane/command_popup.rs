@@ -1,6 +1,3 @@
-use std::str::FromStr;
-
-use codex_protocol::commands::CommandMeta;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
@@ -13,19 +10,21 @@ use super::slash_commands;
 use crate::render::Insets;
 use crate::render::RectExt;
 use crate::slash_command::SlashCommand;
-// Popup and `/help` use the same post-gating list from `slash_commands` so
-// aliases and hidden debug actions remain consistent.
+
+// Hide alias commands in the default popup list so each unique action appears once.
+// `quit` is an alias of `exit`, so we skip `quit` here.
+// `approvals` is an alias of `permissions`.
+const ALIAS_COMMANDS: &[SlashCommand] = &[SlashCommand::Quit, SlashCommand::Approvals];
 
 /// A selectable item in the popup.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommandItem {
     Builtin(SlashCommand),
-    Custom(codex_protocol::commands::CommandMeta),
 }
 
 pub(crate) struct CommandPopup {
     command_filter: String,
-    commands: Vec<CommandMeta>,
+    builtins: Vec<(&'static str, SlashCommand)>,
     state: ScrollState,
 }
 
@@ -39,8 +38,7 @@ pub(crate) struct CommandPopupFlags {
     pub(crate) realtime_conversation_enabled: bool,
     pub(crate) audio_device_selection_enabled: bool,
     pub(crate) windows_degraded_sandbox_active: bool,
-    pub(crate) fork_command_enabled: bool,
-    pub(crate) terminal_commands_enabled: bool,
+    pub(crate) side_conversation_active: bool,
 }
 
 impl From<CommandPopupFlags> for slash_commands::BuiltinCommandFlags {
@@ -54,8 +52,7 @@ impl From<CommandPopupFlags> for slash_commands::BuiltinCommandFlags {
             realtime_conversation_enabled: value.realtime_conversation_enabled,
             audio_device_selection_enabled: value.audio_device_selection_enabled,
             allow_elevate_sandbox: value.windows_degraded_sandbox_active,
-            fork_command_enabled: value.fork_command_enabled,
-            terminal_commands_enabled: value.terminal_commands_enabled,
+            side_conversation_active: value.side_conversation_active,
         }
     }
 }
@@ -63,20 +60,17 @@ impl From<CommandPopupFlags> for slash_commands::BuiltinCommandFlags {
 impl CommandPopup {
     pub(crate) fn new(flags: CommandPopupFlags) -> Self {
         // Keep built-in availability in sync with the composer.
-        let builtins = slash_commands::builtins_for_popup(flags.into());
-        let commands = builtins.into_iter().map(|(_, cmd)| cmd.to_meta()).collect();
-
+        let builtins: Vec<(&'static str, SlashCommand)> =
+            slash_commands::builtins_for_input(flags.into())
+                .into_iter()
+                .filter(|(name, _)| !name.starts_with("debug"))
+                .filter(|(_, cmd)| *cmd != SlashCommand::Apps)
+                .collect();
         Self {
             command_filter: String::new(),
-            commands,
+            builtins,
             state: ScrollState::new(),
         }
-    }
-
-    pub(crate) fn set_commands(&mut self, commands: Vec<CommandMeta>) {
-        self.commands = commands;
-        let len = self.filtered_items().len();
-        self.state.clamp_selection(len);
     }
 
     /// Update the filter string based on the current composer text. The text
@@ -126,16 +120,11 @@ impl CommandPopup {
         let filter = self.command_filter.trim();
         let mut out: Vec<(CommandItem, Option<Vec<usize>>)> = Vec::new();
         if filter.is_empty() {
-            for meta in self.commands.iter() {
-                if !meta.is_visible {
+            for (_, cmd) in self.builtins.iter() {
+                if ALIAS_COMMANDS.contains(cmd) {
                     continue;
                 }
-                let item = if let Ok(cmd) = SlashCommand::from_str(&meta.name) {
-                    CommandItem::Builtin(cmd)
-                } else {
-                    CommandItem::Custom(meta.clone())
-                };
-                out.push((item, None));
+                out.push((CommandItem::Builtin(*cmd), None));
             }
             return out;
         }
@@ -167,13 +156,8 @@ impl CommandPopup {
                 }
             };
 
-        for meta in self.commands.iter() {
-            let item = if let Ok(cmd) = SlashCommand::from_str(&meta.name) {
-                CommandItem::Builtin(cmd)
-            } else {
-                CommandItem::Custom(meta.clone())
-            };
-            push_match(item, &meta.name, None, 0);
+        for (_, cmd) in self.builtins.iter() {
+            push_match(CommandItem::Builtin(*cmd), cmd.command(), None, 0);
         }
 
         out.extend(exact);
@@ -192,25 +176,16 @@ impl CommandPopup {
         matches
             .into_iter()
             .map(|(item, indices)| {
-                let (name, description, category) = match item {
-                    CommandItem::Builtin(cmd) => (
-                        format!("/{}", cmd.command()),
-                        cmd.description().to_string(),
-                        None,
-                    ),
-                    CommandItem::Custom(meta) => (
-                        format!("/{}", meta.name),
-                        meta.help_text.clone(),
-                        Some(format!("{:?}", meta.category).to_lowercase()),
-                    ),
-                };
+                let CommandItem::Builtin(cmd) = item;
+                let name = format!("/{}", cmd.command());
+                let description = cmd.description().to_string();
                 GenericDisplayRow {
                     name,
                     name_prefix_spans: Vec::new(),
                     match_indices: indices.map(|v| v.into_iter().map(|i| i + 1).collect()),
                     display_shortcut: None,
                     description: Some(description),
-                    category_tag: category,
+                    category_tag: None,
                     wrap_indent: None,
                     is_disabled: false,
                     disabled_reason: None,
@@ -239,7 +214,7 @@ impl CommandPopup {
         let matches = self.filtered_items();
         self.state
             .selected_idx
-            .and_then(|idx| matches.get(idx).cloned())
+            .and_then(|idx| matches.get(idx).copied())
     }
 }
 
@@ -386,8 +361,7 @@ mod tests {
             realtime_conversation_enabled: false,
             audio_device_selection_enabled: false,
             windows_degraded_sandbox_active: false,
-            fork_command_enabled: true,
-            terminal_commands_enabled: true,
+            side_conversation_active: false,
         });
         popup.on_composer_text_change("/collab".to_string());
 
@@ -408,8 +382,7 @@ mod tests {
             realtime_conversation_enabled: false,
             audio_device_selection_enabled: false,
             windows_degraded_sandbox_active: false,
-            fork_command_enabled: true,
-            terminal_commands_enabled: true,
+            side_conversation_active: false,
         });
         popup.on_composer_text_change("/plan".to_string());
 
@@ -430,8 +403,7 @@ mod tests {
             realtime_conversation_enabled: false,
             audio_device_selection_enabled: false,
             windows_degraded_sandbox_active: false,
-            fork_command_enabled: true,
-            terminal_commands_enabled: true,
+            side_conversation_active: false,
         });
         popup.on_composer_text_change("/pers".to_string());
 
@@ -459,8 +431,7 @@ mod tests {
             realtime_conversation_enabled: false,
             audio_device_selection_enabled: false,
             windows_degraded_sandbox_active: false,
-            fork_command_enabled: true,
-            terminal_commands_enabled: true,
+            side_conversation_active: false,
         });
         popup.on_composer_text_change("/personality".to_string());
 
@@ -481,8 +452,7 @@ mod tests {
             realtime_conversation_enabled: true,
             audio_device_selection_enabled: false,
             windows_degraded_sandbox_active: false,
-            fork_command_enabled: true,
-            terminal_commands_enabled: true,
+            side_conversation_active: false,
         });
         popup.on_composer_text_change("/aud".to_string());
 
