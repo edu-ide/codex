@@ -61,7 +61,7 @@ pub fn resolve_ilhae_config_toml_path() -> PathBuf {
 }
 
 pub fn resolve_ilhae_codex_home_dir() -> PathBuf {
-    resolve_ilhae_config_dir()
+    resolve_ilhae_config_dir().join("codex-home")
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -944,6 +944,34 @@ fn codex_profile_table_for_ilhae_profile(profile: &IlhaeProfileConfig) -> toml::
     table
 }
 
+fn user_mcp_servers_for_managed_config() -> toml::value::Table {
+    let Ok(config_str) = std::fs::read_to_string(resolve_ilhae_config_toml_path()) else {
+        return toml::value::Table::new();
+    };
+    let Ok(config) = config_str.parse::<toml::Value>() else {
+        return toml::value::Table::new();
+    };
+    config
+        .get("mcp_servers")
+        .and_then(toml::Value::as_table)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn user_model_providers_for_managed_config() -> toml::value::Table {
+    let Ok(config_str) = std::fs::read_to_string(resolve_ilhae_config_toml_path()) else {
+        return toml::value::Table::new();
+    };
+    let Ok(config) = config_str.parse::<toml::Value>() else {
+        return toml::value::Table::new();
+    };
+    config
+        .get("model_providers")
+        .and_then(toml::Value::as_table)
+        .cloned()
+        .unwrap_or_default()
+}
+
 fn default_ilhae_codex_home_table() -> toml::value::Table {
     let config = load_ilhae_toml_config();
     let active_profile_name = config
@@ -1050,6 +1078,10 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
     features.insert("fast_mode".to_string(), toml::Value::Boolean(true));
     features.insert("multi_agent".to_string(), toml::Value::Boolean(true));
     root.insert("features".to_string(), toml::Value::Table(features));
+    root.insert(
+        "mcp_oauth_credentials_store".to_string(),
+        toml::Value::String("file".to_string()),
+    );
 
     let mut mcp_servers = toml::value::Table::new();
 
@@ -1099,7 +1131,19 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
         mcp_servers.insert("email".to_string(), toml::Value::Table(email));
     }
 
+    for (name, server) in user_mcp_servers_for_managed_config() {
+        mcp_servers.insert(name, server);
+    }
+
     root.insert("mcp_servers".to_string(), toml::Value::Table(mcp_servers));
+
+    let model_providers = user_model_providers_for_managed_config();
+    if !model_providers.is_empty() {
+        root.insert(
+            "model_providers".to_string(),
+            toml::Value::Table(model_providers),
+        );
+    }
 
     let mut plugins = toml::value::Table::new();
     for plugin in [
@@ -1149,16 +1193,29 @@ pub fn prepare_ilhae_codex_home() -> Result<PathBuf, String> {
     let codex_home = resolve_ilhae_codex_home_dir();
     std::fs::create_dir_all(&codex_home).map_err(|err| err.to_string())?;
 
-    let legacy_codex_home = resolve_ilhae_config_dir().join("codex-home");
-    if legacy_codex_home.exists() {
-        let _ = std::fs::remove_file(legacy_codex_home.join("config.toml"));
-        let _ = std::fs::remove_file(legacy_codex_home.join("auth.json"));
-        let _ = std::fs::remove_file(legacy_codex_home.join(".credentials.json"));
-        let _ = std::fs::remove_dir(&legacy_codex_home);
-    }
-
-    for stale_auth in ["auth.json", ".credentials.json"] {
-        let _ = std::fs::remove_file(codex_home.join(stale_auth));
+    let ilhae_config_dir = resolve_ilhae_config_dir();
+    let codex_config_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".codex");
+    let auth_source_dirs = [ilhae_config_dir, codex_config_dir];
+    for auth_file in ["auth.json", ".credentials.json"] {
+        let current_auth = codex_home.join(auth_file);
+        if current_auth.exists() {
+            continue;
+        }
+        for source_dir in &auth_source_dirs {
+            let source_auth = source_dir.join(auth_file);
+            if !source_auth.exists() {
+                continue;
+            }
+            if let Err(err) = std::fs::copy(&source_auth, &current_auth) {
+                warn!(
+                    "Failed to seed {:?} -> {:?}: {}",
+                    source_auth, current_auth, err
+                );
+            }
+            break;
+        }
     }
 
     let root = default_ilhae_codex_home_table();
@@ -1308,6 +1365,7 @@ mod tests {
         let mut nemotron = IlhaeProfileConfig::default();
         nemotron.agent.engine_id = Some("ilhae".to_string());
         nemotron.agent.auto_mode = true;
+        nemotron.agent.auto_max_turns = 8;
         nemotron.native_runtime.enabled = true;
         nemotron.native_runtime.base_url = "http://127.0.0.1:8081/v1".to_string();
         nemotron.native_runtime.model_path = "/models/gemma-4-26b.gguf".to_string();
@@ -1322,9 +1380,28 @@ mod tests {
         config.profiles.insert("review".to_string(), review.clone());
 
         save_ilhae_toml_config(&config).expect("save config");
+        let config_path = tmp.path().join("config.toml");
+        let mut config_toml = std::fs::read_to_string(&config_path).expect("read config");
+        config_toml.push_str(
+            r#"
+[mcp_servers.fortune]
+url = "https://fortune.ugot.uk/mcp"
+enabled = true
+scopes = ["openid", "profile", "email", "mcp.read", "mcp.write"]
+oauth_resource = "https://fortune.ugot.uk/mcp"
+
+[model_providers.minimax-turboquant]
+name = "MiniMax local"
+base_url = "http://127.0.0.1:8080/v1"
+wire_api = "responses"
+requires_openai_auth = false
+"#,
+        );
+        std::fs::write(config_path, config_toml).expect("write config with mcp");
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed = std::fs::read_to_string(tmp.path().join("managed_config.toml"))
+        let codex_home = tmp.path().join("codex-home");
+        let managed = std::fs::read_to_string(codex_home.join("managed_config.toml"))
             .expect("read managed config");
         let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
         let root = parsed.as_table().expect("root table");
@@ -1332,6 +1409,11 @@ mod tests {
         assert_eq!(
             root.get("profile").and_then(toml::Value::as_str),
             Some("nemotron-local")
+        );
+        assert_eq!(
+            root.get("mcp_oauth_credentials_store")
+                .and_then(toml::Value::as_str),
+            Some("file")
         );
         let agent = root
             .get("agent")
@@ -1396,6 +1478,116 @@ mod tests {
             Some("openai")
         );
         assert!(review_profile.get("url").is_none());
+
+        let mcp_servers = root
+            .get("mcp_servers")
+            .and_then(toml::Value::as_table)
+            .expect("mcp servers table");
+        let fortune = mcp_servers
+            .get("fortune")
+            .and_then(toml::Value::as_table)
+            .expect("fortune mcp server");
+        assert_eq!(
+            fortune.get("url").and_then(toml::Value::as_str),
+            Some("https://fortune.ugot.uk/mcp")
+        );
+
+        let model_providers = root
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .expect("model providers table");
+        let minimax_provider = model_providers
+            .get("minimax-turboquant")
+            .and_then(toml::Value::as_table)
+            .expect("minimax provider");
+        assert_eq!(
+            minimax_provider
+                .get("requires_openai_auth")
+                .and_then(toml::Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_preserves_oauth_credentials() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        std::fs::write(tmp.path().join("config.toml"), "[profile]\n").expect("write config");
+        std::fs::write(tmp.path().join(".credentials.json"), r#"{"mcp":"token"}"#)
+            .expect("write credentials");
+        std::fs::write(tmp.path().join("auth.json"), r#"{"auth":"token"}"#).expect("write auth");
+
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join(".credentials.json"))
+                .expect("read credentials"),
+            r#"{"mcp":"token"}"#
+        );
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("codex-home/.credentials.json"))
+                .expect("read codex credentials"),
+            r#"{"mcp":"token"}"#
+        );
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("auth.json")).expect("read auth"),
+            r#"{"auth":"token"}"#
+        );
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("codex-home/auth.json"))
+                .expect("read codex auth"),
+            r#"{"auth":"token"}"#
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_seeds_auth_from_codex_home_fallback() {
+        let tmp = tempdir().expect("tempdir");
+        let ilhae_dir = tmp.path().join(".ilhae");
+        let home_dir = tmp.path().join("home");
+        let codex_dir = home_dir.join(".codex");
+        std::fs::create_dir_all(&ilhae_dir).expect("create ilhae dir");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", &ilhae_dir);
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+        let _home_guard = EnvVarGuard::set("HOME", &home_dir);
+
+        std::fs::write(ilhae_dir.join("config.toml"), "[profile]\n").expect("write config");
+        std::fs::write(codex_dir.join("auth.json"), r#"{"codex":"auth"}"#)
+            .expect("write codex auth");
+
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        assert_eq!(
+            std::fs::read_to_string(ilhae_dir.join("codex-home/auth.json"))
+                .expect("read seeded auth"),
+            r#"{"codex":"auth"}"#
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_preserves_existing_codex_home_oauth_credentials() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        std::fs::write(tmp.path().join("config.toml"), "[profile]\n").expect("write config");
+        let codex_home = tmp.path().join("codex-home");
+        std::fs::create_dir_all(&codex_home).expect("create codex home");
+        std::fs::write(tmp.path().join(".credentials.json"), r#"{"root":"mcp"}"#)
+            .expect("write root credentials");
+        std::fs::write(codex_home.join(".credentials.json"), r#"{"codex":"mcp"}"#)
+            .expect("write codex credentials");
+
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        assert_eq!(
+            std::fs::read_to_string(codex_home.join(".credentials.json"))
+                .expect("read codex credentials"),
+            r#"{"codex":"mcp"}"#
+        );
     }
 
     #[test]
@@ -1422,7 +1614,7 @@ trust_level = "untrusted"
 
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed = std::fs::read_to_string(tmp.path().join("managed_config.toml"))
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
             .expect("read managed config");
         let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
         let projects = parsed

@@ -6,7 +6,7 @@ use crate::version::CODEX_CLI_VERSION;
 use chrono::DateTime;
 use chrono::Local;
 use codex_core::config::Config;
-use codex_git_utils::{get_git_repo_root, resolve_root_git_project_for_trust};
+use codex_git_utils::get_git_repo_root;
 use codex_ilhae::native_runtime_context;
 use codex_model_provider_info::WireApi;
 use codex_protocol::ThreadId;
@@ -415,17 +415,7 @@ impl StatusHistoryCell {
         let Some(repo_root) = get_git_repo_root(cwd) else {
             return "none";
         };
-        let Some(trust_root) = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(resolve_root_git_project_for_trust(cwd))
-        }) else {
-            return "repo";
-        };
-
-        if repo_root == trust_root {
-            "repo"
-        } else {
-            "linked"
-        }
+        if repo_root == cwd { "repo" } else { "linked" }
     }
 
     #[allow(clippy::too_many_arguments)]

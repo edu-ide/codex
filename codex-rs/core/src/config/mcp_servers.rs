@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::Path;
 
+use codex_config::Constrained;
+use codex_config::ConstraintResult;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerDisabledReason;
 use codex_config::types::McpServerTransportConfig;
-use codex_config::Constrained;
-use codex_config::ConstraintResult;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use toml::Value as TomlValue;
 

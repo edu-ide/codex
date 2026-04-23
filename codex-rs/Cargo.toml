@@ -34,6 +34,7 @@ members = [
     "core-plugins",
     "core-skills",
     "hooks",
+    "ilhae",
     "secrets",
     "exec",
     "exec-server",
@@ -149,6 +150,7 @@ codex-install-context = { path = "install-context" }
 codex-file-search = { path = "file-search" }
 codex-git-utils = { path = "git-utils" }
 codex-hooks = { path = "hooks" }
+codex-ilhae = { path = "ilhae" }
 codex-keyring-store = { path = "keyring-store" }
 codex-linux-sandbox = { path = "linux-sandbox" }
 codex-lmstudio = { path = "lmstudio" }
@@ -277,6 +279,7 @@ keyring = { version = "3.6", default-features = false }
 landlock = "0.4.4"
 lazy_static = "1"
 libc = "0.2.182"
+lsp-types = "0.94.1"
 log = "0.4"
 lru = "0.16.3"
 maplit = "1.0.2"

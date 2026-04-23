@@ -1342,6 +1342,23 @@ impl Session {
         state.session_configuration.provider.clone()
     }
 
+    pub(crate) async fn check_and_record_read_file_cache(
+        &self,
+        key: (String, usize, usize),
+        mtime: std::time::SystemTime,
+        size: u64,
+    ) -> bool {
+        let mut state = self.state.lock().await;
+        if let Some((cached_mtime, cached_size)) = state.read_file_cache.get(&key)
+            && *cached_mtime == mtime
+            && *cached_size == size
+        {
+            return true;
+        }
+        state.read_file_cache.insert(key, (mtime, size));
+        false
+    }
+
     pub(crate) async fn reload_user_config_layer(&self) {
         let config_toml_path = {
             let state = self.state.lock().await;

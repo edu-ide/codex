@@ -236,8 +236,13 @@ impl WebSearchToolConfig {
                 (None, Some(other_location)) => Some(other_location.clone()),
                 (None, None) => None,
             },
-            searxng_url: other.searxng_url.clone().or_else(|| self.searxng_url.clone()),
-            use_duckduckgo_fallback: other.use_duckduckgo_fallback.or(self.use_duckduckgo_fallback),
+            searxng_url: other
+                .searxng_url
+                .clone()
+                .or_else(|| self.searxng_url.clone()),
+            use_duckduckgo_fallback: other
+                .use_duckduckgo_fallback
+                .or(self.use_duckduckgo_fallback),
             engine: other.engine.or(self.engine),
         }
     }
@@ -698,6 +703,7 @@ mod tests {
                 city: None,
                 timezone: Some("America/Los_Angeles".to_string()),
             }),
+            ..Default::default()
         };
         let overlay = WebSearchToolConfig {
             context_size: Some(WebSearchContextSize::High),
@@ -708,6 +714,7 @@ mod tests {
                 city: Some("Seattle".to_string()),
                 timezone: None,
             }),
+            ..Default::default()
         };
 
         let expected = WebSearchToolConfig {
@@ -719,6 +726,7 @@ mod tests {
                 city: Some("Seattle".to_string()),
                 timezone: Some("America/Los_Angeles".to_string()),
             }),
+            ..Default::default()
         };
 
         assert_eq!(expected, base.merge(&overlay));

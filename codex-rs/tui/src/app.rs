@@ -185,6 +185,7 @@ mod background_requests;
 mod config_persistence;
 mod event_dispatch;
 mod history_ui;
+mod ilhae_runtime_controls;
 mod input;
 mod loaded_threads;
 mod pending_interactive_replay;

@@ -5,6 +5,10 @@
 //! existing call sites.
 
 use super::*;
+use codex_ilhae::native_runtime_context;
+use codex_protocol::openai_models::InputModality;
+use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::openai_models::ReasoningEffortPreset;
 
 impl ChatWidget {
     pub(super) fn ilhae_local_model_presets(&self) -> Option<Vec<ModelPreset>> {

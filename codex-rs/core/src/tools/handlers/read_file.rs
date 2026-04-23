@@ -61,17 +61,15 @@ impl ToolHandler for ReadFileHandler {
         let size = metadata.len();
 
         let cache_key = (args.path.clone(), args.offset, args.limit);
+        if invocation
+            .session
+            .check_and_record_read_file_cache(cache_key, mtime, size)
+            .await
         {
-            let mut state = invocation.session.state.lock().await;
-            if let Some((cached_mtime, cached_size)) = state.read_file_cache.get(&cache_key) {
-                if *cached_mtime == mtime && *cached_size == size {
-                    return Ok(FunctionToolOutput::from_text(
-                        "File has already been read and has not changed. Check your conversation history to view its contents.".to_string(),
-                        Some(true)
-                    ));
-                }
-            }
-            state.read_file_cache.insert(cache_key, (mtime, size));
+            return Ok(FunctionToolOutput::from_text(
+                "File has already been read and has not changed. Check your conversation history to view its contents.".to_string(),
+                Some(true),
+            ));
         }
 
         let lines = match slice::read(&abs_path, args.offset, args.limit).await {

@@ -66,9 +66,11 @@ use rmcp::model::ElicitationCapability;
 use rmcp::model::FormElicitationCapability;
 use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
+use rmcp::model::ListPromptsResult;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
 use rmcp::model::PaginatedRequestParams;
+use rmcp::model::Prompt;
 use rmcp::model::ProtocolVersion;
 use rmcp::model::ReadResourceRequestParams;
 use rmcp::model::ReadResourceResult;
@@ -1004,7 +1006,11 @@ impl McpConnectionManager {
                 let mut cursor: Option<String> = None;
 
                 loop {
-                    let params = cursor.as_ref().map(|next| { let mut p = rmcp::model::PaginatedRequestParams::default(); p.cursor = Some(next.clone()); p });
+                    let params = cursor.as_ref().map(|next| {
+                        let mut p = rmcp::model::PaginatedRequestParams::default();
+                        p.cursor = Some(next.clone());
+                        p
+                    });
                     let response = match client.list_resources(params, timeout).await {
                         Ok(result) => result,
                         Err(err) => return (server_name, Err(err)),
@@ -1067,7 +1073,11 @@ impl McpConnectionManager {
                 let mut cursor: Option<String> = None;
 
                 loop {
-                    let params = cursor.as_ref().map(|next| { let mut p = rmcp::model::PaginatedRequestParams::default(); p.cursor = Some(next.clone()); p });
+                    let params = cursor.as_ref().map(|next| {
+                        let mut p = rmcp::model::PaginatedRequestParams::default();
+                        p.cursor = Some(next.clone());
+                        p
+                    });
                     let response = match client.list_resource_templates(params, timeout).await {
                         Ok(result) => result,
                         Err(err) => return (server_name_cloned, Err(err)),
@@ -1107,6 +1117,73 @@ impl McpConnectionManager {
                 }
                 Err(err) => {
                     warn!("Task panic when listing resource templates for MCP server: {err:#}");
+                }
+            }
+        }
+
+        aggregated
+    }
+
+    /// Returns a single map that contains all prompts. Each key is the
+    /// server name and the value is a vector of prompts.
+    pub async fn list_all_prompts(&self) -> HashMap<String, Vec<Prompt>> {
+        let mut join_set = JoinSet::new();
+
+        let clients_snapshot = &self.clients;
+
+        for (server_name, async_managed_client) in clients_snapshot {
+            let server_name_cloned = server_name.clone();
+            let Ok(managed_client) = async_managed_client.client().await else {
+                continue;
+            };
+            let client = managed_client.client.clone();
+            let timeout = managed_client.tool_timeout;
+
+            join_set.spawn(async move {
+                let mut collected: Vec<Prompt> = Vec::new();
+                let mut cursor: Option<String> = None;
+
+                loop {
+                    let params = cursor.as_ref().map(|next| {
+                        let mut p = rmcp::model::PaginatedRequestParams::default();
+                        p.cursor = Some(next.clone());
+                        p
+                    });
+                    let response = match client.list_prompts(params, timeout).await {
+                        Ok(result) => result,
+                        Err(err) => return (server_name_cloned, Err(err)),
+                    };
+
+                    collected.extend(response.prompts);
+
+                    match response.next_cursor {
+                        Some(next) => {
+                            if cursor.as_ref() == Some(&next) {
+                                return (
+                                    server_name_cloned,
+                                    Err(anyhow!("prompts/list returned duplicate cursor")),
+                                );
+                            }
+                            cursor = Some(next);
+                        }
+                        None => return (server_name_cloned, Ok(collected)),
+                    }
+                }
+            });
+        }
+
+        let mut aggregated: HashMap<String, Vec<Prompt>> = HashMap::new();
+
+        while let Some(join_res) = join_set.join_next().await {
+            match join_res {
+                Ok((server_name, Ok(prompts))) => {
+                    aggregated.insert(server_name, prompts);
+                }
+                Ok((server_name, Err(err))) => {
+                    warn!("Failed to list prompts for MCP server '{server_name}': {err:#}");
+                }
+                Err(err) => {
+                    warn!("Task panic when listing prompts for MCP server: {err:#}");
                 }
             }
         }
@@ -1194,6 +1271,22 @@ impl McpConnectionManager {
             .with_context(|| format!("resources/templates/list failed for `{server}`"))
     }
 
+    /// List prompts from the specified server.
+    pub async fn list_prompts(
+        &self,
+        server: &str,
+        params: Option<PaginatedRequestParams>,
+    ) -> Result<ListPromptsResult> {
+        let managed = self.client_by_name(server).await?;
+        let client = managed.client.clone();
+        let timeout = managed.tool_timeout;
+
+        client
+            .list_prompts(params, timeout)
+            .await
+            .with_context(|| format!("prompts/list failed for `{server}`"))
+    }
+
     /// Read a resource from the specified server.
     pub async fn read_resource(
         &self,
@@ -1212,10 +1305,12 @@ impl McpConnectionManager {
     }
 
     pub async fn resolve_tool_info(&self, tool_name: &ToolName) -> Option<ToolInfo> {
+        let requested_display = tool_name.display();
         let all_tools = self.list_all_tools().await;
-        all_tools
-            .into_values()
-            .find(|tool| tool.canonical_tool_name() == *tool_name)
+        all_tools.into_values().find(|tool| {
+            let canonical = tool.canonical_tool_name();
+            canonical == *tool_name || canonical.display() == requested_display
+        })
     }
 }
 
@@ -1434,17 +1529,25 @@ async fn start_server_task(
         codex_apps_tools_cache_context,
     } = params;
     let elicitation = elicitation_capability_for_server(&server_name);
-    let mut elicitation_opts = rmcp::model::ElicitationCapability::default();
-    let mut caps = rmcp::model::ClientCapabilities::default();
-    caps.elicitation = Some(elicitation_opts);
-    
-    let mut info = rmcp::model::Implementation::new("codex-mcp-client".to_owned(), env!("CARGO_PKG_VERSION").to_owned());
+    let mut caps = ClientCapabilities::default();
+    caps.elicitation = elicitation;
+
+    let mut info = Implementation {
+        name: "codex-mcp-client".to_string(),
+        title: None,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        description: None,
+        icons: None,
+        website_url: None,
+    };
     info.title = Some("Codex".into());
-    
-    let mut params = rmcp::model::InitializeRequestParams::new(
-        caps,
-        info,
-    );
+
+    let params = InitializeRequestParams {
+        meta: None,
+        protocol_version: ProtocolVersion::default(),
+        capabilities: caps,
+        client_info: info,
+    };
 
     let send_elicitation = elicitation_requests.make_sender(server_name.clone(), tx_event);
 

@@ -8,7 +8,7 @@ use sacp::DynConnectTo;
 
 use moka::sync::Cache;
 use std::collections::{HashMap, HashSet};
-use std::sync::{atomic::AtomicU64, Arc, OnceLock};
+use std::sync::{Arc, OnceLock, atomic::AtomicU64};
 use std::{process::Stdio, time::Duration};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -17,7 +17,7 @@ use tracing::{info, warn};
 static LEADER_READY: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 use crate::browser_manager::BrowserManager;
-use crate::relay_server::{broadcast_event, start_relay_server, RelayEvent, RelayState};
+use crate::relay_server::{RelayEvent, RelayState, broadcast_event, start_relay_server};
 use crate::settings_store::SettingsStore;
 use crate::startup::{build_agent_transport, cleanup_redundant_sessions};
 use tokio::sync::broadcast;
@@ -63,8 +63,8 @@ fn native_loop_lifecycle_bus() -> &'static broadcast::Sender<crate::IlhaeLoopLif
     })
 }
 
-pub fn subscribe_native_loop_lifecycle(
-) -> broadcast::Receiver<crate::IlhaeLoopLifecycleNotification> {
+pub fn subscribe_native_loop_lifecycle()
+-> broadcast::Receiver<crate::IlhaeLoopLifecycleNotification> {
     native_loop_lifecycle_bus().subscribe()
 }
 
@@ -113,8 +113,8 @@ pub fn current_native_backend_engine() -> Option<String> {
         .map(|runtime| infer_agent_id_from_command(&runtime.settings_store.get().agent.command))
 }
 
-pub fn current_native_backend_capability_profile(
-) -> Option<crate::capabilities::EngineCapabilityProfile> {
+pub fn current_native_backend_capability_profile()
+-> Option<crate::capabilities::EngineCapabilityProfile> {
     current_native_backend_engine()
         .map(|engine| crate::capabilities::engine_capability_profile(&engine))
 }
@@ -197,10 +197,10 @@ fn gate_gepa_optimizer_candidate(
     if prompt.is_empty() || instructions.is_empty() {
         return Err("missing optimized prompt or instructions".to_string());
     }
-    if prompt.len() > 480 {
+    if prompt.len() > 720 {
         return Err(format!("prompt too long: {} chars", prompt.len()));
     }
-    if instructions.len() > 900 {
+    if instructions.len() > 1400 {
         return Err(format!(
             "instructions too long: {} chars",
             instructions.len()
@@ -213,7 +213,10 @@ fn gate_gepa_optimizer_candidate(
         return Err("prompt must keep review/summarize intent".to_string());
     }
     if !instructions_lower.contains("memory_dream_") {
-        return Err("instructions must stay within memory_dream tool scope".to_string());
+        return Err("instructions must preserve memory_dream tool scope".to_string());
+    }
+    if !instructions_lower.contains("skill_upsert") {
+        return Err("instructions must preserve skill_upsert guidance".to_string());
     }
     let score = response.score.unwrap_or(0.0);
     if score <= 0.0 {

@@ -350,11 +350,13 @@ pub(super) fn canonical_ilhae_event_from_app_server_event(
                         .clone()
                         .unwrap_or_default()
                         .into_iter()
-                        .filter_map(|item| match item {
+                        .filter_map(|item| {
+                            match item {
                             codex_app_server_protocol::DynamicToolCallOutputContentItem::InputText {
                                 text,
                             } => Some(text),
                             _ => None,
+                        }
                         })
                         .collect(),
                 }),

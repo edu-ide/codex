@@ -17,6 +17,7 @@ use codex_app_server_protocol::RequestId;
 use pretty_assertions::assert_eq;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::JsonObject;
+use rmcp::model::ListPromptsResult;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
 use rmcp::model::ListToolsResult;
@@ -151,6 +152,7 @@ impl ServerHandler for SlowInventoryServer {
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_prompts()
                 .build(),
             ..ServerInfo::default()
         }
@@ -202,6 +204,19 @@ impl ServerHandler for SlowInventoryServer {
         tokio::time::sleep(Duration::from_secs(2)).await;
         Ok(ListResourceTemplatesResult {
             resource_templates: Vec::new(),
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<ListPromptsResult, rmcp::ErrorData> {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        Ok(ListPromptsResult {
+            prompts: Vec::new(),
             next_cursor: None,
             meta: None,
         })
@@ -260,6 +275,7 @@ url = "{mcp_server_url}/mcp"
     );
     assert_eq!(status.resources, Vec::new());
     assert_eq!(status.resource_templates, Vec::new());
+    assert_eq!(status.prompts, Vec::new());
 
     mcp_server_handle.abort();
     let _ = mcp_server_handle.await;

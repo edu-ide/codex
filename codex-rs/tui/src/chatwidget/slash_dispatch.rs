@@ -847,6 +847,18 @@ impl ChatWidget {
             | SlashCommand::Compact
             | SlashCommand::Review
             | SlashCommand::Model
+            | SlashCommand::Profile
+            | SlashCommand::Advisor
+            | SlashCommand::Auto
+            | SlashCommand::Team
+            | SlashCommand::Kairos
+            | SlashCommand::BgDream
+            | SlashCommand::Dream
+            | SlashCommand::Embed
+            | SlashCommand::Improve
+            | SlashCommand::Tmux
+            | SlashCommand::Worktree
+            | SlashCommand::Remote
             | SlashCommand::Realtime
             | SlashCommand::Settings
             | SlashCommand::Personality
@@ -866,6 +878,7 @@ impl ChatWidget {
             | SlashCommand::Logout
             | SlashCommand::Mention
             | SlashCommand::Skills
+            | SlashCommand::Help
             | SlashCommand::Title
             | SlashCommand::Statusline
             | SlashCommand::Theme => QueueDrain::Stop,

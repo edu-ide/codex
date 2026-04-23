@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use std::{collections::BTreeMap, time::Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{collections::BTreeMap, time::Instant};
 
 use agent_client_protocol_schema::{ContentBlock, PromptRequest, PromptResponse, TextContent};
 use codex_protocol::{
@@ -31,7 +31,9 @@ fn context_loop_item_id(session_id: &str, epoch_ms: u64) -> String {
     format!("context:{session_id}:{epoch_ms}")
 }
 
-fn loop_counts(entries: impl IntoIterator<Item = (&'static str, i64)>) -> Option<BTreeMap<String, i64>> {
+fn loop_counts(
+    entries: impl IntoIterator<Item = (&'static str, i64)>,
+) -> Option<BTreeMap<String, i64>> {
     let map: BTreeMap<String, i64> = entries
         .into_iter()
         .filter(|(_, value)| *value > 0)
@@ -265,8 +267,10 @@ pub async fn handle_prompt_request(
 
     if let Some(ref history_text) = history_opt {
         info!("Injecting cross-agent history for session: {}", session_id);
-        req.prompt
-            .insert(0, ContentBlock::Text(TextContent::new(history_text.clone())));
+        req.prompt.insert(
+            0,
+            ContentBlock::Text(TextContent::new(history_text.clone())),
+        );
     }
 
     let current_agent_id = prepared_context.current_agent_id;

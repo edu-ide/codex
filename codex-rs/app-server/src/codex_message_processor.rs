@@ -2607,6 +2607,10 @@ impl CodexMessageProcessor {
                     description: tool.description,
                     input_schema: tool.input_schema,
                     defer_loading: tool.defer_loading,
+                    tags: None,
+                    linked_files: None,
+                    version: None,
+                    compatibility: None,
                 })
                 .collect()
         };
@@ -5854,6 +5858,7 @@ impl CodexMessageProcessor {
             tools_by_server,
             resources,
             resource_templates,
+            prompts,
             auth_statuses,
         } = snapshot;
 
@@ -5868,6 +5873,7 @@ impl CodexMessageProcessor {
             .chain(auth_statuses.keys().cloned())
             .chain(resources.keys().cloned())
             .chain(resource_templates.keys().cloned())
+            .chain(prompts.keys().cloned())
             .collect();
         server_names.sort();
         server_names.dedup();
@@ -5910,6 +5916,7 @@ impl CodexMessageProcessor {
                 tools: tools_by_server.get(name).cloned().unwrap_or_default(),
                 resources: resources.get(name).cloned().unwrap_or_default(),
                 resource_templates: resource_templates.get(name).cloned().unwrap_or_default(),
+                prompts: prompts.get(name).cloned().unwrap_or_default(),
                 auth_status: auth_statuses
                     .get(name)
                     .cloned()

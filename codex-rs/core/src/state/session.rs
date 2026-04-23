@@ -33,6 +33,7 @@ pub(crate) struct SessionState {
     pub(crate) active_connector_selection: HashSet<String>,
     pub(crate) pending_session_start_source: Option<codex_hooks::SessionStartSource>,
     granted_permissions: Option<PermissionProfile>,
+    next_turn_is_first: bool,
     pub(crate) read_file_cache: HashMap<(String, usize, usize), (std::time::SystemTime, u64)>,
     brain_tool_registry_synced: bool,
 }
@@ -53,6 +54,7 @@ impl SessionState {
             active_connector_selection: HashSet::new(),
             pending_session_start_source: None,
             granted_permissions: None,
+            next_turn_is_first: true,
             read_file_cache: HashMap::new(),
             brain_tool_registry_synced: false,
         }
@@ -85,7 +87,15 @@ impl SessionState {
         self.previous_turn_settings = previous_turn_settings;
     }
 
+    pub(crate) fn set_next_turn_is_first(&mut self, value: bool) {
+        self.next_turn_is_first = value;
+    }
 
+    pub(crate) fn take_next_turn_is_first(&mut self) -> bool {
+        let is_first_turn = self.next_turn_is_first;
+        self.next_turn_is_first = false;
+        is_first_turn
+    }
 
     pub(crate) fn clone_history(&self) -> ContextManager {
         self.history.clone()

@@ -363,6 +363,7 @@ use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
 use crate::status_indicator_widget::StatusDetailsCapitalization;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
+mod ilhae_surfaces;
 mod interrupts;
 use self::interrupts::InterruptManager;
 mod session_header;
@@ -380,6 +381,7 @@ mod realtime;
 use self::realtime::RealtimeConversationUiState;
 use self::realtime::RenderedUserMessageEvent;
 mod reasoning_shortcuts;
+mod runtime_surfaces;
 mod side;
 mod status_surfaces;
 use self::status_surfaces::CachedProjectRootName;
@@ -6343,6 +6345,52 @@ impl ChatWidget {
                     saved_path,
                 });
             }
+            ThreadItem::LoopLifecycle {
+                id,
+                kind,
+                title,
+                summary,
+                detail,
+                status,
+                reason,
+                counts,
+                error,
+                duration_ms,
+                target_profile,
+            } => {
+                let item = codex_protocol::items::LoopLifecycleItem {
+                    id: id.clone(),
+                    kind,
+                    title,
+                    summary,
+                    detail,
+                    status,
+                    reason,
+                    counts,
+                    error,
+                    duration_ms,
+                    target_profile,
+                };
+                if matches!(
+                    item.status,
+                    codex_protocol::protocol::LoopLifecycleStatus::InProgress
+                ) {
+                    self.on_loop_lifecycle_begin(
+                        item.id,
+                        item.kind,
+                        item.title,
+                        item.summary,
+                        item.detail,
+                        item.reason,
+                        item.counts,
+                        item.target_profile,
+                    );
+                } else {
+                    self.on_loop_lifecycle_end(
+                        codex_protocol::protocol::LoopLifecycleCompletedEvent { item },
+                    );
+                }
+            }
             ThreadItem::EnteredReviewMode { review, .. } => {
                 if from_replay {
                     self.enter_review_mode_with_hint(review, /*from_replay*/ true);
@@ -6587,6 +6635,17 @@ impl ChatWidget {
             ),
             ServerNotification::McpServerStatusUpdated(notification) => {
                 self.on_mcp_server_status_updated(notification)
+            }
+            ServerNotification::LoopLifecycleProgress(notification) => {
+                self.on_loop_lifecycle_progress(
+                    codex_protocol::protocol::LoopLifecycleProgressEvent {
+                        item_id: notification.item_id,
+                        kind: notification.kind,
+                        summary: notification.summary,
+                        detail: notification.detail,
+                        counts: notification.counts,
+                    },
+                );
             }
             ServerNotification::ItemGuardianApprovalReviewStarted(notification) => {
                 self.on_guardian_review_notification(

@@ -35,14 +35,13 @@ pub(super) fn acp_tool_content_items(
             _ => None,
         })
         .collect::<Vec<_>>();
-    if items.is_empty() {
-        None
-    } else {
-        Some(items)
-    }
+    if items.is_empty() { None } else { Some(items) }
 }
 
-fn verification_command_from_tool_call(tool: &str, arguments: &serde_json::Value) -> Option<String> {
+fn verification_command_from_tool_call(
+    tool: &str,
+    arguments: &serde_json::Value,
+) -> Option<String> {
     let tool_name = tool.trim().to_ascii_lowercase();
     if !(tool_name.contains("exec") || tool_name.contains("shell") || tool_name.contains("command"))
     {
@@ -217,23 +216,25 @@ pub(super) fn loop_lifecycle_server_notifications(
         }
         IlhaeLoopLifecycleNotification::Completed { item, .. }
         | IlhaeLoopLifecycleNotification::Failed { item, .. } => {
-            vec![ServerNotification::ItemCompleted(ItemCompletedNotification {
-                thread_id: thread_id.to_string(),
-                turn_id: turn_id.to_string(),
-                item: ThreadItem::LoopLifecycle {
-                    id: item.id,
-                    kind: item.kind,
-                    title: item.title,
-                    summary: item.summary,
-                    detail: item.detail,
-                    status: item.status,
-                    reason: item.reason,
-                    counts: item.counts,
-                    error: item.error,
-                    duration_ms: item.duration_ms,
-                    target_profile: item.target_profile,
+            vec![ServerNotification::ItemCompleted(
+                ItemCompletedNotification {
+                    thread_id: thread_id.to_string(),
+                    turn_id: turn_id.to_string(),
+                    item: ThreadItem::LoopLifecycle {
+                        id: item.id,
+                        kind: item.kind,
+                        title: item.title,
+                        summary: item.summary,
+                        detail: item.detail,
+                        status: item.status,
+                        reason: item.reason,
+                        counts: item.counts,
+                        error: item.error,
+                        duration_ms: item.duration_ms,
+                        target_profile: item.target_profile,
+                    },
                 },
-            })]
+            )]
         }
     }
 }

@@ -123,7 +123,6 @@ use codex_model_provider_info::WireApi;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
 
-
 use codex_response_debug_context::extract_response_debug_context;
 use codex_response_debug_context::extract_response_debug_context_from_api_error;
 use codex_response_debug_context::telemetry_api_error_message;
@@ -1659,7 +1658,9 @@ where
                 Ok(ResponseEvent::OutputItemDone(item)) => {
                     items_added.push(item.clone());
                     if tx_event
-                        .send(Ok::<_, codex_protocol::error::CodexErr>(ResponseEvent::OutputItemDone(item)))
+                        .send(Ok::<_, codex_protocol::error::CodexErr>(
+                            ResponseEvent::OutputItemDone(item),
+                        ))
                         .await
                         .is_err()
                     {
@@ -1691,10 +1692,12 @@ where
                         });
                     }
                     if tx_event
-                        .send(Ok::<_, codex_protocol::error::CodexErr>(ResponseEvent::Completed {
-                            response_id,
-                            token_usage,
-                        }))
+                        .send(Ok::<_, codex_protocol::error::CodexErr>(
+                            ResponseEvent::Completed {
+                                response_id,
+                                token_usage,
+                            },
+                        ))
                         .await
                         .is_err()
                     {
@@ -1702,7 +1705,11 @@ where
                     }
                 }
                 Ok(event) => {
-                    if tx_event.send(Ok::<_, codex_protocol::error::CodexErr>(event)).await.is_err() {
+                    if tx_event
+                        .send(Ok::<_, codex_protocol::error::CodexErr>(event))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }
@@ -1713,7 +1720,11 @@ where
                         session_telemetry.see_event_completed_failed(&mapped);
                         logged_error = true;
                     }
-                    if tx_event.send(Err::<ResponseEvent, _>(mapped)).await.is_err() {
+                    if tx_event
+                        .send(Err::<ResponseEvent, _>(mapped))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }

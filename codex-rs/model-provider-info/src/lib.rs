@@ -399,7 +399,6 @@ pub const LMSTUDIO_OSS_PROVIDER_ID: &str = "lmstudio";
 pub const OLLAMA_OSS_PROVIDER_ID: &str = "ollama";
 pub const LLAMA_SERVER_OSS_PROVIDER_ID: &str = "llama-server";
 
-
 /// Built-in default provider list.
 pub fn built_in_model_providers(
     openai_base_url: Option<String>,
@@ -431,11 +430,15 @@ pub fn built_in_model_providers(
             "sglang",
             ModelProviderInfo {
                 name: "SGLang GPU Server".into(),
-                base_url: Some(std::env::var("CODEX_SGLANG_URL").unwrap_or_else(|_| "http://192.168.219.113:30000/v1".into())),
+                base_url: Some(
+                    std::env::var("CODEX_SGLANG_URL")
+                        .unwrap_or_else(|_| "http://192.168.219.113:30000/v1".into()),
+                ),
                 wire_api: WireApi::Responses,
                 requires_openai_auth: false,
                 supports_websockets: false,
                 auth: None,
+                aws: None,
                 env_key: None,
                 env_key_instructions: None,
                 experimental_bearer_token: None,

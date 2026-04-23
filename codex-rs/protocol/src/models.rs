@@ -1724,6 +1724,7 @@ mod tests {
             output: FunctionCallOutputPayload {
                 body: FunctionCallOutputBody::Text("bad".into()),
                 success: Some(false),
+                hint: None,
             },
         };
 

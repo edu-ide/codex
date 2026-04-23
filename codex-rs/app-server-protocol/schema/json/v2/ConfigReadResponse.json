@@ -799,6 +799,14 @@
       ],
       "type": "string"
     },
+    "WebSearchEngine": {
+      "enum": [
+        "auto",
+        "searxng",
+        "duckduckgo"
+      ],
+      "type": "string"
+    },
     "WebSearchLocation": {
       "additionalProperties": false,
       "properties": {
@@ -859,6 +867,16 @@
             }
           ]
         },
+        "engine": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebSearchEngine"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "location": {
           "anyOf": [
             {
@@ -867,6 +885,18 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "searxng_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "use_duckduckgo_fallback": {
+          "type": [
+            "boolean",
+            "null"
           ]
         }
       },

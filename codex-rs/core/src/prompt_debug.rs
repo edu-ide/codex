@@ -82,7 +82,6 @@ pub(crate) async fn build_prompt_input_from_session(
     let router = built_tools(
         sess,
         turn_context.as_ref(),
-        &[],
         &prompt_input,
         &HashSet::new(),
         Some(turn_context.turn_skills.outcome.as_ref()),
@@ -93,7 +92,6 @@ pub(crate) async fn build_prompt_input_from_session(
     let prompt = build_prompt(
         prompt_input,
         router.as_ref(),
-        &[],
         turn_context.as_ref(),
         base_instructions,
     );

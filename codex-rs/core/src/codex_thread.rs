@@ -325,7 +325,10 @@ impl CodexThread {
             .session
             .read_resource(
                 server,
-                ReadResourceRequestParams::new(uri.to_string()),
+                ReadResourceRequestParams {
+                    meta: None,
+                    uri: uri.to_string(),
+                },
             )
             .await?;
 

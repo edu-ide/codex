@@ -48,6 +48,7 @@ use crate::stream_events_utils::last_assistant_message_from_item;
 use crate::stream_events_utils::mark_thread_memory_mode_polluted_if_external_context;
 use crate::stream_events_utils::raw_assistant_output_text_from_item;
 use crate::stream_events_utils::record_completed_response_item;
+use crate::stream_events_utils::should_hide_think_tags;
 use crate::tools::ToolRouter;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::parallel::ToolCallRuntime;
@@ -1342,24 +1343,27 @@ impl PlanModeStreamState {
 #[derive(Debug, Default)]
 pub(super) struct AssistantMessageStreamParsers {
     plan_mode: bool,
+    hide_think_tags: bool,
     parsers_by_item: HashMap<String, AssistantTextStreamParser>,
 }
 
 type ParsedAssistantTextDelta = AssistantTextChunk;
 
 impl AssistantMessageStreamParsers {
-    pub(super) fn new(plan_mode: bool) -> Self {
+    pub(super) fn new(plan_mode: bool, hide_think_tags: bool) -> Self {
         Self {
             plan_mode,
+            hide_think_tags,
             parsers_by_item: HashMap::new(),
         }
     }
 
     fn parser_mut(&mut self, item_id: &str) -> &mut AssistantTextStreamParser {
         let plan_mode = self.plan_mode;
+        let hide_think_tags = self.hide_think_tags;
         self.parsers_by_item
             .entry(item_id.to_string())
-            .or_insert_with(|| AssistantTextStreamParser::new(plan_mode))
+            .or_insert_with(|| AssistantTextStreamParser::new(plan_mode, hide_think_tags))
     }
 
     pub(super) fn seed_item_text(&mut self, item_id: &str, text: &str) -> ParsedAssistantTextDelta {
@@ -1491,6 +1495,10 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::RealtimeConversationClosed(_)
         | EventMsg::ModelReroute(_)
         | EventMsg::ContextCompacted(_)
+        | EventMsg::LoopLifecycleStarted(_)
+        | EventMsg::LoopLifecycleProgress(_)
+        | EventMsg::LoopLifecycleCompleted(_)
+        | EventMsg::LoopLifecycleFailed(_)
         | EventMsg::ThreadRolledBack(_)
         | EventMsg::TurnStarted(_)
         | EventMsg::TurnComplete(_)
@@ -1537,6 +1545,7 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::GetHistoryEntryResponse(_)
         | EventMsg::McpListToolsResponse(_)
         | EventMsg::ListSkillsResponse(_)
+        | EventMsg::ListCommandsResponse(_)
         | EventMsg::RealtimeConversationListVoicesResponse(_)
         | EventMsg::SkillsUpdateAvailable
         | EventMsg::PlanUpdate(_)
@@ -1817,7 +1826,11 @@ async fn handle_assistant_item_done_in_plan_mode(
         }
 
         record_completed_response_item(sess, turn_context, item).await;
-        if let Some(agent_message) = last_assistant_message_from_item(item, /*plan_mode*/ true) {
+        if let Some(agent_message) = last_assistant_message_from_item(
+            item,
+            /*plan_mode*/ true,
+            should_hide_think_tags(&turn_context.config.model_provider_id),
+        ) {
             *last_agent_message = Some(agent_message);
         }
         return true;
@@ -1909,7 +1922,9 @@ async fn try_run_sampling_request(
     )> = None;
     let mut should_emit_turn_diff = false;
     let plan_mode = turn_context.collaboration_mode.mode == ModeKind::Plan;
-    let mut assistant_message_stream_parsers = AssistantMessageStreamParsers::new(plan_mode);
+    let hide_think_tags = should_hide_think_tags(&turn_context.config.model_provider_id);
+    let mut assistant_message_stream_parsers =
+        AssistantMessageStreamParsers::new(plan_mode, hide_think_tags);
     let mut plan_mode_state = plan_mode.then(|| PlanModeStreamState::new(&turn_context.sub_id));
     let receiving_span = trace_span!("receiving_stream");
     let outcome: CodexResult<SamplingRequestResult> = loop {
@@ -2267,7 +2282,9 @@ async fn try_run_sampling_request(
 
 pub(crate) fn get_last_assistant_message_from_turn(responses: &[ResponseItem]) -> Option<String> {
     for item in responses.iter().rev() {
-        if let Some(message) = last_assistant_message_from_item(item, /*plan_mode*/ false) {
+        if let Some(message) =
+            last_assistant_message_from_item(item, /*plan_mode*/ false, false)
+        {
             return Some(message);
         }
     }

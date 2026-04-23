@@ -119,6 +119,84 @@ impl ChatWidget {
         }
     }
 
+    fn execution_loop_status_text(&self) -> Option<String> {
+        let workflow_surface = self.workflow_surface_status_text();
+        let Some(runtime) = codex_ilhae::native_runtime_context() else {
+            return Some(workflow_surface);
+        };
+        let settings = runtime.settings_store.get();
+        let agent = &settings.agent;
+
+        let mut parts = Vec::new();
+        parts.push(format!(
+            "p:{}",
+            agent.active_profile.as_deref().unwrap_or("default")
+        ));
+        parts.push(workflow_surface);
+
+        if agent.advisor_mode {
+            parts.push(format!("adv:{}", agent.advisor_preset.trim()));
+        }
+        if agent.autonomous_mode {
+            parts.push(format!(
+                "auto:{}t/{}m",
+                agent.auto_max_turns.max(1),
+                agent.auto_timebox_minutes.max(1)
+            ));
+        }
+        if agent.team_mode {
+            parts.push(format!(
+                "team:{}/{}",
+                agent.team_merge_policy.trim(),
+                agent.team_max_retries.max(1)
+            ));
+        }
+        if agent.dream_mode {
+            parts.push("dream".to_string());
+        }
+        if agent.embed_mode {
+            parts.push("embed".to_string());
+        }
+        if agent.kairos_enabled {
+            parts.push("kairos".to_string());
+        }
+        if agent.self_improvement_enabled {
+            parts.push("improve".to_string());
+        }
+        if agent.knowledge_mode != "off" {
+            parts.push(format!("kb:{}", agent.knowledge_mode.trim()));
+        }
+        if parts.len() == 2 {
+            parts.push("idle".to_string());
+        }
+
+        Some(parts.join(" "))
+    }
+
+    pub(super) fn workflow_surface_status_text(&self) -> String {
+        let tmux = if std::env::var_os("TMUX").is_some() {
+            "on"
+        } else {
+            "off"
+        };
+        let worktree = Self::workflow_surface_worktree_status(self.status_line_cwd());
+        let remote = if codex_ilhae::native_runtime_context().is_some() {
+            "native"
+        } else {
+            "remote"
+        };
+
+        format!("wf:tmux:{tmux} worktree:{worktree} remote:{remote}")
+    }
+
+    pub(super) fn workflow_surface_worktree_status(cwd: &Path) -> &'static str {
+        if get_git_repo_root(cwd).is_some() {
+            "repo"
+        } else {
+            "none"
+        }
+    }
+
     fn sync_status_surface_shared_state(&mut self, selections: &StatusSurfaceSelections) {
         if !selections.uses_git_branch() {
             self.status_line_branch = None;
@@ -305,7 +383,7 @@ impl ChatWidget {
         })
     }
 
-    fn status_line_cwd(&self) -> &Path {
+    pub(super) fn status_line_cwd(&self) -> &Path {
         self.current_cwd
             .as_deref()
             .unwrap_or(self.config.cwd.as_path())
@@ -492,6 +570,7 @@ impl ChatWidget {
                 let trimmed = name.trim();
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             }),
+            StatusLineItem::ExecutionLoop => self.execution_loop_status_text(),
             StatusLineItem::TaskProgress => self.terminal_title_task_progress(),
         }
     }
@@ -520,6 +599,7 @@ impl ChatWidget {
             StatusSurfacePreviewItem::TotalOutputTokens => StatusLineItem::TotalOutputTokens,
             StatusSurfacePreviewItem::SessionId => StatusLineItem::SessionId,
             StatusSurfacePreviewItem::FastMode => StatusLineItem::FastMode,
+            StatusSurfacePreviewItem::ExecutionLoop => StatusLineItem::ExecutionLoop,
             StatusSurfacePreviewItem::Model => StatusLineItem::ModelName,
             StatusSurfacePreviewItem::ModelWithReasoning => StatusLineItem::ModelWithReasoning,
         };

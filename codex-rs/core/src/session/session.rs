@@ -744,6 +744,7 @@ impl Session {
             model_client: ModelClient::new(
                 Some(Arc::clone(&auth_manager)),
                 conversation_id,
+                config.model_provider_id.clone(),
                 installation_id,
                 session_configuration.provider.clone(),
                 session_configuration.session_source.clone(),

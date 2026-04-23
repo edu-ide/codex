@@ -87,6 +87,29 @@ pub fn build_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<Turn> {
     builder.finish()
 }
 
+pub fn strip_agent_context(text: &str) -> String {
+    let mut processed = text.to_string();
+    let tags_to_remove = [
+        ("<mcp_app_widget_state", "</mcp_app_widget_state>"),
+        ("<system_directive", "</system_directive>"),
+        ("<available_resources", "</available_resources>"),
+        ("<dynamic_instructions", "</dynamic_instructions>"),
+        ("<agent_context", "</agent_context>"),
+    ];
+
+    for (start_tag, end_tag) in tags_to_remove {
+        while let Some(start_idx) = processed.find(start_tag) {
+            let Some(end_idx) = processed[start_idx..].find(end_tag) else {
+                break;
+            };
+            let full_end = start_idx + end_idx + end_tag.len();
+            processed.replace_range(start_idx..full_end, "");
+        }
+    }
+
+    processed.trim().to_string()
+}
+
 pub struct ThreadHistoryBuilder {
     turns: Vec<Turn>,
     current_turn: Option<PendingTurn>,
@@ -198,7 +221,9 @@ impl ThreadHistoryBuilder {
             EventMsg::ImageGenerationBegin(payload) => self.handle_image_generation_begin(payload),
             EventMsg::ImageGenerationEnd(payload) => self.handle_image_generation_end(payload),
             EventMsg::LoopLifecycleStarted(payload) => self.handle_loop_lifecycle_started(payload),
-            EventMsg::LoopLifecycleProgress(payload) => self.handle_loop_lifecycle_progress(payload),
+            EventMsg::LoopLifecycleProgress(payload) => {
+                self.handle_loop_lifecycle_progress(payload)
+            }
             EventMsg::LoopLifecycleCompleted(payload) => {
                 self.handle_loop_lifecycle_completed(payload)
             }
@@ -1106,15 +1131,21 @@ impl ThreadHistoryBuilder {
 
     fn build_user_inputs(&self, payload: &UserMessageEvent) -> Vec<UserInput> {
         let mut content = Vec::new();
-        if !payload.message.trim().is_empty() {
-            content.push(UserInput::Text {
-                text: payload.message.clone(),
-                text_elements: payload
+        let text = strip_agent_context(&payload.message);
+        if !text.is_empty() {
+            let text_elements = if text == payload.message {
+                payload
                     .text_elements
                     .iter()
                     .cloned()
                     .map(Into::into)
-                    .collect(),
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            content.push(UserInput::Text {
+                text,
+                text_elements,
             });
         }
         if let Some(images) = &payload.images {
@@ -1238,13 +1269,13 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
     use codex_protocol::items::HookPromptFragment as CoreHookPromptFragment;
+    use codex_protocol::items::LoopLifecycleItem as CoreLoopLifecycleItem;
     use codex_protocol::items::TurnItem as CoreTurnItem;
     use codex_protocol::items::UserMessageItem as CoreUserMessageItem;
     use codex_protocol::items::build_hook_prompt_message;
     use codex_protocol::mcp::CallToolResult;
     use codex_protocol::models::MessagePhase as CoreMessagePhase;
     use codex_protocol::models::WebSearchAction as CoreWebSearchAction;
-    use codex_protocol::items::LoopLifecycleItem as CoreLoopLifecycleItem;
     use codex_protocol::parse_command::ParsedCommand;
     use codex_protocol::protocol::AgentMessageEvent;
     use codex_protocol::protocol::AgentReasoningEvent;
@@ -1276,6 +1307,51 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
     use uuid::Uuid;
+
+    #[test]
+    fn strip_agent_context_removes_hidden_prompt_wrappers() {
+        let text = r#"
+<system_directive priority="critical">hidden</system_directive>
+<available_resources>hidden resources</available_resources>
+<dynamic_instructions>hidden dynamic</dynamic_instructions>
+<agent_context>hidden context</agent_context>
+visible user request
+"#;
+
+        assert_eq!(strip_agent_context(text), "visible user request");
+    }
+
+    #[test]
+    fn user_message_items_use_visible_prompt_without_agent_context() {
+        let items = vec![RolloutItem::EventMsg(EventMsg::UserMessage(
+            UserMessageEvent {
+                message: r#"
+<system_directive priority="critical">hidden</system_directive>
+<agent_context>hidden context</agent_context>
+actual question
+"#
+                .into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+            },
+        ))];
+
+        let turns = build_turns_from_rollout_items(&items);
+        assert_eq!(turns.len(), 1);
+        match &turns[0].items[0] {
+            ThreadItem::UserMessage { content, .. } => {
+                assert_eq!(
+                    content,
+                    &vec![UserInput::Text {
+                        text: "actual question".into(),
+                        text_elements: Vec::new(),
+                    }]
+                );
+            }
+            other => panic!("expected user message item, got {other:?}"),
+        }
+    }
 
     #[test]
     fn builds_multiple_turns_with_reasoning_items() {

@@ -35,15 +35,13 @@ async fn live_app_server_model_rerouted_updates_session_header_to_server_model()
     );
 
     chat.handle_server_notification(
-        ServerNotification::ModelRerouted(
-            codex_app_server_protocol::ModelReroutedNotification {
-                thread_id: conversation_id.to_string(),
-                turn_id: "turn-1".to_string(),
-                from_model: "ilhae".to_string(),
-                to_model: "/home/sk/models/Qwen3.6-35B-A3B".to_string(),
-                reason: codex_app_server_protocol::ModelRerouteReason::HighRiskCyberActivity,
-            },
-        ),
+        ServerNotification::ModelRerouted(codex_app_server_protocol::ModelReroutedNotification {
+            thread_id: conversation_id.to_string(),
+            turn_id: "turn-1".to_string(),
+            from_model: "ilhae".to_string(),
+            to_model: "/home/sk/models/Qwen3.6-35B-A3B".to_string(),
+            reason: codex_app_server_protocol::ModelRerouteReason::HighRiskCyberActivity,
+        }),
         /*replay_kind*/ None,
     );
 
@@ -53,10 +51,7 @@ async fn live_app_server_model_rerouted_updates_session_header_to_server_model()
         rerouted_header.contains("model:       /home/sk/models/Qwen3.6-35B-A3B"),
         "expected rerouted server model in header, got {rerouted_header:?}"
     );
-    assert_eq!(
-        chat.model_display_name(),
-        "/home/sk/models/Qwen3.6-35B-A3B"
-    );
+    assert_eq!(chat.model_display_name(), "/home/sk/models/Qwen3.6-35B-A3B");
 }
 
 #[tokio::test]

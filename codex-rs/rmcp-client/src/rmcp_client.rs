@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::future::Future;
@@ -11,7 +12,6 @@ use std::time::Instant;
 
 use anyhow::Result;
 use anyhow::anyhow;
-use codex_client::build_reqwest_client_with_custom_ca;
 use codex_config::types::McpServerEnvVar;
 use codex_exec_server::HttpClient;
 use futures::FutureExt;
@@ -31,6 +31,7 @@ use rmcp::model::ElicitationAction;
 use rmcp::model::Extensions;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::InitializeResult;
+use rmcp::model::ListPromptsResult;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
 use rmcp::model::ListToolsResult;
@@ -67,7 +68,6 @@ use crate::oauth::StoredOAuthTokens;
 use crate::stdio_server_launcher::StdioServerCommand;
 use crate::stdio_server_launcher::StdioServerLauncher;
 use crate::stdio_server_launcher::StdioServerTransport;
-use crate::utils::apply_default_headers;
 use crate::utils::build_default_headers;
 use codex_config::types::OAuthCredentialsStoreMode;
 
@@ -480,6 +480,22 @@ impl RmcpClient {
         Ok(result)
     }
 
+    pub async fn list_prompts(
+        &self,
+        params: Option<PaginatedRequestParams>,
+        timeout: Option<Duration>,
+    ) -> Result<ListPromptsResult> {
+        self.refresh_oauth_if_needed().await;
+        let result = self
+            .run_service_operation("prompts/list", timeout, move |service| {
+                let params = params.clone();
+                async move { service.list_prompts(params).await }.boxed()
+            })
+            .await?;
+        self.persist_oauth_tokens().await;
+        Ok(result)
+    }
+
     pub async fn read_resource(
         &self,
         params: ReadResourceRequestParams,
@@ -523,31 +539,20 @@ impl RmcpClient {
             None => None,
         };
         let rmcp_params = CallToolRequestParams {
-            meta: None,
-            name: name.into(),
+            meta,
+            name: Cow::Owned(name),
             arguments,
             task: None,
         };
         let result = self
             .run_service_operation("tools/call", timeout, move |service| {
                 let rmcp_params = rmcp_params.clone();
-                let meta = meta.clone();
                 async move {
                     let result = service
                         .peer()
-                        .send_request_with_option(
-                            ClientRequest::CallToolRequest(rmcp::model::CallToolRequest {
-                                method: Default::default(),
-                                params: rmcp_params,
-                                extensions: Default::default(),
-                            }),
-                            rmcp::service::PeerRequestOptions {
-                                timeout: None,
-                                meta,
-                            },
-                        )
-                        .await?
-                        .await_response()
+                        .send_request(ClientRequest::CallToolRequest(
+                            rmcp::model::CallToolRequest::new(rmcp_params),
+                        ))
                         .await?;
                     match result {
                         ServerResult::CallToolResult(result) => Ok(result),
@@ -934,13 +939,10 @@ async fn create_oauth_transport_and_runtime(
     StreamableHttpClientTransport<AuthClient<StreamableHttpClientAdapter>>,
     OAuthPersistor,
 )> {
-    let builder = apply_default_headers(reqwest::Client::builder(), &default_headers);
-    let oauth_metadata_client = build_reqwest_client_with_custom_ca(builder)?;
     // TODO(aibrahim): teach OAuth bootstrap and refresh to use the same
     // shared HTTP client abstraction instead of always creating the local
     // reqwest metadata client here.
-    let mut oauth_state =
-        OAuthState::new(url.to_string(), Some(oauth_metadata_client.clone())).await?;
+    let mut oauth_state = OAuthState::new(url.to_string(), None).await?;
 
     oauth_state
         .set_credentials(
@@ -955,6 +957,7 @@ async fn create_oauth_transport_and_runtime(
         OAuthState::Session(_) | OAuthState::AuthorizedHttpClient(_) => {
             return Err(anyhow!("unexpected OAuth state during client setup"));
         }
+        _ => return Err(anyhow!("unsupported OAuth state during client setup")),
     };
 
     let auth_client = AuthClient::new(

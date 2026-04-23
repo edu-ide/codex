@@ -704,6 +704,7 @@ mod tests {
                 )]),
                 resources: Vec::new(),
                 resource_templates: Vec::new(),
+                prompts: Vec::new(),
                 auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
             },
             McpServerStatus {
@@ -711,6 +712,7 @@ mod tests {
                 tools: HashMap::new(),
                 resources: Vec::new(),
                 resource_templates: Vec::new(),
+                prompts: Vec::new(),
                 auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
             },
         ];

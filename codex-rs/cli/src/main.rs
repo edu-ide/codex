@@ -125,6 +125,15 @@ enum Subcommand {
     /// [experimental] Run the app server or related tooling.
     AppServer(AppServerCommand),
 
+    /// Launch the Ilhae proxy server (Telegram, Discord, UI daemon) natively.
+    #[cfg(feature = "ilhae")]
+    #[clap(name = "proxy", visible_aliases = ["desktop", "ilhae-proxy"])]
+    Proxy,
+
+    /// Stop the native Ilhae model server (e.g. llama-server).
+    #[cfg(feature = "ilhae")]
+    Stop,
+
     /// Launch the Codex desktop app (opens the app installer if missing).
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     App(app_cmd::AppCommand),
@@ -167,6 +176,10 @@ enum Subcommand {
     /// Internal: relay stdio to a Unix domain socket.
     #[clap(hide = true, name = "stdio-to-uds")]
     StdioToUds(StdioToUdsCommand),
+
+    /// Internal tooling.
+    #[clap(hide = true)]
+    Internal(InternalArgs),
 
     /// [EXPERIMENTAL] Run the standalone exec-server service.
     ExecServer(ExecServerCommand),
@@ -327,6 +340,19 @@ enum SandboxCommand {
 struct ExecpolicyCommand {
     #[command(subcommand)]
     sub: ExecpolicySubcommand,
+}
+
+#[derive(Debug, Parser)]
+struct InternalArgs {
+    #[command(subcommand)]
+    cmd: InternalCommand,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum InternalCommand {
+    /// Extract session context dynamically for SessionStart hook.
+    #[clap(name = "get-session-context")]
+    GetSessionContext,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -681,6 +707,25 @@ fn main() -> anyhow::Result<()> {
     })
 }
 
+#[cfg(feature = "ilhae")]
+fn is_invoked_as_ilhae_cli() -> bool {
+    if std::env::var("ILHAE_APP_SERVER").ok().as_deref() == Some("1")
+        || std::env::var("ILHAE_RUNTIME").ok().as_deref() == Some("1")
+    {
+        return true;
+    }
+
+    std::env::args_os()
+        .next()
+        .and_then(|arg0| {
+            std::path::Path::new(&arg0)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .is_some_and(|name| matches!(name.as_str(), "ilhae" | "codex-ilhae" | "codex-ilhae-cli"))
+}
+
 async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
@@ -698,6 +743,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
 
     match subcommand {
         None => {
+            #[cfg(feature = "ilhae")]
+            if root_remote.is_none() {
+                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
+                    .await?;
+            }
             prepend_config_flags(
                 &mut interactive.config_overrides,
                 root_config_overrides.clone(),
@@ -711,6 +761,14 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             .await?;
             handle_app_exit(exit_info)?;
         }
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Proxy) => {
+            codex_ilhae::run_ilhae_proxy().await?;
+        }
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Stop) => {
+            codex_ilhae::stop_native_runtime_for_cli(interactive.config_profile.as_deref()).await?;
+        }
         Some(Subcommand::Exec(mut exec_cli)) => {
             reject_remote_mode_for_subcommand(
                 root_remote.as_deref(),
@@ -720,6 +778,21 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             exec_cli
                 .shared
                 .inherit_exec_root_options(&interactive.shared);
+            #[cfg(feature = "ilhae")]
+            {
+                codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile.as_deref())
+                    .await?;
+                if codex_ilhae::config::get_native_runtime_config(
+                    exec_cli.config_profile.as_deref(),
+                )
+                .is_some()
+                {
+                    exec_cli.oss = true;
+                    if exec_cli.oss_provider.is_none() {
+                        exec_cli.oss_provider = Some("llama-server".to_string());
+                    }
+                }
+            }
             prepend_config_flags(
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
@@ -733,6 +806,22 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 "review",
             )?;
             let mut exec_cli = ExecCli::try_parse_from(["codex", "exec"])?;
+            exec_cli
+                .shared
+                .inherit_exec_root_options(&interactive.shared);
+            #[cfg(feature = "ilhae")]
+            {
+                codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile.as_deref())
+                    .await?;
+                if codex_ilhae::config::get_native_runtime_config(
+                    exec_cli.config_profile.as_deref(),
+                )
+                .is_some()
+                {
+                    exec_cli.oss = true;
+                    exec_cli.oss_provider = Some("llama-server".to_string());
+                }
+            }
             exec_cli.command = Some(ExecCommand::Review(review_args));
             prepend_config_flags(
                 &mut exec_cli.config_overrides,
@@ -792,10 +881,23 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 None => {
                     let transport = listen;
                     let auth = auth.try_into_settings()?;
+                    let mut loader_overrides =
+                        codex_core::config_loader::LoaderOverrides::default();
+                    #[cfg(feature = "ilhae")]
+                    if is_invoked_as_ilhae_cli() {
+                        let codex_home = codex_ilhae::config::prepare_ilhae_codex_home()
+                            .map_err(anyhow::Error::msg)?;
+                        loader_overrides.managed_config_path =
+                            Some(codex_home.join("managed_config.toml"));
+                        codex_ilhae::ensure_native_runtime_for_cli(
+                            interactive.config_profile.as_deref(),
+                        )
+                        .await?;
+                    }
                     codex_app_server::run_main_with_transport(
                         arg0_paths.clone(),
                         root_config_overrides,
-                        codex_core::config_loader::LoaderOverrides::default(),
+                        loader_overrides,
                         analytics_default_enabled,
                         transport,
                         codex_protocol::protocol::SessionSource::VSCode,
@@ -1055,6 +1157,17 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     "execpolicy check",
                 )?;
                 run_execpolicycheck(cmd)?
+            }
+        },
+        Some(Subcommand::Internal(InternalArgs { cmd })) => match cmd {
+            InternalCommand::GetSessionContext => {
+                #[cfg(feature = "ilhae")]
+                {
+                    tokio::task::spawn_blocking(move || {
+                        codex_ilhae::context_proxy::run_get_session_context()
+                    })
+                    .await??;
+                }
             }
         },
         Some(Subcommand::Apply(mut apply_cli)) => {

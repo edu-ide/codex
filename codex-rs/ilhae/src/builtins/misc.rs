@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! register_misc_tools {
     ($builder:expr, $brain_service:expr, $bt_settings:expr, $notify_relay_tx:expr, $notif_store:expr, $state:expr) => {{
-        use $crate::{EmptyInput, SkillViewInput, UiNotifyInput};
+        use $crate::{EmptyInput, SkillUpsertInput, SkillViewInput, UiNotifyInput};
         use crate::relay_server::{RelayEvent, broadcast_event};
 
         $builder
@@ -48,6 +48,18 @@ macro_rules! register_misc_tools {
                     async move |input: SkillViewInput, _cx| {
                         $crate::check_tool_enabled!(bts, "skill_view");
                         $crate::builtins::misc::skill_view_json(&input.name, input.file_path.as_deref())
+                    }
+                },
+                sacp::tool_fn!(),
+            )
+            .tool_fn(
+                "skill_upsert",
+                "Create or intentionally update an agentskills/Codex compatible SKILL.md under brain/skills/custom. Use after skills_list/skill_view to avoid duplicates.",
+                {
+                    let bts = $bt_settings.clone();
+                    async move |input: SkillUpsertInput, _cx| {
+                        $crate::check_tool_enabled!(bts, "skill_upsert");
+                        $crate::builtins::misc::skill_upsert_json(&input)
                     }
                 },
                 sacp::tool_fn!(),
@@ -362,6 +374,92 @@ fn parse_skill_frontmatter(content: &str) -> (Option<String>, Option<String>) {
     (name, description)
 }
 
+fn normalize_skill_component(raw: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut last_was_dash = false;
+
+    for ch in raw.chars() {
+        let next = if ch.is_ascii_alphanumeric() {
+            Some(ch.to_ascii_lowercase())
+        } else if ch == '-' || ch == '_' || ch.is_whitespace() {
+            Some('-')
+        } else {
+            None
+        };
+
+        let Some(ch) = next else {
+            continue;
+        };
+        if ch == '-' {
+            if out.is_empty() || last_was_dash {
+                continue;
+            }
+            last_was_dash = true;
+        } else {
+            last_was_dash = false;
+        }
+        out.push(ch);
+        if out.len() >= 64 {
+            break;
+        }
+    }
+
+    let normalized = out.trim_matches('-').to_string();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn normalize_custom_skill_path(name: &str) -> Result<std::path::PathBuf, sacp::Error> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(sacp::Error::invalid_request().data("skill name is empty"));
+    }
+    let rel = std::path::Path::new(trimmed);
+    if rel.is_absolute() {
+        return Err(sacp::Error::invalid_request().data("skill path must be relative"));
+    }
+
+    let mut parts = Vec::new();
+    for component in rel.components() {
+        match component {
+            std::path::Component::Normal(value) => {
+                let raw = value.to_string_lossy();
+                let Some(part) = normalize_skill_component(&raw) else {
+                    return Err(
+                        sacp::Error::invalid_request().data("skill path contains no valid slug")
+                    );
+                };
+                parts.push(part);
+            }
+            std::path::Component::CurDir => {}
+            _ => {
+                return Err(sacp::Error::invalid_request().data("invalid skill path"));
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        return Err(sacp::Error::invalid_request().data("skill name is empty"));
+    }
+    if parts.first().is_none_or(|part| part != "custom") {
+        parts.insert(0, "custom".to_string());
+    }
+    if parts.len() == 1 {
+        return Err(
+            sacp::Error::invalid_request().data("skill name must include a slug under custom/")
+        );
+    }
+    if parts.len() > 4 {
+        return Err(sacp::Error::invalid_request()
+            .data("skill path is too deep; use custom/<category>/<name> at most"));
+    }
+
+    Ok(parts.into_iter().collect())
+}
+
 fn resolve_skill_dir(name: &str) -> Result<std::path::PathBuf, sacp::Error> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -380,6 +478,60 @@ fn resolve_skill_dir(name: &str) -> Result<std::path::PathBuf, sacp::Error> {
         return Err(sacp::Error::invalid_request().data(format!("skill '{}' not found", trimmed)));
     }
     Ok(dir)
+}
+
+pub fn skill_upsert_json(input: &crate::SkillUpsertInput) -> Result<String, sacp::Error> {
+    let rel = normalize_custom_skill_path(&input.name)?;
+    let content = input.content.trim();
+    let (frontmatter_name, description) = parse_skill_frontmatter(content);
+    if frontmatter_name.is_none() || description.is_none() {
+        return Err(sacp::Error::invalid_request()
+            .data("SKILL.md must include YAML frontmatter with name and description"));
+    }
+    if content.contains('\0') {
+        return Err(sacp::Error::invalid_request().data("SKILL.md contains invalid NUL byte"));
+    }
+
+    let root = skills_root();
+    let skill_dir = root.join(&rel);
+    let skill_file = skill_dir.join("SKILL.md");
+
+    if let Ok(metadata) = std::fs::symlink_metadata(&skill_dir)
+        && metadata.file_type().is_symlink()
+    {
+        return Err(
+            sacp::Error::invalid_request().data("refusing to write into symlinked skill directory")
+        );
+    }
+    if let Ok(metadata) = std::fs::symlink_metadata(&skill_file)
+        && metadata.file_type().is_symlink()
+    {
+        return Err(sacp::Error::invalid_request().data("refusing to overwrite symlinked SKILL.md"));
+    }
+    let existed = skill_file.exists();
+    if existed && !input.overwrite {
+        return Err(sacp::Error::invalid_request().data(format!(
+            "skill '{}' already exists; call skill_view first, then set overwrite=true if the update is intentional",
+            rel.display()
+        )));
+    }
+
+    std::fs::create_dir_all(&skill_dir)
+        .map_err(|error| sacp::Error::internal_error().data(error.to_string()))?;
+    let tmp_file = skill_dir.join(".SKILL.md.tmp");
+    std::fs::write(&tmp_file, format!("{content}\n"))
+        .map_err(|error| sacp::Error::internal_error().data(error.to_string()))?;
+    std::fs::rename(&tmp_file, &skill_file)
+        .map_err(|error| sacp::Error::internal_error().data(error.to_string()))?;
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "ok": true,
+        "name": rel.to_string_lossy(),
+        "path": skill_file.to_string_lossy(),
+        "overwritten": existed,
+        "hint": "Run skills_list to confirm the skill is visible, then reference it with skill_view when needed."
+    }))
+    .unwrap_or_else(|_| "{\"ok\":true}".to_string()))
 }
 
 pub fn skills_list_json() -> Result<String, sacp::Error> {
@@ -507,5 +659,26 @@ mod tests {
         assert!(summary.contains("user: second user ask"));
         assert!(!summary.contains("system prompt"));
         assert!(!summary.contains("assistant: second reply"));
+    }
+
+    #[test]
+    fn normalize_custom_skill_path_places_generated_skills_under_custom() {
+        let path = super::normalize_custom_skill_path("React Effects Review").unwrap();
+
+        assert_eq!(path.to_string_lossy(), "custom/react-effects-review");
+    }
+
+    #[test]
+    fn normalize_custom_skill_path_rejects_parent_segments() {
+        let err = super::normalize_custom_skill_path("../secret").unwrap_err();
+
+        assert!(err.to_string().contains("invalid skill path"));
+    }
+
+    #[test]
+    fn normalize_custom_skill_path_rejects_bare_custom_root() {
+        let err = super::normalize_custom_skill_path("custom").unwrap_err();
+
+        assert!(err.to_string().contains("under custom"));
     }
 }

@@ -20,6 +20,7 @@ const PROXY_BINARY_NAME: &str = "codex-responses-api-proxy";
 const PROXY_START_TIMEOUT: Duration = Duration::from_secs(30);
 const PROXY_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const SGLANG_PROVIDER_ID: &str = "sglang";
+const LLAMA_SERVER_PROVIDER_ID: &str = "llama-server";
 const SGLANG_URL_ENV_VAR: &str = "CODEX_SGLANG_URL";
 
 pub struct SglangQwenProxy {
@@ -48,7 +49,8 @@ pub fn maybe_start_sglang_qwen_proxy(
 ) -> Result<Option<SglangQwenProxy>> {
     let debug_dir = prepare_debug_dir()?;
     let env_override_present = std::env::var_os(SGLANG_URL_ENV_VAR).is_some();
-    if provider_id != SGLANG_PROVIDER_ID || env_override_present {
+    if !matches!(provider_id, SGLANG_PROVIDER_ID | LLAMA_SERVER_PROVIDER_ID) || env_override_present
+    {
         write_decision(
             &debug_dir,
             "skipped",

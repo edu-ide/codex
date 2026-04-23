@@ -403,7 +403,7 @@ fn load_oauth_tokens_from_file(server_name: &str, url: &str) -> Result<Option<St
         let mut token_response = OAuthTokenResponse::new(
             AccessToken::new(entry.access_token.clone()),
             BasicTokenType::Bearer,
-            Default::default(),
+            EmptyExtraTokenFields {},
         );
 
         if let Some(refresh) = entry.refresh_token.clone() {

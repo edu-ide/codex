@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use crate::notification_store;
 use brain_knowledge_rs::memory_store;
 use codex_protocol::items::LoopLifecycleItem;
-use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_protocol::protocol::LoopLifecycleKind;
+use codex_protocol::request_permissions::RequestPermissionProfile;
 
 // ─── Method Name Constants ───────────────────────────────────────────────
 pub const NOTIF_ASSISTANT_TURN_PATCH: &str = "ilhae/assistant_turn_patch";
@@ -2004,6 +2004,17 @@ pub struct SkillViewInput {
     /// Optional supporting file path relative to the skill directory.
     #[serde(default)]
     pub file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SkillUpsertInput {
+    /// Skill folder name or relative path. Generated skills are always stored under brain/skills/custom/.
+    pub name: String,
+    /// Full SKILL.md content with YAML frontmatter containing name and description.
+    pub content: String,
+    /// Set true only after reading the existing skill and intentionally updating it.
+    #[serde(default)]
+    pub overwrite: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -363,7 +363,12 @@ mod job {
         // Unwrap the stream.
         let mut result = String::new();
         let mut token_usage = None;
-        while let Some(message) = stream.next().await.transpose().map_err(|e| codex_protocol::error::CodexErr::Fatal(e.to_string()))? {
+        while let Some(message) = stream
+            .next()
+            .await
+            .transpose()
+            .map_err(|e| codex_protocol::error::CodexErr::Fatal(e.to_string()))?
+        {
             match message {
                 ResponseEvent::OutputTextDelta(delta) => result.push_str(&delta),
                 ResponseEvent::OutputItemDone(item) => {

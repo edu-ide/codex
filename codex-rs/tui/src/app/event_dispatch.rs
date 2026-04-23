@@ -202,6 +202,41 @@ impl App {
                     }
                 }
             }
+            AppEvent::ReplaceSessionInfoCell(cell) => {
+                let cell: Arc<dyn HistoryCell> = cell.into();
+                if let Some(index) = self
+                    .transcript_cells
+                    .iter()
+                    .position(|existing| existing.as_any().is::<history_cell::SessionInfoCell>())
+                {
+                    self.transcript_cells[index] = cell;
+                    if let Some(Overlay::Transcript(overlay)) = &mut self.overlay {
+                        overlay.replace_cells(self.transcript_cells.clone());
+                    }
+                    tui.frame_requester().schedule_frame();
+                } else {
+                    if let Some(Overlay::Transcript(t)) = &mut self.overlay {
+                        t.insert_cell(cell.clone());
+                        tui.frame_requester().schedule_frame();
+                    }
+                    self.transcript_cells.push(cell.clone());
+                    let mut display = cell.display_lines(tui.terminal.last_known_screen_size.width);
+                    if !display.is_empty() {
+                        if !cell.is_stream_continuation() {
+                            if self.has_emitted_history_lines {
+                                display.insert(0, Line::from(""));
+                            } else {
+                                self.has_emitted_history_lines = true;
+                            }
+                        }
+                        if self.overlay.is_some() {
+                            self.deferred_history_lines.extend(display);
+                        } else {
+                            tui.insert_history_lines(display);
+                        }
+                    }
+                }
+            }
             AppEvent::ApplyThreadRollback { num_turns } => {
                 if self.apply_non_pending_thread_rollback(num_turns) {
                     tui.frame_requester().schedule_frame();
@@ -253,6 +288,37 @@ impl App {
             AppEvent::SubmitThreadOp { thread_id, op } => {
                 self.submit_thread_op(app_server, thread_id, op.into())
                     .await?;
+            }
+            AppEvent::ResolveAcpPermission {
+                thread_id,
+                id,
+                option_id,
+            } => {
+                let replay_decision = if option_id.is_some() {
+                    codex_protocol::protocol::ReviewDecision::Approved
+                } else {
+                    codex_protocol::protocol::ReviewDecision::Abort
+                };
+                match app_server
+                    .resolve_acp_permission_request(&id, option_id)
+                    .await
+                {
+                    Ok(()) => {
+                        self.note_thread_outbound_op(
+                            thread_id,
+                            &AppCommand::exec_approval(id.clone(), None, replay_decision),
+                        )
+                        .await;
+                        self.pending_app_server_requests
+                            .resolve_notification(&RequestId::String(id));
+                        self.refresh_pending_thread_approvals().await;
+                    }
+                    Err(err) => {
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to resolve ACP permission request for thread {thread_id}: {err}"
+                        ));
+                    }
+                }
             }
             AppEvent::ThreadHistoryEntryResponse { thread_id, event } => {
                 self.enqueue_thread_history_entry_response(thread_id, event)
@@ -460,6 +526,7 @@ impl App {
                     "failed to load skills on startup",
                 );
             }
+            AppEvent::ListCommandsLoaded(_commands) => {}
             AppEvent::StartFileSearch(query) => {
                 self.file_search.on_user_query(query);
             }
@@ -512,6 +579,34 @@ impl App {
             }
             AppEvent::UpdateModel(model) => {
                 self.chat_widget.set_model(&model);
+            }
+            AppEvent::RefreshBackendCapabilities => {
+                self.sync_backend_capabilities();
+                self.refresh_status_line();
+            }
+            AppEvent::SetIlhaeRuntimeProfile { profile_id } => {
+                self.set_ilhae_runtime_profile(profile_id).await;
+            }
+            AppEvent::SetIlhaeAdvisorMode { enabled, preset } => {
+                self.set_ilhae_advisor_mode(enabled, preset).await;
+            }
+            AppEvent::SetIlhaeAutoMode { enabled } => {
+                self.set_ilhae_auto_mode(enabled).await;
+            }
+            AppEvent::SetIlhaeTeamMode { enabled } => {
+                self.set_ilhae_team_mode(enabled).await;
+            }
+            AppEvent::SetIlhaeDreamMode { enabled } => {
+                self.set_ilhae_dream_mode(enabled).await;
+            }
+            AppEvent::SetIlhaeEmbedMode { enabled } => {
+                self.set_ilhae_embed_mode(enabled).await;
+            }
+            AppEvent::SetIlhaeKairosMode { enabled } => {
+                self.set_ilhae_kairos_mode(enabled).await;
+            }
+            AppEvent::SetIlhaeImproveMode { enabled } => {
+                self.set_ilhae_improve_mode(enabled).await;
             }
             AppEvent::UpdateCollaborationMode(mask) => {
                 self.chat_widget.set_collaboration_mask(mask);

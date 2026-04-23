@@ -27,7 +27,6 @@ use reqwest::header::HeaderMap;
 use reqwest::header::HeaderName;
 use rmcp::model::ClientJsonRpcMessage;
 use rmcp::model::ServerJsonRpcMessage;
-use rmcp::transport::streamable_http_client::AuthRequiredError;
 use rmcp::transport::streamable_http_client::StreamableHttpClient;
 use rmcp::transport::streamable_http_client::StreamableHttpError;
 use rmcp::transport::streamable_http_client::StreamableHttpPostResponse;
@@ -129,9 +128,9 @@ impl StreamableHttpClient for StreamableHttpClientAdapter {
             && let Some(header) =
                 response_header(&response.headers, reqwest::header::WWW_AUTHENTICATE)
         {
-            return Err(StreamableHttpError::AuthRequired(AuthRequiredError {
-                www_authenticate_header: header,
-            }));
+            return Err(StreamableHttpError::UnexpectedServerResponse(
+                format!("HTTP 401 Unauthorized; WWW-Authenticate: {header}").into(),
+            ));
         }
         if matches!(
             StatusCode::from_u16(response.status).ok(),

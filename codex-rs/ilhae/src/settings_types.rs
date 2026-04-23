@@ -687,7 +687,8 @@ impl Default for McpSettings {
                     "id": "fortune-v3",
                     "name": "fortune",
                     "transport_type": "streamable-http",
-                    "sse_url": "https://fortune.ugot.uk/mcp/sse",
+                    "sse_url": "https://fortune.ugot.uk/mcp",
+                    "connection_type": "direct",
                 }),
             ],
         }

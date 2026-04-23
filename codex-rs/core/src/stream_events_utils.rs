@@ -63,7 +63,7 @@ pub(crate) fn image_generation_artifact_path(
         .join(format!("{}.png", sanitize(call_id)))
 }
 
-fn should_hide_think_tags(provider_id: &str) -> bool {
+pub(crate) fn should_hide_think_tags(provider_id: &str) -> bool {
     provider_id == crate::LLAMA_SERVER_OSS_PROVIDER_ID
 }
 

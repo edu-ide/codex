@@ -26,6 +26,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+mod helper_builders;
+pub use helper_builders::create_tools_json_for_responses_api_with_provider;
+
 pub(crate) fn tool_user_shell_type(user_shell: &Shell) -> ToolUserShellType {
     match user_shell.shell_type {
         ShellType::Zsh => ToolUserShellType::Zsh,
@@ -96,6 +99,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::UnavailableToolHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    use crate::tools::handlers::WebSearchHandler;
     use crate::tools::handlers::multi_agents::CloseAgentHandler;
     use crate::tools::handlers::multi_agents::ResumeAgentHandler;
     use crate::tools::handlers::multi_agents::SendInputHandler;
@@ -174,6 +178,21 @@ pub(crate) fn build_specs_with_discoverable_tools(
         .specs
         .iter()
         .map(|configured_tool| configured_tool.name().to_string())
+        .collect::<HashSet<_>>();
+    let direct_mcp_tool_names = mcp_tools
+        .as_ref()
+        .map(|tools| {
+            tools
+                .values()
+                .map(ToolInfo::canonical_tool_name)
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    let planned_mcp_handler_names = plan
+        .handlers
+        .iter()
+        .filter(|handler| handler.kind == ToolHandlerKind::Mcp)
+        .map(|handler| handler.name.clone())
         .collect::<HashSet<_>>();
 
     for spec in plan.specs {
@@ -284,6 +303,12 @@ pub(crate) fn build_specs_with_discoverable_tools(
             ToolHandlerKind::ViewImage => {
                 builder.register_handler(handler.name, view_image_handler.clone());
             }
+            ToolHandlerKind::WebSearch => {
+                builder.register_handler(
+                    handler.name,
+                    Arc::new(WebSearchHandler::new(config.web_search_config.clone())),
+                );
+            }
             ToolHandlerKind::WaitAgentV1 => {
                 builder.register_handler(handler.name, Arc::new(WaitAgentHandler));
             }
@@ -293,12 +318,14 @@ pub(crate) fn build_specs_with_discoverable_tools(
         }
     }
     if let Some(deferred_mcp_tools) = deferred_mcp_tools.as_ref() {
-        for (name, _) in deferred_mcp_tools.iter().filter(|(name, _)| {
-            !mcp_tools
-                .as_ref()
-                .is_some_and(|tools| tools.contains_key(*name))
-        }) {
-            builder.register_handler(name.clone(), mcp_handler.clone());
+        for tool in deferred_mcp_tools.values() {
+            let tool_name = tool.canonical_tool_name();
+            if direct_mcp_tool_names.contains(&tool_name)
+                || planned_mcp_handler_names.contains(&tool_name)
+            {
+                continue;
+            }
+            builder.register_handler(tool_name, mcp_handler.clone());
         }
     }
 

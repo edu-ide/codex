@@ -115,6 +115,7 @@ async fn handle_mcp_inventory_result_clears_committed_loading_cell() {
             tools: HashMap::new(),
             resources: Vec::new(),
             resource_templates: Vec::new(),
+            prompts: Vec::new(),
             auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
         }]),
         McpServerStatusDetail::ToolsAndAuthOnly,

@@ -90,6 +90,10 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDef] = &[
         tools: &[
             ("skills_list", "사용 가능한 스킬 목록 조회"),
             ("skill_view", "스킬 본문 또는 지원 파일 로드"),
+            (
+                "skill_upsert",
+                "반복 절차를 brain/skills/custom 아래 SKILL.md 스킬로 생성 또는 의도적 업데이트",
+            ),
         ],
     },
     BuiltinPluginDef {

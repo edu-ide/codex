@@ -1,7 +1,7 @@
 //! OSS provider utilities shared between TUI and exec.
 
-use codex_core::config::Config;
 use codex_core::LLAMA_SERVER_OSS_PROVIDER_ID;
+use codex_core::config::Config;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use serde::Deserialize;

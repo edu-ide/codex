@@ -134,6 +134,44 @@ pub struct ResourceTemplate {
     pub mime_type: Option<String>,
 }
 
+/// A prompt template exposed by an MCP server.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Prompt {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub arguments: Option<Vec<PromptArgument>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub icons: Option<Vec<serde_json::Value>>,
+    #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub meta: Option<serde_json::Value>,
+}
+
+/// A parameter accepted by an MCP prompt template.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptArgument {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub required: Option<bool>,
+}
+
 /// The server's response to a tool call.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
@@ -304,6 +342,72 @@ impl From<ResourceTemplateSerde> for ResourceTemplate {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptSerde {
+    name: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    arguments: Option<Vec<PromptArgumentSerde>>,
+    #[serde(default)]
+    icons: Option<Vec<serde_json::Value>>,
+    #[serde(rename = "_meta", default)]
+    meta: Option<serde_json::Value>,
+}
+
+impl From<PromptSerde> for Prompt {
+    fn from(value: PromptSerde) -> Self {
+        let PromptSerde {
+            name,
+            title,
+            description,
+            arguments,
+            icons,
+            meta,
+        } = value;
+        Self {
+            name,
+            title,
+            description,
+            arguments: arguments.map(|args| args.into_iter().map(Into::into).collect()),
+            icons,
+            meta,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptArgumentSerde {
+    name: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    required: Option<bool>,
+}
+
+impl From<PromptArgumentSerde> for PromptArgument {
+    fn from(value: PromptArgumentSerde) -> Self {
+        let PromptArgumentSerde {
+            name,
+            title,
+            description,
+            required,
+        } = value;
+        Self {
+            name,
+            title,
+            description,
+            required,
+        }
+    }
+}
+
 impl Tool {
     pub fn from_mcp_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         Ok(serde_json::from_value::<ToolSerde>(value)?.into())
@@ -319,6 +423,12 @@ impl Resource {
 impl ResourceTemplate {
     pub fn from_mcp_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         Ok(serde_json::from_value::<ResourceTemplateSerde>(value)?.into())
+    }
+}
+
+impl Prompt {
+    pub fn from_mcp_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
+        Ok(serde_json::from_value::<PromptSerde>(value)?.into())
     }
 }
 

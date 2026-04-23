@@ -1850,9 +1850,7 @@ fn loop_lifecycle_header(
         (LoopLifecycleKind::Advisor, LoopLifecycleStatus::Completed) => {
             "Advisor Returned".to_string()
         }
-        (LoopLifecycleKind::Advisor, LoopLifecycleStatus::Failed) => {
-            "Advisor Failed".to_string()
-        }
+        (LoopLifecycleKind::Advisor, LoopLifecycleStatus::Failed) => "Advisor Failed".to_string(),
         (LoopLifecycleKind::SuperLoop, LoopLifecycleStatus::InProgress) => {
             "Running Super Loop".to_string()
         }
@@ -1988,8 +1986,7 @@ impl HistoryCell for LoopLifecycleCell {
             LoopLifecycleStatus::Failed => "•".red().bold(),
         };
 
-        let header =
-            loop_lifecycle_header(self.kind.clone(), self.status.clone(), &self.title);
+        let header = loop_lifecycle_header(self.kind.clone(), self.status.clone(), &self.title);
         let mut first_line = Line::from(vec![header.bold()]);
         if !self.summary.trim().is_empty() {
             first_line.push_span(" ");
@@ -1998,7 +1995,10 @@ impl HistoryCell for LoopLifecycleCell {
 
         let mut text = Text::from(vec![line_to_static(&first_line)]);
         let mut meta_parts = Vec::new();
-        if let Some(target_profile) = self.target_profile.as_deref().filter(|value| !value.is_empty())
+        if let Some(target_profile) = self
+            .target_profile
+            .as_deref()
+            .filter(|value| !value.is_empty())
         {
             meta_parts.push(format!("target={target_profile}"));
         }
@@ -2012,14 +2012,22 @@ impl HistoryCell for LoopLifecycleCell {
             meta_parts.push(format!("{} ms", duration_ms));
         }
         if !meta_parts.is_empty() {
-            text.lines
-                .push(Line::from(meta_parts.join(" | ").dim()));
+            text.lines.push(Line::from(meta_parts.join(" | ").dim()));
         }
-        if let Some(detail) = self.detail.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(detail) = self
+            .detail
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             text.lines.push(Line::from(detail.trim().to_string().dim()));
         }
-        if let Some(error) = self.error.as_deref().filter(|value| !value.trim().is_empty()) {
-            text.lines.push(Line::from(format!("Error: {}", error.trim()).red()));
+        if let Some(error) = self
+            .error
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            text.lines
+                .push(Line::from(format!("Error: {}", error.trim()).red()));
         }
 
         PrefixedWrappedHistoryCell::new(text, vec![bullet, " ".into()], "  ").display_lines(width)
@@ -3829,6 +3837,7 @@ mod tests {
             )]),
             resources: Vec::new(),
             resource_templates: Vec::new(),
+            prompts: Vec::new(),
             auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
         }];
 
@@ -3887,6 +3896,7 @@ mod tests {
                 description: None,
                 mime_type: None,
             }],
+            prompts: Vec::new(),
             auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
         }];
 

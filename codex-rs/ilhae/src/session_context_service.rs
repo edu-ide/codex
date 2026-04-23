@@ -139,6 +139,16 @@ SELF-IMPROVEMENT MODE IS ENABLED.
 </system_directive>
 "#;
 
+const SELF_IMPROVEMENT_SKILL_CREATION_INSTRUCTION: &str = r#"
+<system_directive priority="medium">
+SELF-IMPROVEMENT SKILL LOOP.
+- If a complex task, repeated correction, or stable workflow would save future turns as a reusable procedure, consider creating or updating a skill.
+- First inspect existing skills with `skills_list` and `skill_view`; avoid duplicate skills.
+- Use `skill_upsert` only for agentskills/Codex-compatible `SKILL.md` content with YAML `name` and `description`, concise body instructions, and no auxiliary README/TODO files.
+- Generated or improved skills must live under `brain/skills/custom`; overwrite only after reading the existing skill and deciding the update is intentional.
+</system_directive>
+"#;
+
 pub struct PreparedSessionPromptContext {
     pub current_agent_id: String,
     pub session_info: Option<SessionInfo>,
@@ -247,6 +257,9 @@ pub async fn prepare_session_prompt_context(
                 &settings_snapshot.agent.self_improvement_preset,
             )
             .to_string(),
+        )));
+        prompt_blocks.push(ContentBlock::Text(TextContent::new(
+            SELF_IMPROVEMENT_SKILL_CREATION_INSTRUCTION.to_string(),
         )));
     }
     if should_inject_context {

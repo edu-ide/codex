@@ -14,6 +14,19 @@ pub enum SlashCommand {
     // more frequently used commands should be listed first.
     Model,
     Fast,
+    Profile,
+    Advisor,
+    Auto,
+    Team,
+    Kairos,
+    #[strum(serialize = "dream-bg")]
+    BgDream,
+    Dream,
+    Embed,
+    Improve,
+    Tmux,
+    Worktree,
+    Remote,
     Approvals,
     Permissions,
     #[strum(serialize = "setup-default-sandbox")]
@@ -38,6 +51,7 @@ pub enum SlashCommand {
     Copy,
     Diff,
     Mention,
+    Help,
     Status,
     DebugConfig,
     Title,
@@ -86,6 +100,7 @@ impl SlashCommand {
             SlashCommand::Copy => "copy last response as markdown",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
+            SlashCommand::Help => "show available slash commands",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::DebugConfig => "show config layers and requirement sources for debugging",
@@ -100,6 +115,18 @@ impl SlashCommand {
             SlashCommand::Fast => {
                 "toggle Fast mode to enable fastest inference with increased plan usage"
             }
+            SlashCommand::Profile => "choose the active profile",
+            SlashCommand::Advisor => "cycle the advisor preset",
+            SlashCommand::Auto => "toggle autonomous mode",
+            SlashCommand::Team => "toggle team mode",
+            SlashCommand::Kairos => "toggle kairos scheduling",
+            SlashCommand::Dream => "toggle background dream mode",
+            SlashCommand::Embed => "toggle semantic embedding indexing",
+            SlashCommand::Improve => "toggle self-improvement mode",
+            SlashCommand::Tmux => "show tmux workflow guidance",
+            SlashCommand::Worktree => "show git worktree workflow guidance",
+            SlashCommand::Remote => "show remote-control workflow guidance",
+            SlashCommand::BgDream => "",
             SlashCommand::Personality => "choose a communication style for Codex",
             SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
             SlashCommand::Settings => "configure realtime microphone/speaker",
@@ -138,6 +165,8 @@ impl SlashCommand {
                 | SlashCommand::Rename
                 | SlashCommand::Plan
                 | SlashCommand::Fast
+                | SlashCommand::Dream
+                | SlashCommand::Embed
                 | SlashCommand::Mcp
                 | SlashCommand::Side
                 | SlashCommand::Resume
@@ -164,6 +193,17 @@ impl SlashCommand {
             // | SlashCommand::Undo
             | SlashCommand::Model
             | SlashCommand::Fast
+            | SlashCommand::Profile
+            | SlashCommand::Advisor
+            | SlashCommand::Auto
+            | SlashCommand::Team
+            | SlashCommand::Kairos
+            | SlashCommand::Dream
+            | SlashCommand::Embed
+            | SlashCommand::Improve
+            | SlashCommand::Tmux
+            | SlashCommand::Worktree
+            | SlashCommand::Remote
             | SlashCommand::Personality
             | SlashCommand::Approvals
             | SlashCommand::Permissions
@@ -195,6 +235,8 @@ impl SlashCommand {
             | SlashCommand::Side => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
+            SlashCommand::Help => true,
+            SlashCommand::BgDream => true,
             SlashCommand::Realtime => true,
             SlashCommand::Settings => true,
             SlashCommand::Collab => true,
@@ -208,6 +250,7 @@ impl SlashCommand {
     fn is_visible(self) -> bool {
         match self {
             SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
+            SlashCommand::BgDream => false,
             SlashCommand::Copy => !cfg!(target_os = "android"),
             SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
             _ => true,

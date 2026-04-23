@@ -199,6 +199,22 @@ impl AppServerSession {
         self
     }
 
+    pub(crate) async fn next_ilhae_event(
+        &mut self,
+    ) -> Option<codex_ilhae::IlhaeAppSessionEventNotification> {
+        None
+    }
+
+    pub(crate) async fn resolve_acp_permission_request(
+        &self,
+        _synthetic_id: &str,
+        _option_id: Option<String>,
+    ) -> std::io::Result<()> {
+        Err(std::io::Error::other(
+            "ACP permission resolution is unavailable for app-server runtime",
+        ))
+    }
+
     pub(crate) fn remote_cwd_override(&self) -> Option<&std::path::Path> {
         self.remote_cwd_override.as_deref()
     }

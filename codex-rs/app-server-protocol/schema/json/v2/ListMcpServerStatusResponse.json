@@ -18,6 +18,12 @@
         "name": {
           "type": "string"
         },
+        "prompts": {
+          "items": {
+            "$ref": "#/definitions/Prompt"
+          },
+          "type": "array"
+        },
         "resourceTemplates": {
           "items": {
             "$ref": "#/definitions/ResourceTemplate"
@@ -40,9 +46,81 @@
       "required": [
         "authStatus",
         "name",
+        "prompts",
         "resourceTemplates",
         "resources",
         "tools"
+      ],
+      "type": "object"
+    },
+    "Prompt": {
+      "description": "A prompt template exposed by an MCP server.",
+      "properties": {
+        "_meta": true,
+        "arguments": {
+          "items": {
+            "$ref": "#/definitions/PromptArgument"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "icons": {
+          "items": true,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "PromptArgument": {
+      "description": "A parameter accepted by an MCP prompt template.",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
       ],
       "type": "object"
     },

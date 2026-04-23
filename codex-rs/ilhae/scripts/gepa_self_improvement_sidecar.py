@@ -91,6 +91,7 @@ def build_rule_candidate(request: SidecarRequest) -> tuple[str, str]:
         request.instructions.rstrip("."),
         "Classify each dream group into summarize, promote, extract, ignore, or defer before taking action.",
         "Only promote or extract when the output is stable, reusable across sessions, and clearly scoped.",
+        "If the reusable output is procedural rather than factual knowledge, inspect existing skills first and use skill_upsert only for a concise SKILL.md under brain/skills/custom.",
         "If a group is ambiguous, summarize it or leave a follow-up note instead of auto-applying a risky change.",
         "Record which evidence justified the decision so the next reviewer can audit the result quickly.",
     ]
@@ -150,6 +151,11 @@ def score_candidate(
         score += 0.1
     else:
         feedback.append("Keep instructions inside memory_dream tool scope.")
+
+    if "skill_upsert" in instructions_lower and "brain/skills/custom" in instructions_lower:
+        score += 0.05
+    else:
+        feedback.append("Preserve skill_upsert guidance for procedural learning.")
 
     if request.top_paths:
         score += 0.05

@@ -3,7 +3,7 @@ use crate::settings_store::SettingsStore;
 use brain_rs::BrainService;
 use codex_protocol::items::LoopLifecycleItem;
 use codex_protocol::protocol::{LoopLifecycleKind, LoopLifecycleStatus};
-use dsrs::{configure, ChatAdapter, Predict, LM};
+use dsrs::{ChatAdapter, LM, Predict, configure};
 use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -330,10 +330,10 @@ fn self_improvement_uses_dsrs_runtime(settings: &crate::settings_types::Settings
 pub(crate) fn default_self_improvement_followup_spec_for_runtime() -> SelfImprovementFollowupSpec {
     SelfImprovementFollowupSpec {
         prompt:
-            "Review pending dream groups, decide safe summarize/promote/extract actions, and record the decision."
+            "Review pending dream groups, decide safe summarize/promote/extract/skill-candidate actions, and record the decision."
                 .to_string(),
         instructions:
-            "Use memory_dream_preview, memory_dream_analyze, memory_dream_summarize, memory_dream_promote, memory_promote, and memory_extract as needed. Prefer memory_dream_promote to synthesize high-signal chunk groups into LLM Wiki artifacts."
+            "Use memory_dream_preview, memory_dream_analyze, memory_dream_summarize, memory_dream_promote, memory_promote, memory_extract, skills_list, skill_view, and skill_upsert as needed. Prefer memory_dream_promote for durable knowledge. When a repeated complex workflow or correction becomes a stable reusable procedure, first inspect existing skills, then create or intentionally update an agentskills/Codex-compatible SKILL.md under brain/skills/custom with YAML name/description and concise instructions. Do not duplicate skills or overwrite user-edited skills without explicit evidence."
                 .to_string(),
     }
 }
@@ -382,7 +382,7 @@ fn dsrs_self_improvement_temperature() -> f32 {
 }
 
 fn dsrs_self_improvement_instruction() -> &'static str {
-    "Generate a conservative self-improvement follow-up spec for ilhae's super-loop. Keep the tool scope aligned with the provided defaults, preserve review-first behavior, and prefer minimal edits over novelty. Return concise prompt and instructions only."
+    "Generate a conservative self-improvement follow-up spec for ilhae's super-loop. Keep the tool scope aligned with the provided defaults, preserve review-first behavior, preserve memory_dream and skill_upsert guidance, and prefer minimal edits over novelty. Return concise prompt and instructions only."
 }
 
 fn generate_dsrs_self_improvement_followup(
@@ -1724,10 +1724,7 @@ fn run_cycle_blocking(
                     Some(format!("driver={}", driver.as_str())),
                     LoopLifecycleStatus::Failed,
                     Some("cycle_failed".to_string()),
-                    Some(BTreeMap::from([(
-                        "findings".to_string(),
-                        findings_count,
-                    )])),
+                    Some(BTreeMap::from([("findings".to_string(), findings_count)])),
                     Some(err.clone()),
                     Some(elapsed_ms),
                 ),
