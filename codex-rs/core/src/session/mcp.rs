@@ -155,6 +155,40 @@ impl Session {
 
     #[expect(
         clippy::await_holding_invalid_type,
+        reason = "MCP prompt calls are serialized through the session-owned manager guard"
+    )]
+    pub async fn get_prompt(
+        &self,
+        server: &str,
+        params: rmcp::model::GetPromptRequestParams,
+    ) -> anyhow::Result<rmcp::model::GetPromptResult> {
+        self.services
+            .mcp_connection_manager
+            .read()
+            .await
+            .get_prompt(server, params)
+            .await
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "MCP completion calls are serialized through the session-owned manager guard"
+    )]
+    pub async fn complete(
+        &self,
+        server: &str,
+        params: rmcp::model::CompleteRequestParams,
+    ) -> anyhow::Result<rmcp::model::CompleteResult> {
+        self.services
+            .mcp_connection_manager
+            .read()
+            .await
+            .complete(server, params)
+            .await
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
         reason = "MCP resource calls are serialized through the session-owned manager guard"
     )]
     pub async fn read_resource(
@@ -288,6 +322,14 @@ impl Session {
 
         self.refresh_mcp_servers_inner(turn_context, mcp_servers, store_mode)
             .await;
+    }
+
+    pub(crate) async fn queue_mcp_server_refresh_for_out_of_band_call(
+        &self,
+        refresh_config: McpServerRefreshConfig,
+    ) {
+        let mut guard = self.pending_mcp_server_refresh_config.lock().await;
+        *guard = Some(refresh_config);
     }
 
     pub(crate) async fn refresh_mcp_servers_now(

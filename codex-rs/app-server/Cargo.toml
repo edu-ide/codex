@@ -70,6 +70,7 @@ gethostname = { workspace = true }
 hmac = { workspace = true }
 jsonwebtoken = { workspace = true }
 owo-colors = { workspace = true, features = ["supports-colors"] }
+rmcp = { workspace = true, default-features = true, features = ["base64", "macros", "schemars", "server"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

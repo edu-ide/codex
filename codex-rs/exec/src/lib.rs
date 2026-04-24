@@ -108,6 +108,7 @@ pub use exec_events::FileUpdateChange;
 pub use exec_events::ItemCompletedEvent;
 pub use exec_events::ItemStartedEvent;
 pub use exec_events::ItemUpdatedEvent;
+pub use exec_events::LoopLifecycleEvent;
 pub use exec_events::McpToolCallItem;
 pub use exec_events::McpToolCallItemError;
 pub use exec_events::McpToolCallItemResult;
@@ -129,10 +130,13 @@ pub use exec_events::Usage;
 pub use exec_events::WebSearchItem;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::io::IsTerminal;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use supports_color::Stream;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -149,6 +153,171 @@ use crate::cli::Command as ExecCommand;
 use crate::event_processor::EventProcessor;
 
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
+const EXEC_AUTONOMY_STALLED_TURN_LIMIT: u32 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecAutonomySettings {
+    pub max_turns: u32,
+    pub timebox: Duration,
+}
+
+impl ExecAutonomySettings {
+    pub fn new(max_turns: u32, timebox: Duration) -> Self {
+        Self {
+            max_turns: max_turns.max(1),
+            timebox,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExecAutonomyDecision {
+    Stop {
+        reason: &'static str,
+    },
+    Continue {
+        reason: &'static str,
+        progress_signature: u64,
+        stalled_turns: u32,
+        followup_prompt: String,
+    },
+}
+
+fn latest_agent_progress(items: &[AppServerThreadItem]) -> String {
+    items
+        .iter()
+        .rev()
+        .find_map(|item| match item {
+            AppServerThreadItem::AgentMessage { text, .. } if !text.trim().is_empty() => {
+                Some(text.trim().to_string())
+            }
+            AppServerThreadItem::CommandExecution {
+                aggregated_output: Some(output),
+                ..
+            } if !output.trim().is_empty() => Some(output.trim().to_string()),
+            AppServerThreadItem::McpToolCall {
+                result: Some(result),
+                ..
+            } => serde_json::to_string(result).ok(),
+            AppServerThreadItem::DynamicToolCall {
+                content_items: Some(items),
+                ..
+            } => serde_json::to_string(items).ok(),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+fn exec_autonomy_progress_signature(progress: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    progress.trim().hash(&mut hasher);
+    hasher.finish()
+}
+
+fn agent_reports_completion(progress: &str) -> bool {
+    let lower = progress.to_ascii_lowercase();
+    lower.contains("all tasks complete")
+        || lower.contains("task complete")
+        || lower.contains("completed")
+        || lower.contains("done")
+        || progress.contains("완료되었습니다")
+        || progress.contains("완료했습니다")
+        || progress.contains("작업이 완료")
+}
+
+fn extract_pseudo_exec_command(progress: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(progress.trim()).ok()?;
+    let tool = value
+        .get("tool")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !tool.contains("exec_command") {
+        return None;
+    }
+    value
+        .pointer("/arguments/cmd")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|cmd| !cmd.is_empty())
+        .map(str::to_string)
+}
+
+fn build_exec_autonomy_followup_prompt_with_root(progress: &str, root_prompt: &str) -> String {
+    let pseudo_exec = extract_pseudo_exec_command(progress)
+        .map(|command| {
+            format!(
+                "\n\n이전 응답은 실제 실행 대신 exec_command tool 호출 JSON만 출력했습니다. 지금 실제 tool을 호출해서 실행하세요.\n명령: `{command}`\n아직 실행하지 않은 다음 단계로 넘어가지 마세요."
+            )
+        })
+        .unwrap_or_else(|| "\n\n이제 다음 미완료 단계를 실제 tool을 호출해서 계속 진행하세요.".to_string());
+
+    format!(
+        "Autonomous follow-up turn.\n\n원래 작업 조건:\n{root_prompt}\n\n직전 진행 내용:\n{progress}{pseudo_exec}\n\n완료 조건을 만족하면 명확히 완료되었다고 말하고 멈추세요."
+    )
+}
+
+fn decide_exec_autonomy_followup(
+    settings: ExecAutonomySettings,
+    elapsed: Duration,
+    completed_turns: u32,
+    previous_progress_signature: Option<u64>,
+    previous_stalled_turns: u32,
+    root_prompt: &str,
+    completed_items: &[AppServerThreadItem],
+) -> ExecAutonomyDecision {
+    if completed_turns >= settings.max_turns {
+        return ExecAutonomyDecision::Stop {
+            reason: "max_turns",
+        };
+    }
+    if elapsed >= settings.timebox {
+        return ExecAutonomyDecision::Stop { reason: "timebox" };
+    }
+
+    let progress = latest_agent_progress(completed_items);
+    if agent_reports_completion(&progress) {
+        return ExecAutonomyDecision::Stop {
+            reason: "completed",
+        };
+    }
+
+    let progress_signature = exec_autonomy_progress_signature(&progress);
+    let stalled_turns = if previous_progress_signature == Some(progress_signature) {
+        previous_stalled_turns.saturating_add(1)
+    } else {
+        0
+    };
+    if stalled_turns >= EXEC_AUTONOMY_STALLED_TURN_LIMIT {
+        return ExecAutonomyDecision::Stop { reason: "stalled" };
+    }
+
+    ExecAutonomyDecision::Continue {
+        reason: if stalled_turns > 0 {
+            "stalled_retry"
+        } else {
+            "progressed"
+        },
+        progress_signature,
+        stalled_turns,
+        followup_prompt: build_exec_autonomy_followup_prompt_with_root(&progress, root_prompt),
+    }
+}
+
+fn merge_developer_instructions(existing: Option<String>, extra: Option<String>) -> Option<String> {
+    let existing = existing
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let extra = extra
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    match (existing, extra) {
+        (Some(existing), Some(extra)) => Some(format!("{existing}\n\n{extra}")),
+        (Some(existing), None) => Some(existing),
+        (None, Some(extra)) => Some(extra),
+        (None, None) => None,
+    }
+}
 
 enum InitialOperation {
     UserTurn {
@@ -194,6 +363,8 @@ struct ExecRunArgs {
     config: Config,
     dangerously_bypass_approvals_and_sandbox: bool,
     exec_span: tracing::Span,
+    external_server_notifications: Option<mpsc::Receiver<ServerNotification>>,
+    autonomy_settings: Option<ExecAutonomySettings>,
     images: Vec<PathBuf>,
     json_mode: bool,
     last_message_file: Option<PathBuf>,
@@ -215,6 +386,46 @@ fn exec_root_span() -> tracing::Span {
 }
 
 pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
+    run_main_with_extra_developer_instructions(cli, arg0_paths, None).await
+}
+
+pub async fn run_main_with_extra_developer_instructions(
+    cli: Cli,
+    arg0_paths: Arg0DispatchPaths,
+    extra_developer_instructions: Option<String>,
+) -> anyhow::Result<()> {
+    run_main_with_extra_developer_instructions_and_server_notifications(
+        cli,
+        arg0_paths,
+        extra_developer_instructions,
+        None,
+    )
+    .await
+}
+
+pub async fn run_main_with_extra_developer_instructions_and_server_notifications(
+    cli: Cli,
+    arg0_paths: Arg0DispatchPaths,
+    extra_developer_instructions: Option<String>,
+    external_server_notifications: Option<mpsc::Receiver<ServerNotification>>,
+) -> anyhow::Result<()> {
+    run_main_with_extra_developer_instructions_server_notifications_and_autonomy(
+        cli,
+        arg0_paths,
+        extra_developer_instructions,
+        external_server_notifications,
+        None,
+    )
+    .await
+}
+
+pub async fn run_main_with_extra_developer_instructions_server_notifications_and_autonomy(
+    cli: Cli,
+    arg0_paths: Arg0DispatchPaths,
+    extra_developer_instructions: Option<String>,
+    external_server_notifications: Option<mpsc::Receiver<ServerNotification>>,
+    autonomy_settings: Option<ExecAutonomySettings>,
+) -> anyhow::Result<()> {
     if let Err(err) = set_default_originator("codex_exec".to_string()) {
         tracing::warn!(?err, "Failed to set codex exec originator override {err:?}");
     }
@@ -412,13 +623,17 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         additional_writable_roots: add_dir,
     };
 
-    let config = ConfigBuilder::default()
+    let mut config = ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
         .loader_overrides(loader_overrides)
         .cloud_requirements(cloud_requirements)
         .build()
         .await?;
+    config.developer_instructions = merge_developer_instructions(
+        config.developer_instructions.take(),
+        extra_developer_instructions,
+    );
 
     #[allow(clippy::print_stderr)]
     match check_execpolicy_for_warnings(&config.config_layer_stack).await {
@@ -517,6 +732,8 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         config,
         dangerously_bypass_approvals_and_sandbox,
         exec_span: exec_span.clone(),
+        external_server_notifications,
+        autonomy_settings,
         images,
         json_mode,
         last_message_file,
@@ -538,6 +755,8 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         config,
         dangerously_bypass_approvals_and_sandbox,
         exec_span,
+        mut external_server_notifications,
+        autonomy_settings,
         images,
         json_mode,
         last_message_file,
@@ -733,7 +952,16 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         }
     });
 
-    let task_id = match initial_operation {
+    let autonomy_settings = autonomy_settings.filter(|_| {
+        matches!(
+            &initial_operation,
+            InitialOperation::UserTurn {
+                ..
+            }
+        )
+    });
+    let turn_cwd = default_cwd.clone();
+    let mut task_id = match initial_operation {
         InitialOperation::UserTurn {
             items,
             output_schema,
@@ -751,14 +979,14 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                         input: items.into_iter().map(Into::into).collect(),
                         responsesapi_client_metadata: None,
                         environments: None,
-                        cwd: Some(default_cwd),
-                        approval_policy: Some(default_approval_policy.into()),
+                        cwd: Some(turn_cwd.clone()),
+                        approval_policy: Some(default_approval_policy.clone().into()),
                         approvals_reviewer: None,
                         sandbox_policy,
                         permission_profile,
                         model: None,
                         service_tier: None,
-                        effort: default_effort,
+                        effort: default_effort.clone(),
                         summary: None,
                         personality: None,
                         output_schema,
@@ -800,6 +1028,10 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         }
     };
     exec_span.record("turn.id", task_id.as_str());
+    let autonomy_started_at = Instant::now();
+    let mut autonomy_completed_turns = 1_u32;
+    let mut autonomy_progress_signature = None;
+    let mut autonomy_stalled_turns = 0_u32;
 
     // Run the loop until the task is complete.
     // Track whether a fatal error was reported by the server so we can
@@ -832,6 +1064,21 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 continue;
             }
             maybe_event = client.next_event() => maybe_event,
+            maybe_notification = async {
+                external_server_notifications
+                    .as_mut()
+                    .expect("external notification receiver is present")
+                    .recv()
+                    .await
+            }, if external_server_notifications.is_some() => {
+                match maybe_notification {
+                    Some(notification) => Some(InProcessServerEvent::ServerNotification(notification)),
+                    None => {
+                        external_server_notifications = None;
+                        continue;
+                    }
+                }
+            },
         };
 
         let Some(server_event) = server_event else {
@@ -870,12 +1117,103 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 )
                 .await;
 
+                let auto_followup_prompt = if let Some(settings) = autonomy_settings
+                    && let ServerNotification::TurnCompleted(payload) = &notification
+                    && payload.thread_id == primary_thread_id_for_requests
+                    && payload.turn.id == task_id
+                    && matches!(
+                        payload.turn.status,
+                        codex_app_server_protocol::TurnStatus::Completed
+                    )
+                {
+                    match decide_exec_autonomy_followup(
+                        settings,
+                        autonomy_started_at.elapsed(),
+                        autonomy_completed_turns,
+                        autonomy_progress_signature,
+                        autonomy_stalled_turns,
+                        &prompt_summary,
+                        &payload.turn.items,
+                    ) {
+                        ExecAutonomyDecision::Continue {
+                            progress_signature,
+                            stalled_turns,
+                            followup_prompt,
+                            reason,
+                        } => {
+                            autonomy_progress_signature = Some(progress_signature);
+                            autonomy_stalled_turns = stalled_turns;
+                            info!(reason, "exec autonomous follow-up requested");
+                            Some(followup_prompt)
+                        }
+                        ExecAutonomyDecision::Stop { reason } => {
+                            info!(reason, "exec autonomous follow-up stopped");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 if should_process_notification(
                     &notification,
                     &primary_thread_id_for_requests,
                     &task_id,
+                    autonomy_settings.is_some(),
                 ) {
-                    match event_processor.process_server_notification(notification) {
+                    let status = event_processor.process_server_notification(notification);
+                    if let Some(followup_prompt) = auto_followup_prompt {
+                        let permission_profile = permission_profile_override_from_config(&config);
+                        let sandbox_policy = permission_profile
+                            .is_none()
+                            .then(|| default_sandbox_policy.clone().into());
+                        match send_request_with_response::<TurnStartResponse>(
+                            &client,
+                            ClientRequest::TurnStart {
+                                request_id: request_ids.next(),
+                                params: TurnStartParams {
+                                    thread_id: primary_thread_id_for_requests.clone(),
+                                    input: vec![UserInput::Text {
+                                        text: followup_prompt,
+                                        text_elements: Vec::new(),
+                                    }
+                                    .into()],
+                                    responsesapi_client_metadata: None,
+                                    environments: None,
+                                    cwd: Some(turn_cwd.clone()),
+                                    approval_policy: Some(default_approval_policy.clone().into()),
+                                    approvals_reviewer: None,
+                                    sandbox_policy,
+                                    permission_profile,
+                                    model: None,
+                                    service_tier: None,
+                                    effort: default_effort.clone(),
+                                    summary: None,
+                                    personality: None,
+                                    output_schema: None,
+                                    collaboration_mode: None,
+                                },
+                            },
+                            "turn/start",
+                        )
+                        .await
+                        {
+                            Ok(response) => {
+                                task_id = response.turn.id;
+                                autonomy_completed_turns =
+                                    autonomy_completed_turns.saturating_add(1);
+                                exec_span.record("turn.id", task_id.as_str());
+                                info!("Sent autonomous follow-up with event ID: {task_id}");
+                                continue;
+                            }
+                            Err(err) => {
+                                error_seen = true;
+                                warn!("exec autonomous follow-up turn/start failed: {err}");
+                            }
+                        }
+                    }
+
+                    match status {
                         CodexStatus::Running => {}
                         CodexStatus::InitiateShutdown => {
                             if let Err(err) = request_shutdown(
@@ -944,6 +1282,7 @@ fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
         permission_profile,
         config: config_request_overrides_from_config(config),
         ephemeral: Some(config.ephemeral),
+        developer_instructions: config.developer_instructions.clone(),
         ..ThreadStartParams::default()
     }
 }
@@ -964,6 +1303,7 @@ fn thread_resume_params_from_config(config: &Config, thread_id: String) -> Threa
         sandbox,
         permission_profile,
         config: config_request_overrides_from_config(config),
+        developer_instructions: config.developer_instructions.clone(),
         ..ThreadResumeParams::default()
     }
 }
@@ -1104,50 +1444,65 @@ fn should_process_notification(
     notification: &ServerNotification,
     thread_id: &str,
     turn_id: &str,
+    process_same_thread_followups: bool,
 ) -> bool {
     match notification {
         ServerNotification::ConfigWarning(_) | ServerNotification::DeprecationNotice(_) => true,
         ServerNotification::Error(notification) => {
-            notification.thread_id == thread_id && notification.turn_id == turn_id
+            notification.thread_id == thread_id
+                && (notification.turn_id == turn_id || process_same_thread_followups)
         }
         ServerNotification::HookCompleted(notification) => {
             notification.thread_id == thread_id
                 && notification
                     .turn_id
                     .as_deref()
-                    .is_none_or(|candidate| candidate == turn_id)
+                    .is_none_or(|candidate| {
+                        candidate == turn_id || process_same_thread_followups
+                    })
         }
         ServerNotification::HookStarted(notification) => {
             notification.thread_id == thread_id
                 && notification
                     .turn_id
                     .as_deref()
-                    .is_none_or(|candidate| candidate == turn_id)
+                    .is_none_or(|candidate| {
+                        candidate == turn_id || process_same_thread_followups
+                    })
         }
         ServerNotification::ItemCompleted(notification) => {
-            notification.thread_id == thread_id && notification.turn_id == turn_id
+            notification.thread_id == thread_id
+                && (notification.turn_id == turn_id || process_same_thread_followups)
         }
         ServerNotification::ItemStarted(notification) => {
-            notification.thread_id == thread_id && notification.turn_id == turn_id
+            notification.thread_id == thread_id
+                && (notification.turn_id == turn_id || process_same_thread_followups)
         }
         ServerNotification::ModelRerouted(notification) => {
-            notification.thread_id == thread_id && notification.turn_id == turn_id
+            notification.thread_id == thread_id
+                && (notification.turn_id == turn_id || process_same_thread_followups)
         }
         ServerNotification::ThreadTokenUsageUpdated(notification) => {
-            notification.thread_id == thread_id && notification.turn_id == turn_id
+            notification.thread_id == thread_id
+                && (notification.turn_id == turn_id || process_same_thread_followups)
         }
         ServerNotification::TurnCompleted(notification) => {
-            notification.thread_id == thread_id && notification.turn.id == turn_id
+            notification.thread_id == thread_id
+                && (notification.turn.id == turn_id || process_same_thread_followups)
         }
         ServerNotification::TurnDiffUpdated(notification) => {
-            notification.thread_id == thread_id && notification.turn_id == turn_id
+            notification.thread_id == thread_id
+                && (notification.turn_id == turn_id || process_same_thread_followups)
         }
         ServerNotification::TurnPlanUpdated(notification) => {
-            notification.thread_id == thread_id && notification.turn_id == turn_id
+            notification.thread_id == thread_id
+                && (notification.turn_id == turn_id || process_same_thread_followups)
         }
         ServerNotification::TurnStarted(notification) => {
-            notification.thread_id == thread_id && notification.turn.id == turn_id
+            notification.thread_id == thread_id
+                && (notification.turn.id == turn_id || process_same_thread_followups)
         }
+        ServerNotification::IlhaeLoopLifecycle(_) => true,
         _ => false,
     }
 }
@@ -1205,7 +1560,38 @@ fn should_backfill_turn_completed_items(
         return false;
     };
 
-    !thread_ephemeral && payload.turn.items.is_empty()
+    !thread_ephemeral && turn_items_need_backfill(&payload.turn.items)
+}
+
+fn turn_items_need_backfill(items: &[AppServerThreadItem]) -> bool {
+    items.is_empty()
+        || items.iter().any(|item| match item {
+            AppServerThreadItem::CommandExecution { status, .. } => {
+                matches!(
+                    status,
+                    codex_app_server_protocol::CommandExecutionStatus::InProgress
+                )
+            }
+            AppServerThreadItem::FileChange { status, .. } => {
+                matches!(status, codex_app_server_protocol::PatchApplyStatus::InProgress)
+            }
+            AppServerThreadItem::McpToolCall { status, .. } => {
+                matches!(status, codex_app_server_protocol::McpToolCallStatus::InProgress)
+            }
+            AppServerThreadItem::DynamicToolCall { status, .. } => {
+                matches!(
+                    status,
+                    codex_app_server_protocol::DynamicToolCallStatus::InProgress
+                )
+            }
+            AppServerThreadItem::CollabAgentToolCall { status, .. } => {
+                matches!(
+                    status,
+                    codex_app_server_protocol::CollabAgentToolCallStatus::InProgress
+                )
+            }
+            _ => false,
+        })
 }
 
 fn turn_items_for_thread(

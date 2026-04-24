@@ -1,3 +1,4 @@
+use crate::AppServerRuntimeHooks;
 use crate::bespoke_event_handling::apply_bespoke_event_handling;
 use crate::bespoke_event_handling::maybe_emit_hook_prompt_item_completed;
 use crate::command_exec::CommandExecManager;
@@ -88,6 +89,10 @@ use codex_app_server_protocol::MarketplaceAddResponse;
 use codex_app_server_protocol::MarketplaceInterface;
 use codex_app_server_protocol::MarketplaceRemoveParams;
 use codex_app_server_protocol::MarketplaceRemoveResponse;
+use codex_app_server_protocol::McpCompletionCompleteParams;
+use codex_app_server_protocol::McpCompletionCompleteResponse;
+use codex_app_server_protocol::McpPromptGetParams;
+use codex_app_server_protocol::McpPromptGetResponse;
 use codex_app_server_protocol::McpResourceReadParams;
 use codex_app_server_protocol::McpResourceReadResponse;
 use codex_app_server_protocol::McpServerOauthLoginCompletedNotification;
@@ -294,8 +299,10 @@ use codex_mcp::McpRuntimeEnvironment;
 use codex_mcp::McpServerStatusSnapshot;
 use codex_mcp::McpSnapshotDetail;
 use codex_mcp::collect_mcp_server_status_snapshot_with_detail;
+use codex_mcp::complete_mcp as complete_mcp_without_thread;
 use codex_mcp::discover_supported_scopes;
 use codex_mcp::effective_mcp_servers;
+use codex_mcp::get_mcp_prompt as get_mcp_prompt_without_thread;
 use codex_mcp::read_mcp_resource as read_mcp_resource_without_thread;
 use codex_mcp::resolve_oauth_scopes;
 use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
@@ -495,6 +502,7 @@ pub(crate) struct CodexMessageProcessor {
     background_tasks: TaskTracker,
     feedback: CodexFeedback,
     log_db: Option<LogDbLayer>,
+    runtime_hooks: AppServerRuntimeHooks,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -647,6 +655,7 @@ pub(crate) struct CodexMessageProcessorArgs {
     pub(crate) config_manager: ConfigManager,
     pub(crate) feedback: CodexFeedback,
     pub(crate) log_db: Option<LogDbLayer>,
+    pub(crate) runtime_hooks: AppServerRuntimeHooks,
 }
 
 fn configured_thread_store(config: &Config) -> Arc<dyn ThreadStore> {
@@ -732,6 +741,7 @@ impl CodexMessageProcessor {
             config_manager,
             feedback,
             log_db,
+            runtime_hooks,
         } = args;
         Self {
             auth_manager,
@@ -752,6 +762,7 @@ impl CodexMessageProcessor {
             background_tasks: TaskTracker::new(),
             feedback,
             log_db,
+            runtime_hooks,
         }
     }
 
@@ -1091,6 +1102,14 @@ impl CodexMessageProcessor {
             }
             ClientRequest::McpResourceRead { request_id, params } => {
                 self.read_mcp_resource(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::McpPromptGet { request_id, params } => {
+                self.get_mcp_prompt(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::McpCompletionComplete { request_id, params } => {
+                self.complete_mcp(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::McpServerToolCall { request_id, params } => {
@@ -5667,8 +5686,9 @@ impl CodexMessageProcessor {
             mcp_oauth_credentials_store_mode,
         };
 
-        // Refresh requests are queued per thread; each thread rebuilds MCP connections on its next
-        // active turn to avoid work for threads that never resume.
+        // Make the refresh visible to existing threads immediately so out-of-band
+        // MCP RPCs right after OAuth/login or config updates cannot race on a stale
+        // connection manager snapshot.
         let thread_manager = Arc::clone(&self.thread_manager);
         thread_manager.refresh_mcp_servers(refresh_config).await;
         Ok(())
@@ -6020,6 +6040,247 @@ impl CodexMessageProcessor {
                                 code: INTERNAL_ERROR_CODE,
                                 message: format!(
                                     "failed to deserialize MCP resource read response: {error}"
+                                ),
+                                data: None,
+                            },
+                        )
+                        .await;
+                }
+            },
+            Err(error) => {
+                outgoing
+                    .send_error(
+                        request_id,
+                        JSONRPCErrorError {
+                            code: INTERNAL_ERROR_CODE,
+                            message: format!("{error:#}"),
+                            data: None,
+                        },
+                    )
+                    .await;
+            }
+        }
+    }
+
+    async fn get_mcp_prompt(&self, request_id: ConnectionRequestId, params: McpPromptGetParams) {
+        let outgoing = Arc::clone(&self.outgoing);
+        let McpPromptGetParams {
+            thread_id,
+            server,
+            name,
+            arguments,
+        } = params;
+
+        if let Some(thread_id) = thread_id {
+            let (_, thread) = match self.load_thread(&thread_id).await {
+                Ok(thread) => thread,
+                Err(error) => {
+                    self.outgoing.send_error(request_id, error).await;
+                    return;
+                }
+            };
+
+            tokio::spawn(async move {
+                let result = thread.get_mcp_prompt(&server, &name, arguments).await;
+                Self::send_mcp_prompt_get_response(outgoing, request_id, result).await;
+            });
+            return;
+        }
+
+        let prompt_params = match build_mcp_get_prompt_request_params(name, arguments) {
+            Ok(params) => params,
+            Err(error) => {
+                self.outgoing
+                    .send_error(
+                        request_id,
+                        JSONRPCErrorError {
+                            code: INVALID_PARAMS_ERROR_CODE,
+                            message: format!("{error:#}"),
+                            data: None,
+                        },
+                    )
+                    .await;
+                return;
+            }
+        };
+        let config = match self.load_latest_config(/*fallback_cwd*/ None).await {
+            Ok(config) => config,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let mcp_config = config
+            .to_mcp_config(self.thread_manager.plugins_manager().as_ref())
+            .await;
+        let auth = self.auth_manager.auth().await;
+        let runtime_environment = {
+            let environment_manager = self.thread_manager.environment_manager();
+            let environment = environment_manager
+                .default_environment()
+                .unwrap_or_else(|| environment_manager.local_environment());
+            McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf())
+        };
+
+        tokio::spawn(async move {
+            let result = match get_mcp_prompt_without_thread(
+                &mcp_config,
+                auth.as_ref(),
+                runtime_environment,
+                &server,
+                prompt_params,
+            )
+            .await
+            {
+                Ok(result) => serde_json::to_value(result).map_err(anyhow::Error::from),
+                Err(error) => Err(error),
+            };
+            Self::send_mcp_prompt_get_response(outgoing, request_id, result).await;
+        });
+    }
+
+    async fn send_mcp_prompt_get_response(
+        outgoing: Arc<OutgoingMessageSender>,
+        request_id: ConnectionRequestId,
+        result: anyhow::Result<serde_json::Value>,
+    ) {
+        match result {
+            Ok(result) => match serde_json::from_value::<McpPromptGetResponse>(result) {
+                Ok(response) => {
+                    outgoing.send_response(request_id, response).await;
+                }
+                Err(error) => {
+                    outgoing
+                        .send_error(
+                            request_id,
+                            JSONRPCErrorError {
+                                code: INTERNAL_ERROR_CODE,
+                                message: format!(
+                                    "failed to deserialize MCP prompt get response: {error}"
+                                ),
+                                data: None,
+                            },
+                        )
+                        .await;
+                }
+            },
+            Err(error) => {
+                outgoing
+                    .send_error(
+                        request_id,
+                        JSONRPCErrorError {
+                            code: INTERNAL_ERROR_CODE,
+                            message: format!("{error:#}"),
+                            data: None,
+                        },
+                    )
+                    .await;
+            }
+        }
+    }
+
+    async fn complete_mcp(
+        &self,
+        request_id: ConnectionRequestId,
+        params: McpCompletionCompleteParams,
+    ) {
+        let outgoing = Arc::clone(&self.outgoing);
+        let McpCompletionCompleteParams {
+            thread_id,
+            server,
+            reference,
+            argument,
+            context,
+        } = params;
+
+        let completion_params =
+            match build_mcp_complete_request_params(reference, argument, context) {
+                Ok(params) => params,
+                Err(error) => {
+                    self.outgoing
+                        .send_error(
+                            request_id,
+                            JSONRPCErrorError {
+                                code: INVALID_PARAMS_ERROR_CODE,
+                                message: format!("{error:#}"),
+                                data: None,
+                            },
+                        )
+                        .await;
+                    return;
+                }
+            };
+
+        if let Some(thread_id) = thread_id {
+            let (_, thread) = match self.load_thread(&thread_id).await {
+                Ok(thread) => thread,
+                Err(error) => {
+                    self.outgoing.send_error(request_id, error).await;
+                    return;
+                }
+            };
+
+            tokio::spawn(async move {
+                let result = thread.complete_mcp(&server, completion_params).await;
+                Self::send_mcp_completion_complete_response(outgoing, request_id, result).await;
+            });
+            return;
+        }
+
+        let config = match self.load_latest_config(/*fallback_cwd*/ None).await {
+            Ok(config) => config,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let mcp_config = config
+            .to_mcp_config(self.thread_manager.plugins_manager().as_ref())
+            .await;
+        let auth = self.auth_manager.auth().await;
+        let runtime_environment = {
+            let environment_manager = self.thread_manager.environment_manager();
+            let environment = environment_manager
+                .default_environment()
+                .unwrap_or_else(|| environment_manager.local_environment());
+            McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf())
+        };
+
+        tokio::spawn(async move {
+            let result = match complete_mcp_without_thread(
+                &mcp_config,
+                auth.as_ref(),
+                runtime_environment,
+                &server,
+                completion_params,
+            )
+            .await
+            {
+                Ok(result) => serde_json::to_value(result).map_err(anyhow::Error::from),
+                Err(error) => Err(error),
+            };
+            Self::send_mcp_completion_complete_response(outgoing, request_id, result).await;
+        });
+    }
+
+    async fn send_mcp_completion_complete_response(
+        outgoing: Arc<OutgoingMessageSender>,
+        request_id: ConnectionRequestId,
+        result: anyhow::Result<serde_json::Value>,
+    ) {
+        match result {
+            Ok(result) => match serde_json::from_value::<McpCompletionCompleteResponse>(result) {
+                Ok(response) => {
+                    outgoing.send_response(request_id, response).await;
+                }
+                Err(error) => {
+                    outgoing
+                        .send_error(
+                            request_id,
+                            JSONRPCErrorError {
+                                code: INTERNAL_ERROR_CODE,
+                                message: format!(
+                                    "failed to deserialize MCP completion response: {error}"
                                 ),
                                 data: None,
                             },
@@ -6808,6 +7069,9 @@ impl CodexMessageProcessor {
             self.track_error_response(&request_id, &error, /*error_type*/ None);
             self.outgoing.send_error(request_id, error).await;
             return;
+        }
+        if let Some(before_turn_start) = self.runtime_hooks.before_turn_start.as_ref() {
+            before_turn_start().await;
         }
 
         let collaboration_modes_config = CollaborationModesConfig {
@@ -9387,6 +9651,38 @@ fn thread_store_archive_error(operation: &str, err: ThreadStoreError) -> JSONRPC
 }
 
 const MCP_TOOL_THREAD_ID_META_KEY: &str = "threadId";
+
+fn build_mcp_get_prompt_request_params(
+    name: String,
+    arguments: Option<serde_json::Value>,
+) -> anyhow::Result<rmcp::model::GetPromptRequestParams> {
+    let arguments = match arguments {
+        Some(serde_json::Value::Object(map)) => Some(map),
+        Some(other) => {
+            anyhow::bail!("MCP prompt arguments must be a JSON object, got {other}");
+        }
+        None => None,
+    };
+
+    let mut params = rmcp::model::GetPromptRequestParams::new(name);
+    params.arguments = arguments;
+    Ok(params)
+}
+
+fn build_mcp_complete_request_params(
+    reference: serde_json::Value,
+    argument: serde_json::Value,
+    context: Option<serde_json::Value>,
+) -> anyhow::Result<rmcp::model::CompleteRequestParams> {
+    let mut params = serde_json::Map::new();
+    params.insert("ref".to_string(), reference);
+    params.insert("argument".to_string(), argument);
+    if let Some(context) = context {
+        params.insert("context".to_string(), context);
+    }
+
+    Ok(serde_json::from_value(serde_json::Value::Object(params))?)
+}
 
 fn with_mcp_tool_call_thread_id_meta(
     meta: Option<serde_json::Value>,

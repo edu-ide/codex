@@ -446,6 +446,7 @@ fn server_notification_thread_target(
         | ServerNotification::ConfigWarning(_)
         | ServerNotification::FuzzyFileSearchSessionUpdated(_)
         | ServerNotification::FuzzyFileSearchSessionCompleted(_)
+        | ServerNotification::IlhaeLoopLifecycle(_)
         | ServerNotification::CommandExecOutputDelta(_)
         | ServerNotification::FsChanged(_)
         | ServerNotification::WindowsWorldWritableWarning(_)

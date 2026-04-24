@@ -60,10 +60,14 @@ use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use futures::future::Shared;
 use rmcp::model::ClientCapabilities;
+use rmcp::model::CompleteRequestParams;
+use rmcp::model::CompleteResult;
 use rmcp::model::CreateElicitationRequestParams;
 use rmcp::model::ElicitationAction;
 use rmcp::model::ElicitationCapability;
 use rmcp::model::FormElicitationCapability;
+use rmcp::model::GetPromptRequestParams;
+use rmcp::model::GetPromptResult;
 use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::ListPromptsResult;
@@ -1287,6 +1291,39 @@ impl McpConnectionManager {
             .with_context(|| format!("prompts/list failed for `{server}`"))
     }
 
+    /// Get a prompt from the specified server.
+    pub async fn get_prompt(
+        &self,
+        server: &str,
+        params: GetPromptRequestParams,
+    ) -> Result<GetPromptResult> {
+        let managed = self.client_by_name(server).await?;
+        let client = managed.client.clone();
+        let timeout = managed.tool_timeout;
+        let name = params.name.clone();
+
+        client
+            .get_prompt(params, timeout)
+            .await
+            .with_context(|| format!("prompts/get failed for `{server}` ({name})"))
+    }
+
+    /// Complete a prompt or resource argument on the specified server.
+    pub async fn complete(
+        &self,
+        server: &str,
+        params: CompleteRequestParams,
+    ) -> Result<CompleteResult> {
+        let managed = self.client_by_name(server).await?;
+        let client = managed.client.clone();
+        let timeout = managed.tool_timeout;
+
+        client
+            .complete(params, timeout)
+            .await
+            .with_context(|| format!("completion/complete failed for `{server}`"))
+    }
+
     /// Read a resource from the specified server.
     pub async fn read_resource(
         &self,
@@ -1532,22 +1569,11 @@ async fn start_server_task(
     let mut caps = ClientCapabilities::default();
     caps.elicitation = elicitation;
 
-    let mut info = Implementation {
-        name: "codex-mcp-client".to_string(),
-        title: None,
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        description: None,
-        icons: None,
-        website_url: None,
-    };
-    info.title = Some("Codex".into());
+    let info = Implementation::new("codex-mcp-client", env!("CARGO_PKG_VERSION"))
+        .with_title("Codex");
 
-    let params = InitializeRequestParams {
-        meta: None,
-        protocol_version: ProtocolVersion::default(),
-        capabilities: caps,
-        client_info: info,
-    };
+    let params = InitializeRequestParams::new(caps, info)
+        .with_protocol_version(ProtocolVersion::default());
 
     let send_elicitation = elicitation_requests.make_sender(server_name.clone(), tx_event);
 

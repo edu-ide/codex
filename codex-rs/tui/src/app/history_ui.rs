@@ -33,6 +33,7 @@ impl App {
             version,
         )
         .with_yolo_mode(history_cell::is_yolo_mode(&self.config))
+        .with_runtime_profile(history_cell::current_ilhae_runtime_profile_for_header())
         .display_lines(width)
     }
 

@@ -551,6 +551,14 @@ impl AppServerSession {
         output_schema: Option<serde_json::Value>,
     ) -> Result<TurnStartResponse> {
         let request_id = self.next_request_id();
+        if !self.is_remote()
+            && let Err(err) = codex_ilhae::run_active_foreground_loop_cycle().await
+        {
+            tracing::warn!(
+                error = ?err,
+                "ilhae foreground loop cycle failed before TUI turn"
+            );
+        }
         let sandbox_policy = if self.is_remote()
             || matches!(sandbox_policy, SandboxPolicy::ExternalSandbox { .. })
         {
@@ -1100,6 +1108,8 @@ fn thread_start_params_from_config(
         sandbox,
         permission_profile,
         config: config_request_overrides_from_config(config),
+        base_instructions: config.base_instructions.clone(),
+        developer_instructions: config.developer_instructions.clone(),
         ephemeral: Some(config.ephemeral),
         session_start_source,
         persist_extended_history: true,
@@ -1128,6 +1138,8 @@ fn thread_resume_params_from_config(
         sandbox,
         permission_profile,
         config: config_request_overrides_from_config(&config),
+        base_instructions: config.base_instructions.clone(),
+        developer_instructions: config.developer_instructions.clone(),
         persist_extended_history: true,
         ..ThreadResumeParams::default()
     }
@@ -1547,23 +1559,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn thread_fork_params_forward_instruction_overrides() {
+    async fn thread_lifecycle_params_forward_instruction_overrides() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let mut config = build_config(&temp_dir).await;
         config.base_instructions = Some("Base override.".to_string());
         config.developer_instructions = Some("Developer override.".to_string());
         let thread_id = ThreadId::new();
 
-        let params = thread_fork_params_from_config(
+        let start = thread_start_params_from_config(
+            &config,
+            ThreadParamsMode::Embedded,
+            /*remote_cwd_override*/ None,
+            /*session_start_source*/ None,
+        );
+        let resume = thread_resume_params_from_config(
+            config.clone(),
+            thread_id,
+            ThreadParamsMode::Embedded,
+            /*remote_cwd_override*/ None,
+        );
+        let fork = thread_fork_params_from_config(
             config,
             thread_id,
             ThreadParamsMode::Embedded,
             /*remote_cwd_override*/ None,
         );
 
-        assert_eq!(params.base_instructions.as_deref(), Some("Base override."));
+        assert_eq!(start.base_instructions.as_deref(), Some("Base override."));
         assert_eq!(
-            params.developer_instructions.as_deref(),
+            start.developer_instructions.as_deref(),
+            Some("Developer override.")
+        );
+        assert_eq!(resume.base_instructions.as_deref(), Some("Base override."));
+        assert_eq!(
+            resume.developer_instructions.as_deref(),
+            Some("Developer override.")
+        );
+        assert_eq!(fork.base_instructions.as_deref(), Some("Base override."));
+        assert_eq!(
+            fork.developer_instructions.as_deref(),
             Some("Developer override.")
         );
     }

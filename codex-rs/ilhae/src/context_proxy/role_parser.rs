@@ -431,7 +431,7 @@ interface:
         // ── Read brain/memory/global/*.md and inject into GEMINI.md ──
         let global_context = {
             let global_dir = std::path::PathBuf::from(&home)
-                .join("ilhae")
+                .join(".ilhae")
                 .join("brain")
                 .join("memory")
                 .join("global");

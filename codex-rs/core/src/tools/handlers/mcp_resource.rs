@@ -484,10 +484,7 @@ async fn handle_read_resource(
         let result = session
             .read_resource(
                 &server,
-                ReadResourceRequestParams {
-                    meta: None,
-                    uri: uri.clone(),
-                },
+                ReadResourceRequestParams::new(uri.clone()),
             )
             .await
             .map_err(|err| {

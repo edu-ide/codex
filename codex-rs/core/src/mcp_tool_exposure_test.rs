@@ -162,6 +162,70 @@ async fn searches_large_effective_tool_sets() {
 }
 
 #[tokio::test]
+async fn keeps_internal_mcp_servers_direct_when_searching_large_tool_sets() {
+    let config = test_config().await;
+    let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;
+    let mut mcp_tools = numbered_mcp_tools(DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD);
+    mcp_tools.extend([
+        (
+            "mcp__browser__browser_navigate".to_string(),
+            make_mcp_tool(
+                "browser",
+                "browser_navigate",
+                /*connector_id*/ None,
+                /*connector_name*/ None,
+            ),
+        ),
+        (
+            "mcp__brain__brain_search".to_string(),
+            make_mcp_tool(
+                "brain",
+                "brain_search",
+                /*connector_id*/ None,
+                /*connector_name*/ None,
+            ),
+        ),
+        (
+            "mcp__computer__computer_screenshot".to_string(),
+            make_mcp_tool(
+                "computer",
+                "computer_screenshot",
+                /*connector_id*/ None,
+                /*connector_name*/ None,
+            ),
+        ),
+    ]);
+
+    let exposure = build_mcp_tool_exposure(
+        &mcp_tools,
+        /*connectors*/ None,
+        &[],
+        &config,
+        &tools_config,
+    );
+
+    let mut direct_tool_names: Vec<_> = exposure.direct_tools.keys().cloned().collect();
+    direct_tool_names.sort();
+    assert_eq!(
+        direct_tool_names,
+        vec![
+            "mcp__brain__brain_search".to_string(),
+            "mcp__browser__browser_navigate".to_string(),
+            "mcp__computer__computer_screenshot".to_string(),
+        ]
+    );
+    let deferred_tools = exposure
+        .deferred_tools
+        .as_ref()
+        .expect("non-internal MCP tools should still be discoverable through tool_search");
+    assert_eq!(deferred_tools.len(), DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD);
+    assert!(!deferred_tools.contains_key("mcp__browser__browser_navigate"));
+    assert!(!deferred_tools.contains_key("mcp__brain__brain_search"));
+    assert!(!deferred_tools.contains_key("mcp__computer__computer_screenshot"));
+    assert!(deferred_tools.contains_key("mcp__rmcp__tool_0"));
+}
+
+#[tokio::test]
 async fn directly_exposes_explicit_apps_without_deferred_overlap() {
     let config = test_config().await;
     let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;

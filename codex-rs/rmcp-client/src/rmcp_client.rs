@@ -23,12 +23,16 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::model::CallToolResult;
 use rmcp::model::ClientNotification;
 use rmcp::model::ClientRequest;
+use rmcp::model::CompleteRequestParams;
+use rmcp::model::CompleteResult;
 use rmcp::model::CreateElicitationRequestParams;
 use rmcp::model::CreateElicitationResult;
 use rmcp::model::CustomNotification;
 use rmcp::model::CustomRequest;
 use rmcp::model::ElicitationAction;
 use rmcp::model::Extensions;
+use rmcp::model::GetPromptRequestParams;
+use rmcp::model::GetPromptResult;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::InitializeResult;
 use rmcp::model::ListPromptsResult;
@@ -228,7 +232,7 @@ impl From<CreateElicitationResult> for ElicitationResponse {
         Self {
             action: value.action,
             content: value.content,
-            meta: None,
+            meta: value.meta.map(|meta| Value::Object(meta.0)),
         }
     }
 }
@@ -238,6 +242,10 @@ impl From<ElicitationResponse> for CreateElicitationResult {
         Self {
             action: value.action,
             content: value.content,
+            meta: value.meta.and_then(|meta| match meta {
+                Value::Object(object) => Some(rmcp::model::Meta(object)),
+                _ => None,
+            }),
         }
     }
 }
@@ -496,6 +504,38 @@ impl RmcpClient {
         Ok(result)
     }
 
+    pub async fn get_prompt(
+        &self,
+        params: GetPromptRequestParams,
+        timeout: Option<Duration>,
+    ) -> Result<GetPromptResult> {
+        self.refresh_oauth_if_needed().await;
+        let result = self
+            .run_service_operation("prompts/get", timeout, move |service| {
+                let params = params.clone();
+                async move { service.get_prompt(params).await }.boxed()
+            })
+            .await?;
+        self.persist_oauth_tokens().await;
+        Ok(result)
+    }
+
+    pub async fn complete(
+        &self,
+        params: CompleteRequestParams,
+        timeout: Option<Duration>,
+    ) -> Result<CompleteResult> {
+        self.refresh_oauth_if_needed().await;
+        let result = self
+            .run_service_operation("completion/complete", timeout, move |service| {
+                let params = params.clone();
+                async move { service.complete(params).await }.boxed()
+            })
+            .await?;
+        self.persist_oauth_tokens().await;
+        Ok(result)
+    }
+
     pub async fn read_resource(
         &self,
         params: ReadResourceRequestParams,
@@ -538,21 +578,17 @@ impl RmcpClient {
             }
             None => None,
         };
-        let rmcp_params = CallToolRequestParams {
-            meta,
-            name: Cow::Owned(name),
-            arguments,
-            task: None,
-        };
+        let mut rmcp_params = CallToolRequestParams::new(Cow::Owned(name));
+        rmcp_params.arguments = arguments;
+        rmcp_params.meta = meta;
         let result = self
             .run_service_operation("tools/call", timeout, move |service| {
                 let rmcp_params = rmcp_params.clone();
                 async move {
+                    let request = rmcp::model::CallToolRequest::new(rmcp_params);
                     let result = service
                         .peer()
-                        .send_request(ClientRequest::CallToolRequest(
-                            rmcp::model::CallToolRequest::new(rmcp_params),
-                        ))
+                        .send_request(ClientRequest::CallToolRequest(request))
                         .await?;
                     match result {
                         ServerResult::CallToolResult(result) => Ok(result),

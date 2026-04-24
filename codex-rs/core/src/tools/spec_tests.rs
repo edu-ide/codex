@@ -1,3 +1,4 @@
+use crate::LLAMA_SERVER_OSS_PROVIDER_ID;
 use crate::config::test_config;
 use crate::shell::Shell;
 use crate::shell::ShellType;
@@ -20,6 +21,7 @@ use codex_tools::AdditionalProperties;
 use codex_tools::ConfiguredToolSpec;
 use codex_tools::DiscoverableTool;
 use codex_tools::JsonSchema;
+use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ResponsesApiTool;
 use codex_tools::ShellCommandBackendConfig;
@@ -1033,6 +1035,31 @@ async fn direct_mcp_tools_register_namespaced_handlers() {
 
     assert!(registry.has_handler(&ToolName::namespaced("mcp__test_server__", "echo")));
     assert!(!registry.has_handler(&ToolName::plain("mcp__test_server__echo")));
+}
+
+#[test]
+fn llama_server_flattens_namespaced_mcp_tools() {
+    let tools = create_tools_json_for_responses_api_with_provider(
+        &[ToolSpec::Namespace(ResponsesApiNamespace {
+            name: "mcp__browser__".to_string(),
+            description: "Browser MCP tools".to_string(),
+            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: "browser_navigate".to_string(),
+                description: "Navigate to a URL".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(Default::default(), None, None),
+                output_schema: None,
+            })],
+        })],
+        LLAMA_SERVER_OSS_PROVIDER_ID,
+    )
+    .expect("llama-server tool serialization should succeed");
+
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0]["type"], "function");
+    assert_eq!(tools[0]["name"], "mcp__browser__browser_navigate");
+    assert_eq!(tools[0]["description"], "Navigate to a URL");
 }
 
 #[tokio::test]

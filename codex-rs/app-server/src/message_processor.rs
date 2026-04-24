@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
+use crate::AppServerRuntimeHooks;
 use crate::codex_message_processor::CodexMessageProcessor;
 use crate::codex_message_processor::CodexMessageProcessorArgs;
 use crate::config_api::ConfigApi;
@@ -260,6 +261,7 @@ pub(crate) struct MessageProcessorArgs {
     pub(crate) auth_manager: Arc<AuthManager>,
     pub(crate) rpc_transport: AppServerRpcTransport,
     pub(crate) remote_control_handle: Option<RemoteControlHandle>,
+    pub(crate) runtime_hooks: AppServerRuntimeHooks,
 }
 
 impl MessageProcessor {
@@ -279,6 +281,7 @@ impl MessageProcessor {
             auth_manager,
             rpc_transport,
             remote_control_handle,
+            runtime_hooks,
         } = args;
         auth_manager.set_external_auth(Arc::new(ExternalAuthRefreshBridge {
             outgoing: outgoing.clone(),
@@ -314,6 +317,7 @@ impl MessageProcessor {
             config_manager: config_manager.clone(),
             feedback,
             log_db,
+            runtime_hooks,
         });
         // Keep plugin startup warmups aligned at app-server startup.
         // TODO(xl): Move into PluginManager once this no longer depends on config feature gating.

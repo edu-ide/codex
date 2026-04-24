@@ -1240,7 +1240,8 @@ pub(crate) fn new_session_info(
         config.cwd.to_path_buf(),
         CODEX_CLI_VERSION,
     )
-    .with_yolo_mode(has_yolo_permissions(approval_policy, &sandbox_policy));
+    .with_yolo_mode(has_yolo_permissions(approval_policy, &sandbox_policy))
+    .with_runtime_profile(current_ilhae_runtime_profile_for_header());
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
     if is_first_event {
@@ -1336,8 +1337,18 @@ pub(crate) struct SessionHeaderHistoryCell {
     model_style: Style,
     reasoning_effort: Option<ReasoningEffortConfig>,
     show_fast_status: bool,
+    runtime_profile: Option<String>,
     directory: PathBuf,
     yolo_mode: bool,
+}
+
+pub(crate) fn current_ilhae_runtime_profile_for_header() -> Option<String> {
+    codex_ilhae::native_runtime_context()?;
+    codex_ilhae::config::load_ilhae_toml_config()
+        .profile
+        .active
+        .map(|profile| profile.trim().to_string())
+        .filter(|profile| !profile.is_empty())
 }
 
 impl SessionHeaderHistoryCell {
@@ -1372,6 +1383,7 @@ impl SessionHeaderHistoryCell {
             model_style,
             reasoning_effort,
             show_fast_status,
+            runtime_profile: None,
             directory,
             yolo_mode: false,
         }
@@ -1379,6 +1391,13 @@ impl SessionHeaderHistoryCell {
 
     pub(crate) fn with_yolo_mode(mut self, yolo_mode: bool) -> Self {
         self.yolo_mode = yolo_mode;
+        self
+    }
+
+    pub(crate) fn with_runtime_profile(mut self, runtime_profile: Option<String>) -> Self {
+        self.runtime_profile = runtime_profile
+            .map(|profile| profile.trim().to_string())
+            .filter(|profile| !profile.is_empty());
         self
     }
 
@@ -1439,13 +1458,20 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
+        const CHANGE_PROFILE_HINT_COMMAND: &str = "/profile";
+        const PROFILE_LABEL: &str = "profile:";
         const DIR_LABEL: &str = "directory:";
         const PERMISSIONS_LABEL: &str = "permissions:";
         let label_width = if self.yolo_mode {
             DIR_LABEL.len().max(PERMISSIONS_LABEL.len())
         } else {
             DIR_LABEL.len()
-        };
+        }
+        .max(if self.runtime_profile.is_some() {
+            PROFILE_LABEL.len()
+        } else {
+            0
+        });
 
         let model_label = format!(
             "{model_label:<label_width$}",
@@ -1472,6 +1498,17 @@ impl HistoryCell for SessionHeaderHistoryCell {
             spans
         };
 
+        let profile_spans = self.runtime_profile.as_ref().map(|profile| {
+            let profile_label = format!("{PROFILE_LABEL:<label_width$}");
+            vec![
+                Span::from(format!("{profile_label} ")).dim(),
+                Span::styled(profile.clone(), self.model_style),
+                "   ".dim(),
+                CHANGE_PROFILE_HINT_COMMAND.cyan(),
+                CHANGE_MODEL_HINT_EXPLANATION.dim(),
+            ]
+        });
+
         let dir_label = format!("{DIR_LABEL:<label_width$}");
         let dir_prefix = format!("{dir_label} ");
         let dir_prefix_width = UnicodeWidthStr::width(dir_prefix.as_str());
@@ -1485,6 +1522,9 @@ impl HistoryCell for SessionHeaderHistoryCell {
             make_row(model_spans),
             make_row(dir_spans),
         ];
+        if let Some(profile_spans) = profile_spans {
+            lines.insert(3, make_row(profile_spans));
+        }
 
         if self.yolo_mode {
             let permissions_label = format!("{PERMISSIONS_LABEL:<label_width$}");
@@ -4521,6 +4561,27 @@ mod tests {
 
         assert!(model_line.contains("gpt-4o high"));
         assert!(!model_line.contains("fast"));
+    }
+
+    #[test]
+    fn session_header_includes_runtime_profile_when_present() {
+        let cell = SessionHeaderHistoryCell::new(
+            "Qwen3.6-27B-UD-Q4_K_XL".to_string(),
+            Some(ReasoningEffortConfig::Medium),
+            /*show_fast_status*/ false,
+            std::env::temp_dir(),
+            "test",
+        )
+        .with_runtime_profile(Some("qwen3.6-27b-ud-q4-k-xl".to_string()));
+
+        let lines = render_lines(&cell.display_lines(/*width*/ 100));
+        let profile_line = lines
+            .iter()
+            .find(|line| line.contains("profile:"))
+            .expect("profile line");
+
+        assert!(profile_line.contains("qwen3.6-27b-ud-q4-k-xl"));
+        assert!(profile_line.contains("/profile to change"));
     }
 
     #[test]

@@ -518,6 +518,16 @@ client_request_definitions! {
         response: v2::McpResourceReadResponse,
     },
 
+    McpPromptGet => "mcpServer/prompt/get" {
+        params: v2::McpPromptGetParams,
+        response: v2::McpPromptGetResponse,
+    },
+
+    McpCompletionComplete => "mcpServer/completion/complete" {
+        params: v2::McpCompletionCompleteParams,
+        response: v2::McpCompletionCompleteResponse,
+    },
+
     McpServerToolCall => "mcpServer/tool/call" {
         params: v2::McpServerToolCallParams,
         response: v2::McpServerToolCallResponse,
@@ -1048,6 +1058,7 @@ server_notification_definitions! {
     ServerRequestResolved => "serverRequest/resolved" (v2::ServerRequestResolvedNotification),
     McpToolCallProgress => "item/mcpToolCall/progress" (v2::McpToolCallProgressNotification),
     LoopLifecycleProgress => "item/loopLifecycle/progress" (v2::LoopLifecycleProgressNotification),
+    IlhaeLoopLifecycle => "ilhae/loop_lifecycle" (v2::IlhaeLoopLifecycleNotification),
     McpServerOauthLoginCompleted => "mcpServer/oauthLogin/completed" (v2::McpServerOauthLoginCompletedNotification),
     McpServerStatusUpdated => "mcpServer/startupStatus/updated" (v2::McpServerStatusUpdatedNotification),
     AccountUpdated => "account/updated" (v2::AccountUpdatedNotification),
@@ -1993,6 +2004,46 @@ mod tests {
                     "status": {
                         "type": "idle"
                     },
+                }
+            }),
+            serde_json::to_value(&notification)?,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn serialize_ilhae_loop_lifecycle_notification() -> Result<()> {
+        let notification =
+            ServerNotification::IlhaeLoopLifecycle(v2::IlhaeLoopLifecycleNotification::Started {
+                session_id: "native-runtime".to_string(),
+                item: codex_protocol::items::LoopLifecycleItem {
+                    id: "super_loop:worker:1".to_string(),
+                    kind: codex_protocol::protocol::LoopLifecycleKind::SuperLoop,
+                    title: "Running Super Loop".to_string(),
+                    summary: "Scanning background follow-ups (worker)".to_string(),
+                    detail: None,
+                    status: codex_protocol::protocol::LoopLifecycleStatus::InProgress,
+                    reason: Some("cycle_started".to_string()),
+                    counts: None,
+                    error: None,
+                    duration_ms: None,
+                    target_profile: None,
+                },
+            });
+        assert_eq!(
+            json!({
+                "method": "ilhae/loop_lifecycle",
+                "params": {
+                    "event": "started",
+                    "sessionId": "native-runtime",
+                    "item": {
+                        "id": "super_loop:worker:1",
+                        "kind": "super_loop",
+                        "title": "Running Super Loop",
+                        "summary": "Scanning background follow-ups (worker)",
+                        "status": "in_progress",
+                        "reason": "cycle_started"
+                    }
                 }
             }),
             serde_json::to_value(&notification)?,

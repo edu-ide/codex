@@ -1710,6 +1710,50 @@
       ],
       "type": "object"
     },
+    "McpCompletionCompleteParams": {
+      "properties": {
+        "argument": true,
+        "context": true,
+        "ref": true,
+        "server": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "argument",
+        "ref",
+        "server"
+      ],
+      "type": "object"
+    },
+    "McpPromptGetParams": {
+      "properties": {
+        "arguments": true,
+        "name": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "server"
+      ],
+      "type": "object"
+    },
     "McpResourceReadParams": {
       "properties": {
         "server": {
@@ -5578,6 +5622,54 @@
         "params"
       ],
       "title": "McpServer/resource/readRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "mcpServer/prompt/get"
+          ],
+          "title": "McpServer/prompt/getRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/McpPromptGetParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "McpServer/prompt/getRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "mcpServer/completion/complete"
+          ],
+          "title": "McpServer/completion/completeRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/McpCompletionCompleteParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "McpServer/completion/completeRequest",
       "type": "object"
     },
     {

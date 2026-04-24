@@ -63,6 +63,7 @@ regex = "1"
 toml = "0.8"
 toml_edit = "0.22"
 base64 = "0.22"
+libc = { workspace = true }
 
 # Logging
 tracing = "0.1"

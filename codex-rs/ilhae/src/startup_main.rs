@@ -8,6 +8,7 @@ use sacp::DynConnectTo;
 
 use moka::sync::Cache;
 use std::collections::{HashMap, HashSet};
+use std::os::fd::AsRawFd;
 use std::sync::{Arc, OnceLock, atomic::AtomicU64};
 use std::{process::Stdio, time::Duration};
 use tokio::sync::RwLock;
@@ -50,6 +51,7 @@ static NATIVE_LOOP_LIFECYCLE_BUS: OnceLock<
     broadcast::Sender<crate::IlhaeLoopLifecycleNotification>,
 > = OnceLock::new();
 const DEFAULT_GEPA_OPTIMIZER_INTERVAL_SECS: u64 = 1800;
+const ILHAE_NATIVE_THINKING_MODE_ENV: &str = "ILHAE_NATIVE_THINKING_MODE";
 
 pub fn native_runtime_context() -> Option<BootstrappedIlhaeRuntime> {
     NATIVE_RUNTIME_CONTEXT.get().cloned()
@@ -225,6 +227,49 @@ fn gate_gepa_optimizer_candidate(
     Ok((prompt.to_string(), instructions.to_string(), score))
 }
 
+struct NativeRuntimeStartLock {
+    file: std::fs::File,
+}
+
+impl Drop for NativeRuntimeStartLock {
+    fn drop(&mut self) {
+        // SAFETY: file descriptor is owned by this guard and remains valid until drop completes.
+        unsafe {
+            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
+fn native_runtime_start_lock_path(
+    _profile_id: &str,
+    _config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> std::path::PathBuf {
+    crate::config::resolve_ilhae_data_dir()
+        .join("run")
+        .join("native-runtime-start.lock")
+}
+
+fn acquire_native_runtime_start_lock(
+    profile_id: &str,
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> anyhow::Result<NativeRuntimeStartLock> {
+    let path = native_runtime_start_lock_path(profile_id, config);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(&path)?;
+    // SAFETY: flock is called on a valid file descriptor and the guard unlocks it on drop.
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    if rc != 0 {
+        return Err(anyhow::Error::from(std::io::Error::last_os_error()));
+    }
+    Ok(NativeRuntimeStartLock { file })
+}
+
 fn spawn_native_runtime_server(
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> anyhow::Result<()> {
@@ -233,6 +278,8 @@ fn spawn_native_runtime_server(
     }
 
     let mut command = std::process::Command::new(&config.server_bin);
+    let thinking_mode = crate::config::current_thinking_mode();
+    command.env(ILHAE_NATIVE_THINKING_MODE_ENV, &thinking_mode);
     if config.args.is_empty() {
         if !config.model_path.trim().is_empty() {
             command.arg("-m").arg(&config.model_path);
@@ -242,8 +289,11 @@ fn spawn_native_runtime_server(
                 .arg("--chat-template-file")
                 .arg(&config.chat_template_file);
         }
+        if native_runtime_supports_reasoning_flag(config) {
+            command.arg("--reasoning").arg(&thinking_mode);
+        }
     } else {
-        command.args(&config.args);
+        command.args(effective_native_runtime_args(config, &thinking_mode));
     }
 
     command.stdin(Stdio::null());
@@ -274,11 +324,209 @@ fn spawn_native_runtime_server(
     Ok(())
 }
 
+fn native_runtime_supports_reasoning_flag(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> bool {
+    if let Some(provider) = config.provider.as_deref().map(str::trim)
+        && !provider.is_empty()
+    {
+        return provider == "llama-server";
+    }
+
+    std::path::Path::new(&config.server_bin)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name == "llama-server")
+        .unwrap_or(false)
+}
+
+fn effective_native_runtime_args(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+    thinking_mode: &str,
+) -> Vec<String> {
+    if !native_runtime_supports_reasoning_flag(config) {
+        return config.args.clone();
+    }
+
+    let mut args = Vec::with_capacity(config.args.len() + 2);
+    let mut iter = config.args.iter();
+    while let Some(arg) = iter.next() {
+        if matches!(arg.as_str(), "-rea" | "--reasoning") {
+            let _ = iter.next();
+            continue;
+        }
+        if arg.starts_with("-rea=") || arg.starts_with("--reasoning=") {
+            continue;
+        }
+        args.push(arg.clone());
+    }
+    args.push("--reasoning".to_string());
+    args.push(thinking_mode.to_string());
+    args
+}
+
+fn native_runtime_configs_equivalent(
+    left: &crate::config::IlhaeProfileNativeRuntimeConfig,
+    right: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> bool {
+    left.server_bin.trim() == right.server_bin.trim()
+        && left.provider.as_deref().map(str::trim) == right.provider.as_deref().map(str::trim)
+        && left.health_url.trim() == right.health_url.trim()
+        && left.base_url.trim() == right.base_url.trim()
+        && left.model_path.trim() == right.model_path.trim()
+        && left.args == right.args
+}
+
+fn read_proc_cmdline(pid: u32) -> Option<Vec<String>> {
+    let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(
+        bytes
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part).to_string())
+            .collect(),
+    )
+}
+
+fn native_runtime_cmdline_matches(
+    cmdline: &[String],
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> bool {
+    let server_name = std::path::Path::new(&config.server_bin)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .trim();
+    if server_name.is_empty() {
+        return false;
+    }
+
+    let server_matches = cmdline.iter().any(|arg| {
+        std::path::Path::new(arg)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name == server_name)
+            .unwrap_or(false)
+    });
+    if !server_matches {
+        return false;
+    }
+
+    let model_path = config.model_path.trim();
+    model_path.is_empty() || cmdline.iter().any(|arg| arg == model_path)
+}
+
+fn find_native_runtime_pids(config: &crate::config::IlhaeProfileNativeRuntimeConfig) -> Vec<u32> {
+    let current_pid = std::process::id();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<u32>().ok())
+        })
+        .filter(|pid| *pid != current_pid)
+        .filter(|pid| {
+            read_proc_cmdline(*pid)
+                .map(|cmdline| native_runtime_cmdline_matches(&cmdline, config))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+async fn stop_native_runtime_server_for_config(
+    profile_id: &str,
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> anyhow::Result<()> {
+    let pids = find_native_runtime_pids(config);
+    if pids.is_empty() {
+        info!(
+            profile = %profile_id,
+            "[NativeRuntime] no matching local model server to stop"
+        );
+        return Ok(());
+    }
+
+    for pid in &pids {
+        match std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => warn!(
+                profile = %profile_id,
+                pid = *pid,
+                status = %status,
+                "[NativeRuntime] failed to terminate local model server"
+            ),
+            Err(err) => warn!(
+                profile = %profile_id,
+                pid = *pid,
+                error = %err,
+                "[NativeRuntime] failed to terminate local model server"
+            ),
+        }
+    }
+
+    let started = tokio::time::Instant::now();
+    loop {
+        let remaining: Vec<u32> = pids
+            .iter()
+            .copied()
+            .filter(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists())
+            .collect();
+        if remaining.is_empty() {
+            break;
+        }
+        if !config.health_url.trim().is_empty()
+            && !native_runtime_healthcheck(&config.health_url).await
+        {
+            break;
+        }
+        if started.elapsed() >= Duration::from_secs(15) {
+            for pid in remaining {
+                let _ = std::process::Command::new("kill")
+                    .arg("-KILL")
+                    .arg(pid.to_string())
+                    .status();
+            }
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    info!(
+        profile = %profile_id,
+        pids = ?pids,
+        "[NativeRuntime] stopped local model server"
+    );
+    Ok(())
+}
+
 pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Result<()> {
     let Some((profile_id, config)) = crate::config::get_native_runtime_config(profile_id) else {
         return Ok(());
     };
 
+    if native_runtime_healthcheck(&config.health_url).await {
+        if !config.base_url.trim().is_empty() {
+            unsafe {
+                std::env::set_var("CODEX_OSS_BASE_URL", &config.base_url);
+            }
+        }
+        return Ok(());
+    }
+
+    let _start_lock = acquire_native_runtime_start_lock(&profile_id, &config)?;
     if native_runtime_healthcheck(&config.health_url).await {
         if !config.base_url.trim().is_empty() {
             unsafe {
@@ -319,37 +567,45 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
     Ok(())
 }
 
+pub async fn switch_native_runtime_for_cli(
+    previous_profile_id: Option<&str>,
+    next_profile_id: Option<&str>,
+) -> anyhow::Result<()> {
+    let previous =
+        previous_profile_id.and_then(|id| crate::config::get_native_runtime_config(Some(id)));
+    let next = next_profile_id.and_then(|id| crate::config::get_native_runtime_config(Some(id)));
+
+    if let Some((previous_id, previous_config)) = previous.as_ref() {
+        let should_stop_previous = next
+            .as_ref()
+            .map(|(_, next_config)| {
+                !native_runtime_configs_equivalent(previous_config, next_config)
+            })
+            .unwrap_or(true);
+        if should_stop_previous {
+            stop_native_runtime_server_for_config(previous_id, previous_config).await?;
+        }
+    }
+
+    if let Some((next_id, _)) = next {
+        ensure_native_runtime_for_cli(Some(&next_id)).await?;
+    } else {
+        unsafe {
+            std::env::remove_var("CODEX_OSS_BASE_URL");
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn stop_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Result<()> {
     let Some((profile_id, config)) = crate::config::get_native_runtime_config(profile_id) else {
         println!("No active native runtime profile found.");
         return Ok(());
     };
 
-    let path = std::path::Path::new(&config.server_bin);
-    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        println!(
-            "Stopping native runtime: {} (profile: {})",
-            name, profile_id
-        );
-
-        let mut cmd = std::process::Command::new("killall");
-        cmd.arg(name);
-
-        match cmd.status() {
-            Ok(status) => {
-                if status.success() {
-                    println!("Successfully stopped {}.", name);
-                } else {
-                    println!("Failed to stop {} (maybe it wasn't running).", name);
-                }
-            }
-            Err(e) => {
-                println!("Error attempting to stop {}: {}", name, e);
-            }
-        }
-    }
-
-    Ok(())
+    println!("Stopping native runtime profile: {}", profile_id);
+    stop_native_runtime_server_for_config(&profile_id, &config).await
 }
 
 fn flatten_prompt_blocks_to_text(blocks: Vec<ContentBlock>) -> String {
@@ -543,6 +799,144 @@ pub async fn bootstrap_ilhae_runtime() -> anyhow::Result<BootstrappedIlhaeRuntim
     spawn_native_runtime_background_workers(&runtime);
 
     Ok(runtime)
+}
+
+fn foreground_loop_item(
+    id: String,
+    title: &str,
+    summary: String,
+    status: codex_protocol::protocol::LoopLifecycleStatus,
+    reason: &str,
+    duration_ms: Option<i64>,
+) -> codex_protocol::items::LoopLifecycleItem {
+    codex_protocol::items::LoopLifecycleItem {
+        id,
+        kind: codex_protocol::protocol::LoopLifecycleKind::SuperLoop,
+        title: title.to_string(),
+        summary,
+        detail: Some("foreground loop cycle".to_string()),
+        status,
+        reason: Some(reason.to_string()),
+        counts: None,
+        error: None,
+        duration_ms,
+        target_profile: None,
+    }
+}
+
+fn foreground_loop_item_id(name: &str) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("{name}:foreground:{millis}")
+}
+
+async fn run_foreground_loop_cycle_with_runtime(
+    settings_store: Arc<SettingsStore>,
+    brain: Arc<brain_rs::BrainService>,
+    ilhae_dir: std::path::PathBuf,
+) -> anyhow::Result<bool> {
+    let settings = settings_store.get();
+    if crate::session_context_service::build_runtime_loop_developer_instructions(&settings)
+        .is_none()
+    {
+        return Ok(false);
+    }
+    let knowledge_worker =
+        crate::config::knowledge_mode_includes_worker(&settings.agent.knowledge_mode);
+    let knowledge_kairos =
+        crate::config::knowledge_mode_includes_kairos(&settings.agent.knowledge_mode);
+    if knowledge_worker || knowledge_kairos {
+        let item_id = foreground_loop_item_id("knowledge_loop");
+        let started = std::time::Instant::now();
+        emit_native_loop_lifecycle(crate::IlhaeLoopLifecycleNotification::Started {
+            session_id: "native-runtime".to_string(),
+            item: foreground_loop_item(
+                item_id.clone(),
+                "Running Knowledge Loop",
+                "Knowledge loop foreground cycle started".to_string(),
+                codex_protocol::protocol::LoopLifecycleStatus::InProgress,
+                "knowledge_foreground_started",
+                None,
+            ),
+        });
+        if knowledge_worker {
+            knowledge_loop::maybe_run_cycle(
+                knowledge_loop::KnowledgeLoopDriver::Worker,
+                settings_store.clone(),
+                ilhae_dir.clone(),
+            )
+            .await;
+        }
+        if knowledge_kairos {
+            knowledge_loop::maybe_run_cycle(
+                knowledge_loop::KnowledgeLoopDriver::Kairos,
+                settings_store.clone(),
+                ilhae_dir.clone(),
+            )
+            .await;
+        }
+        emit_native_loop_lifecycle(crate::IlhaeLoopLifecycleNotification::Completed {
+            session_id: "native-runtime".to_string(),
+            item: foreground_loop_item(
+                item_id,
+                "Running Knowledge Loop",
+                "Knowledge loop foreground cycle completed".to_string(),
+                codex_protocol::protocol::LoopLifecycleStatus::Completed,
+                "knowledge_foreground_completed",
+                Some(started.elapsed().as_millis() as i64),
+            ),
+        });
+    }
+
+    let autonomous_sessions: Arc<
+        Cache<String, context_proxy::autonomy::state::AutonomousSessionState>,
+    > = Arc::new(
+        moka::sync::Cache::builder()
+            .time_to_idle(std::time::Duration::from_secs(3600))
+            .build(),
+    );
+    crate::super_loop::maybe_run_cycle(
+        crate::super_loop::SuperLoopDriver::Worker,
+        brain,
+        settings_store,
+        autonomous_sessions,
+        ilhae_dir,
+    )
+    .await;
+
+    Ok(true)
+}
+
+pub async fn run_exec_foreground_loop_cycle(
+    settings: crate::settings_types::Settings,
+) -> anyhow::Result<()> {
+    let ilhae_dir = resolve_ilhae_data_dir();
+    std::fs::create_dir_all(&ilhae_dir).ok();
+    let settings_store = Arc::new(SettingsStore::new_with_snapshot(
+        &ilhae_dir,
+        settings.clone(),
+    ));
+    let brain_dir = crate::config::get_active_vault_dir();
+    let brain_writer = brain_session_rs::brain_session_writer::BrainSessionWriter::new(&brain_dir);
+    let brain = Arc::new(
+        brain_rs::BrainService::new_with_brain_writer(&ilhae_dir, None, brain_writer).map_err(
+            |err| anyhow::anyhow!("failed to initialize brain for foreground loop: {err}"),
+        )?,
+    );
+
+    run_foreground_loop_cycle_with_runtime(settings_store, brain, ilhae_dir)
+        .await
+        .map(|_| ())
+}
+
+pub async fn run_active_foreground_loop_cycle() -> anyhow::Result<bool> {
+    let Some(runtime) = native_runtime_context() else {
+        return Ok(false);
+    };
+    run_foreground_loop_cycle_with_runtime(runtime.settings_store, runtime.brain, runtime.ilhae_dir)
+        .await
 }
 
 pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
@@ -1625,4 +2019,55 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
         daemon_mode,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            // SAFETY: tests scope process env mutations and restore values on drop.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: tests restore process env to its previous value before exiting scope.
+            unsafe {
+                if let Some(previous) = self.previous.as_ref() {
+                    std::env::set_var(self.key, previous);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_runtime_start_lock_path_is_global_for_all_profiles() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path());
+        let mut first = crate::config::IlhaeProfileNativeRuntimeConfig::default();
+        first.base_url = "http://127.0.0.1:8081/v1".to_string();
+        first.health_url = "http://127.0.0.1:8081/health".to_string();
+        let mut second = first.clone();
+        second.base_url = "http://127.0.0.1:8082/v1".to_string();
+        second.health_url = "http://127.0.0.1:8082/health".to_string();
+
+        assert_eq!(
+            native_runtime_start_lock_path("qwen-local", &first),
+            native_runtime_start_lock_path("nemotron-local", &second)
+        );
+    }
 }

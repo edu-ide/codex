@@ -6741,6 +6741,7 @@ impl ChatWidget {
             | ServerNotification::McpServerOauthLoginCompleted(_)
             | ServerNotification::AppListUpdated(_)
             | ServerNotification::ExternalAgentConfigImportCompleted(_)
+            | ServerNotification::IlhaeLoopLifecycle(_)
             | ServerNotification::FsChanged(_)
             | ServerNotification::FuzzyFileSearchSessionUpdated(_)
             | ServerNotification::FuzzyFileSearchSessionCompleted(_)
@@ -8163,7 +8164,18 @@ impl ChatWidget {
                 return;
             }
         };
+        let presets =
+            Self::model_popup_presets_for_catalog(presets, self.ilhae_local_model_presets());
         self.open_model_popup_with_presets(presets);
+    }
+
+    fn model_popup_presets_for_catalog(
+        catalog_presets: Vec<ModelPreset>,
+        ilhae_local_presets: Option<Vec<ModelPreset>>,
+    ) -> Vec<ModelPreset> {
+        ilhae_local_presets
+            .filter(|presets| !presets.is_empty())
+            .unwrap_or(catalog_presets)
     }
 
     pub(crate) fn open_personality_popup(&mut self) {
@@ -10342,7 +10354,8 @@ impl ChatWidget {
                 config.cwd.to_path_buf(),
                 CODEX_CLI_VERSION,
             )
-            .with_yolo_mode(history_cell::is_yolo_mode(config)),
+            .with_yolo_mode(history_cell::is_yolo_mode(config))
+            .with_runtime_profile(history_cell::current_ilhae_runtime_profile_for_header()),
         )
     }
 

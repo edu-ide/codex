@@ -29,6 +29,7 @@ use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WebSearchToolConfig;
 use codex_protocol::items::AgentMessageContent as CoreAgentMessageContent;
+use codex_protocol::items::LoopLifecycleItem;
 use codex_protocol::items::TurnItem as CoreTurnItem;
 use codex_protocol::mcp::CallToolResult as CoreMcpCallToolResult;
 use codex_protocol::mcp::Prompt as McpPrompt;
@@ -2388,6 +2389,51 @@ pub struct McpResourceReadParams {
 #[ts(export_to = "v2/")]
 pub struct McpResourceReadResponse {
     pub contents: Vec<McpResourceContent>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct McpPromptGetParams {
+    #[ts(optional = nullable)]
+    pub thread_id: Option<String>,
+    pub server: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub arguments: Option<JsonValue>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct McpPromptGetResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub description: Option<String>,
+    pub messages: Vec<JsonValue>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct McpCompletionCompleteParams {
+    #[ts(optional = nullable)]
+    pub thread_id: Option<String>,
+    pub server: String,
+    #[serde(rename = "ref")]
+    pub reference: JsonValue,
+    pub argument: JsonValue,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub context: Option<JsonValue>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct McpCompletionCompleteResponse {
+    pub completion: JsonValue,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -6432,6 +6478,45 @@ pub struct LoopLifecycleProgressNotification {
     pub counts: Option<BTreeMap<String, i64>>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(tag = "event", rename_all = "snake_case")]
+#[ts(tag = "event")]
+#[ts(export_to = "v2/")]
+pub enum IlhaeLoopLifecycleNotification {
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Started {
+        session_id: String,
+        item: LoopLifecycleItem,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Progress {
+        session_id: String,
+        item_id: String,
+        kind: LoopLifecycleKind,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        counts: Option<BTreeMap<String, i64>>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Completed {
+        session_id: String,
+        item: LoopLifecycleItem,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Failed {
+        session_id: String,
+        item: LoopLifecycleItem,
+    },
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -7060,6 +7145,10 @@ impl From<McpServerElicitationRequestResponse> for rmcp::model::CreateElicitatio
         Self {
             action: value.action.into(),
             content: value.content,
+            meta: value.meta.and_then(|meta| match meta {
+                JsonValue::Object(object) => Some(rmcp::model::Meta(object)),
+                _ => None,
+            }),
         }
     }
 }
@@ -7069,7 +7158,7 @@ impl From<rmcp::model::CreateElicitationResult> for McpServerElicitationRequestR
         Self {
             action: value.action.into(),
             content: value.content,
-            meta: None,
+            meta: value.meta.map(|meta| JsonValue::Object(meta.0)),
         }
     }
 }
@@ -9001,6 +9090,7 @@ mod tests {
             content: Some(json!({
                 "confirmed": true,
             })),
+            meta: None,
         };
 
         let v2_response = McpServerElicitationRequestResponse::from(rmcp_result.clone());

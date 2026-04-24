@@ -41,6 +41,7 @@ export type { InputModality } from "./InputModality";
 export type { LocalShellAction } from "./LocalShellAction";
 export type { LocalShellExecAction } from "./LocalShellExecAction";
 export type { LocalShellStatus } from "./LocalShellStatus";
+export type { LoopLifecycleItem } from "./LoopLifecycleItem";
 export type { LoopLifecycleKind } from "./LoopLifecycleKind";
 export type { LoopLifecycleStatus } from "./LoopLifecycleStatus";
 export type { MessagePhase } from "./MessagePhase";

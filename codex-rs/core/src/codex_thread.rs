@@ -21,6 +21,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
+use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
@@ -320,18 +321,56 @@ impl CodexThread {
         server: &str,
         uri: &str,
     ) -> anyhow::Result<serde_json::Value> {
+        self.refresh_mcp_servers_if_requested_for_out_of_band_call()
+            .await;
         let result = self
             .codex
             .session
             .read_resource(
                 server,
-                ReadResourceRequestParams {
-                    meta: None,
-                    uri: uri.to_string(),
-                },
+                ReadResourceRequestParams::new(uri.to_string()),
             )
             .await?;
 
+        Ok(serde_json::to_value(result)?)
+    }
+
+    pub async fn get_mcp_prompt(
+        &self,
+        server: &str,
+        name: &str,
+        arguments: Option<serde_json::Value>,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.refresh_mcp_servers_if_requested_for_out_of_band_call()
+            .await;
+        let arguments = match arguments {
+            Some(serde_json::Value::Object(map)) => Some(map),
+            Some(other) => {
+                return Err(anyhow::anyhow!(
+                    "MCP prompt arguments must be a JSON object, got {other}"
+                ));
+            }
+            None => None,
+        };
+        let mut prompt_params = rmcp::model::GetPromptRequestParams::new(name.to_string());
+        prompt_params.arguments = arguments;
+        let result = self
+            .codex
+            .session
+            .get_prompt(server, prompt_params)
+            .await?;
+
+        Ok(serde_json::to_value(result)?)
+    }
+
+    pub async fn complete_mcp(
+        &self,
+        server: &str,
+        params: rmcp::model::CompleteRequestParams,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.refresh_mcp_servers_if_requested_for_out_of_band_call()
+            .await;
+        let result = self.codex.session.complete(server, params).await?;
         Ok(serde_json::to_value(result)?)
     }
 
@@ -342,10 +381,31 @@ impl CodexThread {
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) -> anyhow::Result<CallToolResult> {
+        self.refresh_mcp_servers_if_requested_for_out_of_band_call()
+            .await;
         self.codex
             .session
             .call_tool(server, tool, arguments, meta)
             .await
+    }
+
+    async fn refresh_mcp_servers_if_requested_for_out_of_band_call(&self) {
+        let turn_context = self.codex.session.new_default_turn().await;
+        self.codex
+            .session
+            .refresh_mcp_servers_if_requested(turn_context.as_ref())
+            .await;
+    }
+
+    pub async fn queue_mcp_server_refresh_for_out_of_band_call(
+        &self,
+        refresh_config: McpServerRefreshConfig,
+    ) {
+        self.codex
+            .session
+            .queue_mcp_server_refresh_for_out_of_band_call(refresh_config)
+            .await;
+        self.codex.session.reload_user_config_layer().await;
     }
 
     pub fn enabled(&self, feature: Feature) -> bool {

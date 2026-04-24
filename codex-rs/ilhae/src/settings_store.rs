@@ -11,6 +11,7 @@ pub struct SettingsStore {
     settings_path: PathBuf,
     ilhae_dir: PathBuf,
     settings: Arc<RwLock<Settings>>,
+    persist_on_set: bool,
     pub event_tx: broadcast::Sender<SettingsEvent>,
 }
 
@@ -26,6 +27,22 @@ impl SettingsStore {
             settings_path,
             ilhae_dir: ilhae_dir.to_path_buf(),
             settings: Arc::new(RwLock::new(settings)),
+            persist_on_set: true,
+            event_tx,
+        }
+    }
+
+    pub fn new_with_snapshot(ilhae_dir: &Path, settings: Settings) -> Self {
+        let settings_path = ilhae_dir
+            .join("brain")
+            .join("settings")
+            .join("app_settings.runtime_overlay.json");
+        let (event_tx, _) = broadcast::channel(64);
+        Self {
+            settings_path,
+            ilhae_dir: ilhae_dir.to_path_buf(),
+            settings: Arc::new(RwLock::new(settings)),
+            persist_on_set: false,
             event_tx,
         }
     }
@@ -52,7 +69,9 @@ impl SettingsStore {
         set_json_path(&mut json, key, value.clone())?;
         let mut settings: Settings = serde_json::from_value(json).map_err(|e| e.to_string())?;
         migrate_legacy_settings(&mut settings);
-        persist_settings(&self.settings_path, &settings)?;
+        if self.persist_on_set {
+            persist_settings(&self.settings_path, &settings)?;
+        }
 
         if let Ok(mut guard) = self.settings.write() {
             *guard = settings;

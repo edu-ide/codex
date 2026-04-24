@@ -287,6 +287,7 @@ fn build_test_processor(
         auth_manager,
         rpc_transport: AppServerRpcTransport::Stdio,
         remote_control_handle: None,
+        runtime_hooks: crate::AppServerRuntimeHooks::default(),
     }));
     (processor, outgoing_rx)
 }

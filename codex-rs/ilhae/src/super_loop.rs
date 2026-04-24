@@ -327,6 +327,14 @@ fn self_improvement_uses_dsrs_runtime(settings: &crate::settings_types::Settings
             .eq_ignore_ascii_case("dsrs_runtime")
 }
 
+fn self_improvement_uses_foreground(settings: &crate::settings_types::Settings) -> bool {
+    settings.agent.self_improvement_enabled
+        && settings
+            .agent
+            .self_improvement_preset
+            .eq_ignore_ascii_case("foreground")
+}
+
 pub(crate) fn default_self_improvement_followup_spec_for_runtime() -> SelfImprovementFollowupSpec {
     SelfImprovementFollowupSpec {
         prompt:
@@ -1306,8 +1314,10 @@ fn execute_plan(
                     source_signature: Some(finding.signature.clone()),
                     ..followup
                 };
-                if let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)? {
-                    actions.push(run_action);
+                if !self_improvement_uses_foreground(settings) {
+                    if let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)? {
+                        actions.push(run_action);
+                    }
                 }
                 actions.push(followup);
             }
@@ -1333,8 +1343,10 @@ fn execute_plan(
                     source_signature: Some(finding.signature.clone()),
                     ..followup
                 };
-                if let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)? {
-                    actions.push(run_action);
+                if !self_improvement_uses_foreground(settings) {
+                    if let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)? {
+                        actions.push(run_action);
+                    }
                 }
                 actions.push(followup);
             }
@@ -1361,8 +1373,10 @@ fn execute_plan(
                     source_signature: Some(finding.signature.clone()),
                     ..followup
                 };
-                if let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)? {
-                    actions.push(run_action);
+                if !self_improvement_uses_foreground(settings) {
+                    if let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)? {
+                        actions.push(run_action);
+                    }
                 }
                 actions.push(followup);
             }

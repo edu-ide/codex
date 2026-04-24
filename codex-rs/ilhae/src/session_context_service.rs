@@ -84,6 +84,17 @@ SELF-IMPROVEMENT MODE IS ENABLED.
 </system_directive>
 "#;
 
+const SELF_IMPROVEMENT_MODE_FOREGROUND_INSTRUCTION: &str = r#"
+<system_directive priority="medium">
+SELF-IMPROVEMENT MODE IS ENABLED.
+- Preset: foreground.
+- Keep self-improvement work visible in the active foreground session.
+- Do not silently auto-apply memory, skill, or dream changes from a background loop.
+- Use dream analysis to prepare concise review/apply decisions and wait for explicit foreground approval before mutation.
+- Prefer app-server loop lifecycle/status updates over silent background work.
+</system_directive>
+"#;
+
 const SELF_IMPROVEMENT_MODE_SAFE_SUMMARIZE_INSTRUCTION: &str = r#"
 <system_directive priority="medium">
 SELF-IMPROVEMENT MODE IS ENABLED.
@@ -173,6 +184,7 @@ fn advisor_instruction_for_preset(preset: &str) -> &'static str {
 
 fn self_improvement_instruction_for_preset(preset: &str) -> &'static str {
     match preset.trim() {
+        "foreground" => SELF_IMPROVEMENT_MODE_FOREGROUND_INSTRUCTION,
         "review_only" => SELF_IMPROVEMENT_MODE_REVIEW_ONLY_INSTRUCTION,
         "safe_apply" => SELF_IMPROVEMENT_MODE_SAFE_APPLY_INSTRUCTION,
         "safe_summarize" => SELF_IMPROVEMENT_MODE_SAFE_SUMMARIZE_INSTRUCTION,
@@ -180,6 +192,52 @@ fn self_improvement_instruction_for_preset(preset: &str) -> &'static str {
         "gepa_sidecar" => SELF_IMPROVEMENT_MODE_GEPA_SIDECAR_INSTRUCTION,
         _ => SELF_IMPROVEMENT_MODE_INSTRUCTION,
     }
+}
+
+pub fn build_runtime_loop_developer_instructions(
+    settings: &crate::settings_types::Settings,
+) -> Option<String> {
+    let agent = &settings.agent;
+    let knowledge_mode = crate::config::normalize_knowledge_mode(&agent.knowledge_mode);
+    let knowledge_enabled = knowledge_mode != "off";
+    let super_loop_enabled = agent.kairos_enabled
+        || agent.self_improvement_enabled
+        || agent.autonomous_mode
+        || knowledge_enabled;
+
+    if !super_loop_enabled {
+        return None;
+    }
+
+    let enabled = |value: bool| if value { "enabled" } else { "disabled" };
+    let mut blocks = vec![format!(
+        r#"<system_directive priority="medium">
+ILHAE RUNTIME LOOP STATE.
+- Source: Ilhae CLI/Desktop runtime settings, not Codex CLI mode names.
+- Super Loop: {}
+- Kairos: {}
+- Autonomous: {}
+- Knowledge loop: {} ({})
+- Self-improvement: {}
+- Preset: {}
+</system_directive>"#,
+        enabled(super_loop_enabled),
+        enabled(agent.kairos_enabled),
+        enabled(agent.autonomous_mode),
+        enabled(knowledge_enabled),
+        knowledge_mode,
+        enabled(agent.self_improvement_enabled),
+        agent.self_improvement_preset.trim()
+    )];
+
+    if agent.self_improvement_enabled {
+        blocks.push(
+            self_improvement_instruction_for_preset(&agent.self_improvement_preset).to_string(),
+        );
+        blocks.push(SELF_IMPROVEMENT_SKILL_CREATION_INSTRUCTION.to_string());
+    }
+
+    Some(blocks.join("\n\n"))
 }
 
 pub fn extract_user_text(prompt: &[ContentBlock]) -> String {

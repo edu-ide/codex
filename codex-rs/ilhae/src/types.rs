@@ -390,7 +390,7 @@ pub struct IlhaeAppEngineSetResponse {
     pub matrix: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct IlhaeAppProfileAgentDto {
     #[serde(rename = "engineId", default, skip_serializing_if = "Option::is_none")]
@@ -423,10 +423,38 @@ pub struct IlhaeAppProfileAgentDto {
     #[serde(rename = "autoPauseOnError", default)]
     pub auto_pause_on_error: bool,
     pub kairos: bool,
-    #[serde(rename = "selfImprovement")]
+    #[serde(
+        rename = "selfImprovement",
+        default = "crate::settings_types::default_self_improvement_enabled"
+    )]
     pub self_improvement: bool,
     #[serde(rename = "selfImprovementPreset", default)]
     pub self_improvement_preset: String,
+}
+
+impl Default for IlhaeAppProfileAgentDto {
+    fn default() -> Self {
+        Self {
+            engine_id: None,
+            command: None,
+            team_mode: false,
+            dream_mode: false,
+            embed_mode: false,
+            team_backend: String::new(),
+            team_merge_policy: String::new(),
+            team_max_retries: 0,
+            team_pause_on_error: false,
+            auto_mode: false,
+            advisor: false,
+            advisor_preset: String::new(),
+            auto_max_turns: 0,
+            auto_timebox_minutes: 0,
+            auto_pause_on_error: false,
+            kairos: false,
+            self_improvement: crate::settings_types::default_self_improvement_enabled(),
+            self_improvement_preset: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]

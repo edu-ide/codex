@@ -1939,6 +1939,122 @@
       ],
       "type": "object"
     },
+    "IlhaeLoopLifecycleNotification": {
+      "oneOf": [
+        {
+          "properties": {
+            "event": {
+              "enum": [
+                "started"
+              ],
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/definitions/LoopLifecycleItem"
+            },
+            "sessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "sessionId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "counts": {
+              "additionalProperties": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event": {
+              "enum": [
+                "progress"
+              ],
+              "type": "string"
+            },
+            "itemId": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/LoopLifecycleKind"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "itemId",
+            "kind",
+            "sessionId",
+            "summary"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "event": {
+              "enum": [
+                "completed"
+              ],
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/definitions/LoopLifecycleItem"
+            },
+            "sessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "sessionId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "event": {
+              "enum": [
+                "failed"
+              ],
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/definitions/LoopLifecycleItem"
+            },
+            "sessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "sessionId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ItemCompletedNotification": {
       "properties": {
         "item": {
@@ -2050,6 +2166,74 @@
         "item",
         "threadId",
         "turnId"
+      ],
+      "type": "object"
+    },
+    "LoopLifecycleItem": {
+      "properties": {
+        "counts": {
+          "additionalProperties": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/LoopLifecycleKind"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/LoopLifecycleStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "target_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "status",
+        "summary",
+        "title"
       ],
       "type": "object"
     },
@@ -5255,6 +5439,26 @@
         "params"
       ],
       "title": "Item/loopLifecycle/progressNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "ilhae/loop_lifecycle"
+          ],
+          "title": "Ilhae/loopLifecycleNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/IlhaeLoopLifecycleNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Ilhae/loopLifecycleNotification",
       "type": "object"
     },
     {

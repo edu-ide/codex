@@ -760,7 +760,7 @@ pub async fn spawn_local_a2a_server(
     if let Some(pid) = child.id() {
         let ilhae_dir = dirs::home_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("ilhae");
+            .join(".ilhae");
         crate::append_child_pid(&ilhae_dir, pid);
     }
     Ok(child)

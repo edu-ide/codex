@@ -33,6 +33,10 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_protocol::protocol::McpListToolsResponseEvent;
 use codex_protocol::protocol::SandboxPolicy;
+use rmcp::model::CompleteRequestParams;
+use rmcp::model::CompleteResult;
+use rmcp::model::GetPromptRequestParams;
+use rmcp::model::GetPromptResult;
 use rmcp::model::ReadResourceRequestParams;
 use rmcp::model::ReadResourceResult;
 use serde_json::Value;
@@ -356,12 +360,75 @@ pub async fn read_mcp_resource(
     let result = manager
         .read_resource(
             server,
-            ReadResourceRequestParams {
-                meta: None,
-                uri: uri.to_string(),
-            },
+            ReadResourceRequestParams::new(uri.to_string()),
         )
         .await;
+    cancel_token.cancel();
+    result
+}
+
+pub async fn get_mcp_prompt(
+    config: &McpConfig,
+    auth: Option<&CodexAuth>,
+    runtime_environment: McpRuntimeEnvironment,
+    server: &str,
+    params: GetPromptRequestParams,
+) -> anyhow::Result<GetPromptResult> {
+    let mut mcp_servers = effective_mcp_servers(config, auth);
+    mcp_servers.retain(|name, _| name == server);
+    let auth_statuses =
+        compute_auth_statuses(mcp_servers.iter(), config.mcp_oauth_credentials_store_mode).await;
+    let (tx_event, rx_event) = unbounded();
+    drop(rx_event);
+    let (manager, cancel_token) = McpConnectionManager::new(
+        &mcp_servers,
+        config.mcp_oauth_credentials_store_mode,
+        auth_statuses,
+        &config.approval_policy,
+        String::new(),
+        tx_event,
+        SandboxPolicy::new_read_only_policy(),
+        runtime_environment,
+        config.codex_home.clone(),
+        codex_apps_tools_cache_key(auth),
+        tool_plugin_provenance(config),
+    )
+    .await;
+
+    let result = manager.get_prompt(server, params).await;
+    cancel_token.cancel();
+    result
+}
+
+pub async fn complete_mcp(
+    config: &McpConfig,
+    auth: Option<&CodexAuth>,
+    runtime_environment: McpRuntimeEnvironment,
+    server: &str,
+    params: CompleteRequestParams,
+) -> anyhow::Result<CompleteResult> {
+    let mut mcp_servers = effective_mcp_servers(config, auth);
+    mcp_servers.retain(|name, _| name == server);
+    let auth_statuses =
+        compute_auth_statuses(mcp_servers.iter(), config.mcp_oauth_credentials_store_mode).await;
+    let (tx_event, rx_event) = unbounded();
+    drop(rx_event);
+    let (manager, cancel_token) = McpConnectionManager::new(
+        &mcp_servers,
+        config.mcp_oauth_credentials_store_mode,
+        auth_statuses,
+        &config.approval_policy,
+        String::new(),
+        tx_event,
+        SandboxPolicy::new_read_only_policy(),
+        runtime_environment,
+        config.codex_home.clone(),
+        codex_apps_tools_cache_key(auth),
+        tool_plugin_provenance(config),
+    )
+    .await;
+
+    let result = manager.complete(server, params).await;
     cancel_token.cancel();
     result
 }

@@ -149,6 +149,7 @@ macro_rules! register_admin_settings_handlers {
                 let cx_cache = s.infra.relay_conductor_cx.clone();
                 async move |req: crate::IlhaeAppProfileSetRequest, responder: Responder<crate::IlhaeAppProfileSetResponse>, _cx: ConnectionTo<Conductor>| {
                     info!("ilhae/app/profile/set RPC profile={}", req.profile_id);
+                    let previous_active = crate::config::load_ilhae_toml_config().profile.active;
                     let profile = match crate::config::set_active_ilhae_profile(&req.profile_id) {
                         Ok(profile) => profile,
                         Err(e) => {
@@ -157,6 +158,15 @@ macro_rules! register_admin_settings_handlers {
                     };
                     if let Err(e) = crate::config::apply_ilhae_profile_projection(&settings, &profile) {
                         return responder.respond_with_error(sacp::util::internal_error(e));
+                    }
+                    if let Err(e) = crate::config::prepare_ilhae_codex_home() {
+                        return responder.respond_with_error(sacp::util::internal_error(e));
+                    }
+                    if let Err(e) = crate::switch_native_runtime_for_cli(
+                        previous_active.as_deref(),
+                        Some(profile.id.as_str()),
+                    ).await {
+                        return responder.respond_with_error(sacp::util::internal_error(e.to_string()));
                     }
                     crate::notify_engine_state(&cx_cache, &settings).await;
                     responder.respond(crate::IlhaeAppProfileSetResponse {
@@ -171,6 +181,7 @@ macro_rules! register_admin_settings_handlers {
                 let cx_cache = s.infra.relay_conductor_cx.clone();
                 async move |req: crate::IlhaeAppProfileUpsertRequest, responder: Responder<crate::IlhaeAppProfileUpsertResponse>, _cx: ConnectionTo<Conductor>| {
                     info!("ilhae/app/profile/upsert RPC profile={}", req.profile.id);
+                    let previous_active = crate::config::load_ilhae_toml_config().profile.active;
                     let (active_profile, profile) = match crate::config::upsert_ilhae_profile(req.profile, req.activate) {
                         Ok(result) => result,
                         Err(e) => {
@@ -181,6 +192,15 @@ macro_rules! register_admin_settings_handlers {
                     if active_profile.as_deref() == Some(profile.id.as_str()) {
                         if let Err(e) = crate::config::apply_ilhae_profile_projection(&settings, &profile) {
                             return responder.respond_with_error(sacp::util::internal_error(e));
+                        }
+                        if let Err(e) = crate::config::prepare_ilhae_codex_home() {
+                            return responder.respond_with_error(sacp::util::internal_error(e));
+                        }
+                        if let Err(e) = crate::switch_native_runtime_for_cli(
+                            previous_active.as_deref(),
+                            Some(profile.id.as_str()),
+                        ).await {
+                            return responder.respond_with_error(sacp::util::internal_error(e.to_string()));
                         }
                         crate::notify_engine_state(&cx_cache, &settings).await;
                     }
@@ -298,11 +318,20 @@ macro_rules! register_admin_settings_handlers {
             // ═══ Get Cached ConfigOptions ═══
             .on_receive_request_from(sacp::Client, {
                 let config_cache = s.infra.cached_config_options.clone();
+                let settings = s.infra.settings_store.clone();
                 async move |_req: GetConfigOptionsRequest, responder: Responder<GetConfigOptionsResponse>, _cx: ConnectionTo<Conductor>| {
                     let cache = config_cache.read().await;
                     let options = if cache.is_empty() {
-                        // Fallback: read from ~/.gemini/settings.json before first session/new
-                        crate::helpers::build_gemini_config_options()
+                        let agent_id = crate::helpers::infer_agent_id_from_command(
+                            &settings.get().agent.command,
+                        );
+                        if crate::helpers::is_ilhae_native_agent_id(&agent_id) {
+                            crate::config_builder::build_codex_config_options()
+                        } else if agent_id == "gemini" {
+                            crate::helpers::build_gemini_config_options()
+                        } else {
+                            Vec::new()
+                        }
                     } else {
                         cache.clone()
                     };

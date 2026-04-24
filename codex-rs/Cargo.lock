@@ -2083,7 +2083,7 @@ dependencies = [
  "hyper-util",
  "ilhae-common",
  "reqwest 0.12.28",
- "rmcp 1.5.0",
+ "rmcp",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -2736,7 +2736,7 @@ dependencies = [
  "owo-colors",
  "pretty_assertions",
  "reqwest 0.12.28",
- "rmcp 0.15.0",
+ "rmcp",
  "serde",
  "serde_json",
  "serial_test",
@@ -2795,7 +2795,7 @@ dependencies = [
  "codex-utils-cargo-bin",
  "inventory",
  "pretty_assertions",
- "rmcp 0.15.0",
+ "rmcp",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -3265,7 +3265,7 @@ dependencies = [
  "rand 0.9.3",
  "regex-lite",
  "reqwest 0.12.28",
- "rmcp 0.15.0",
+ "rmcp",
  "serde",
  "serde_json",
  "serial_test",
@@ -3626,10 +3626,11 @@ dependencies = [
  "futures-util",
  "ilhae-common",
  "inventory",
+ "libc",
  "moka",
  "regex",
  "reqwest 0.12.28",
- "rmcp 0.15.0",
+ "rmcp",
  "rusqlite",
  "sacp",
  "sacp-conductor",
@@ -3775,7 +3776,7 @@ dependencies = [
  "futures",
  "pretty_assertions",
  "regex-lite",
- "rmcp 0.15.0",
+ "rmcp",
  "serde",
  "serde_json",
  "sha1",
@@ -3811,7 +3812,7 @@ dependencies = [
  "mcp_test_support",
  "os_info",
  "pretty_assertions",
- "rmcp 0.15.0",
+ "rmcp",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -4085,7 +4086,7 @@ dependencies = [
  "oauth2",
  "pretty_assertions",
  "reqwest 0.12.28",
- "rmcp 0.15.0",
+ "rmcp",
  "serde",
  "serde_json",
  "serial_test",
@@ -4318,7 +4319,7 @@ dependencies = [
  "codex-utils-absolute-path",
  "codex-utils-pty",
  "pretty_assertions",
- "rmcp 0.15.0",
+ "rmcp",
  "serde",
  "serde_json",
  "tracing",
@@ -4398,7 +4399,7 @@ dependencies = [
  "ratatui-macros",
  "regex-lite",
  "reqwest 0.12.28",
- "rmcp 0.15.0",
+ "rmcp",
  "serde",
  "serde_json",
  "serial_test",
@@ -10454,7 +10455,7 @@ dependencies = [
  "core_test_support",
  "os_info",
  "pretty_assertions",
- "rmcp 0.15.0",
+ "rmcp",
  "serde",
  "serde_json",
  "shlex",
@@ -13465,12 +13466,11 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "0.15.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bef41ebc9ebed2c1b1d90203e9d1756091e8a00bbc3107676151f39868ca0ee"
+checksum = "67d69668de0b0ccd9cc435f700f3b39a7861863cf37a15e1f304ea78688a4826"
 dependencies = [
  "async-trait",
- "axum 0.8.8",
  "base64 0.22.1",
  "bytes",
  "chrono",
@@ -13482,9 +13482,9 @@ dependencies = [
  "pastey 0.2.1",
  "pin-project-lite",
  "process-wrap",
- "rand 0.9.3",
- "reqwest 0.12.28",
- "rmcp-macros 0.15.0",
+ "rand 0.10.1",
+ "reqwest 0.13.2",
+ "rmcp-macros",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -13497,41 +13497,6 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "rmcp"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67d69668de0b0ccd9cc435f700f3b39a7861863cf37a15e1f304ea78688a4826"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "futures",
- "pastey 0.2.1",
- "pin-project-lite",
- "rmcp-macros 1.5.0",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "rmcp-macros"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e88ad84b8b6237a934534a62b379a5be6388915663c0cc598ceb9b3292bbbfe"
-dependencies = [
- "darling 0.23.0",
- "proc-macro2",
- "quote",
- "serde_json",
- "syn 2.0.114",
 ]
 
 [[package]]
@@ -13914,7 +13879,7 @@ dependencies = [
  "futures",
  "futures-concurrency",
  "jsonrpcmsg",
- "rmcp 1.5.0",
+ "rmcp",
  "rustc-hash 2.1.1",
  "sacp-derive",
  "schemars 0.8.22",

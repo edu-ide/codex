@@ -12,8 +12,10 @@ use codex_login::AuthManager;
 use codex_utils_cli::CliConfigOverrides;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::future::Future;
 use std::io::ErrorKind;
 use std::io::Result as IoResult;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
@@ -38,6 +40,7 @@ use codex_analytics::AppServerRpcTransport;
 use codex_app_server_protocol::ConfigLayerSource;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::JSONRPCMessage;
+use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::TextPosition as AppTextPosition;
 use codex_app_server_protocol::TextRange as AppTextRange;
 use codex_core::ExecPolicyError;
@@ -64,6 +67,14 @@ use tracing_subscriber::filter::Targets;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::Registry;
 use tracing_subscriber::util::SubscriberInitExt;
+
+pub type AppServerTurnStartFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+pub type AppServerTurnStartHook = Arc<dyn Fn() -> AppServerTurnStartFuture + Send + Sync>;
+
+#[derive(Clone, Default)]
+pub struct AppServerRuntimeHooks {
+    pub before_turn_start: Option<AppServerTurnStartHook>,
+}
 
 mod app_server_tracing;
 mod bespoke_event_handling;
@@ -96,6 +107,8 @@ pub use crate::transport::AppServerTransport;
 pub use crate::transport::auth::AppServerWebsocketAuthArgs;
 pub use crate::transport::auth::AppServerWebsocketAuthSettings;
 pub use crate::transport::auth::WebsocketAuthCliMode;
+
+pub type ExternalServerNotificationReceiver = mpsc::Receiver<ServerNotification>;
 
 const LOG_FORMAT_ENV_VAR: &str = "LOG_FORMAT";
 
@@ -360,6 +373,54 @@ pub async fn run_main_with_transport(
     transport: AppServerTransport,
     session_source: SessionSource,
     auth: AppServerWebsocketAuthSettings,
+) -> IoResult<()> {
+    run_main_with_transport_and_server_notifications(
+        arg0_paths,
+        cli_config_overrides,
+        loader_overrides,
+        default_analytics_enabled,
+        transport,
+        session_source,
+        auth,
+        None,
+    )
+    .await
+}
+
+pub async fn run_main_with_transport_and_server_notifications(
+    arg0_paths: Arg0DispatchPaths,
+    cli_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+    default_analytics_enabled: bool,
+    transport: AppServerTransport,
+    session_source: SessionSource,
+    auth: AppServerWebsocketAuthSettings,
+    external_notifications: Option<ExternalServerNotificationReceiver>,
+) -> IoResult<()> {
+    run_main_with_transport_notifications_and_runtime_hooks(
+        arg0_paths,
+        cli_config_overrides,
+        loader_overrides,
+        default_analytics_enabled,
+        transport,
+        session_source,
+        auth,
+        external_notifications,
+        AppServerRuntimeHooks::default(),
+    )
+    .await
+}
+
+pub async fn run_main_with_transport_notifications_and_runtime_hooks(
+    arg0_paths: Arg0DispatchPaths,
+    cli_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+    default_analytics_enabled: bool,
+    transport: AppServerTransport,
+    session_source: SessionSource,
+    auth: AppServerWebsocketAuthSettings,
+    external_notifications: Option<ExternalServerNotificationReceiver>,
+    runtime_hooks: AppServerRuntimeHooks,
 ) -> IoResult<()> {
     let environment_manager = Arc::new(EnvironmentManager::new(EnvironmentManagerArgs::from_env(
         ExecServerRuntimePaths::from_optional_paths(
@@ -644,8 +705,20 @@ pub async fn run_main_with_transport(
         info!("outbound router task exited (channel closed)");
     });
 
+    let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(outgoing_tx));
+    let external_notification_handle = external_notifications.map(|mut external_rx| {
+        let outgoing_message_sender = Arc::clone(&outgoing_message_sender);
+        tokio::spawn(async move {
+            while let Some(notification) = external_rx.recv().await {
+                outgoing_message_sender
+                    .send_server_notification(notification)
+                    .await;
+            }
+        })
+    });
+
     let processor_handle = tokio::spawn({
-        let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(outgoing_tx));
+        let outgoing_message_sender = Arc::clone(&outgoing_message_sender);
         let outbound_control_tx = outbound_control_tx;
         let auth_manager =
             AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false);
@@ -662,6 +735,7 @@ pub async fn run_main_with_transport(
             auth_manager,
             rpc_transport: analytics_rpc_transport(transport),
             remote_control_handle: Some(remote_control_handle),
+            runtime_hooks,
         }));
         let mut thread_created_rx = processor.thread_created_receiver();
         let mut running_turn_count_rx = processor.subscribe_running_assistant_turn_count();
@@ -878,6 +952,11 @@ pub async fn run_main_with_transport(
     drop(transport_event_tx);
 
     let _ = processor_handle.await;
+    if let Some(handle) = external_notification_handle {
+        handle.abort();
+        let _ = handle.await;
+    }
+    drop(outgoing_message_sender);
     let _ = outbound_handle.await;
 
     transport_shutdown_token.cancel();

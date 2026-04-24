@@ -16,6 +16,7 @@ use codex_app_server_protocol::TurnStatus;
 use codex_core::config::Config;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::protocol::SessionConfiguredEvent;
+use serde_json::Value as JsonValue;
 use serde_json::json;
 
 pub use crate::event_processor::CodexStatus;
@@ -35,6 +36,7 @@ use crate::exec_events::FileUpdateChange;
 use crate::exec_events::ItemCompletedEvent;
 use crate::exec_events::ItemStartedEvent;
 use crate::exec_events::ItemUpdatedEvent;
+use crate::exec_events::LoopLifecycleEvent;
 use crate::exec_events::McpToolCallItem;
 use crate::exec_events::McpToolCallItemError;
 use crate::exec_events::McpToolCallItemResult;
@@ -578,6 +580,12 @@ impl EventProcessorWithJsonOutput {
             ServerNotification::TurnStarted(notification) => {
                 events.push(ThreadEvent::TurnStarted(TurnStartedEvent {
                     turn_id: notification.turn.id.clone(),
+                }));
+                CodexStatus::Running
+            }
+            ServerNotification::IlhaeLoopLifecycle(notification) => {
+                events.push(ThreadEvent::LoopLifecycle(LoopLifecycleEvent {
+                    notification: serde_json::to_value(notification).unwrap_or(JsonValue::Null),
                 }));
                 CodexStatus::Running
             }

@@ -425,14 +425,9 @@ impl ThreadManager {
             .cloned()
             .collect::<Vec<_>>();
         for thread in threads {
-            if let Err(err) = thread
-                .submit(Op::RefreshMcpServers {
-                    config: refresh_config.clone(),
-                })
-                .await
-            {
-                warn!("failed to request MCP server refresh: {err}");
-            }
+            thread
+                .queue_mcp_server_refresh_for_out_of_band_call(refresh_config.clone())
+                .await;
         }
     }
 

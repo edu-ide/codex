@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use codex_model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
+use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
 use codex_tools::create_apply_patch_json_tool;
@@ -92,29 +93,38 @@ fn create_tools_json_for_llama_server(
     let mut tools_json = Vec::new();
 
     for tool in tools {
-        let Some(tool) = llama_server_tool_spec(tool) else {
-            continue;
-        };
-        let json = serde_json::to_value(tool)?;
-        tools_json.push(json);
+        for tool in llama_server_tool_specs(tool) {
+            let json = serde_json::to_value(tool)?;
+            tools_json.push(json);
+        }
     }
 
     Ok(tools_json)
 }
 
-fn llama_server_tool_spec(tool: &ToolSpec) -> Option<ToolSpec> {
+fn llama_server_tool_specs(tool: &ToolSpec) -> Vec<ToolSpec> {
     match tool {
-        ToolSpec::Function(tool) => Some(ToolSpec::Function(tool.clone())),
-        ToolSpec::LocalShell {} => Some(create_local_shell_json_tool()),
+        ToolSpec::Function(tool) => vec![ToolSpec::Function(tool.clone())],
+        ToolSpec::Namespace(namespace) => namespace
+            .tools
+            .iter()
+            .map(|tool| match tool {
+                ResponsesApiNamespaceTool::Function(tool) => {
+                    let mut flattened_tool = tool.clone();
+                    flattened_tool.name = format!("{}{}", namespace.name, flattened_tool.name);
+                    ToolSpec::Function(flattened_tool)
+                }
+            })
+            .collect(),
+        ToolSpec::LocalShell {} => vec![create_local_shell_json_tool()],
         ToolSpec::Freeform(tool) if tool.name == "apply_patch" => {
-            Some(create_apply_patch_json_tool())
+            vec![create_apply_patch_json_tool()]
         }
-        ToolSpec::Freeform(tool) if tool.name == "js_repl" => Some(create_js_repl_json_tool()),
+        ToolSpec::Freeform(tool) if tool.name == "js_repl" => vec![create_js_repl_json_tool()],
         ToolSpec::ToolSearch { .. }
         | ToolSpec::ImageGeneration { .. }
         | ToolSpec::WebSearch { .. }
-        | ToolSpec::Namespace(_)
-        | ToolSpec::Freeform(_) => None,
+        | ToolSpec::Freeform(_) => Vec::new(),
     }
 }
 
