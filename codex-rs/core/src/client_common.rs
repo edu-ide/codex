@@ -1,6 +1,6 @@
-use crate::LLAMA_SERVER_OSS_PROVIDER_ID;
 pub use codex_api::ResponseEvent;
 use codex_config::types::Personality;
+use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::FunctionCallOutputBody;
@@ -75,7 +75,8 @@ impl Prompt {
         // instructions. We declare the result as a named variable for clarity.
         let is_freeform_apply_patch_tool_present = self.tools.iter().any(|tool| match tool {
             ToolSpec::Freeform(f) => {
-                f.name == "apply_patch" && provider_id != Some(LLAMA_SERVER_OSS_PROVIDER_ID)
+                f.name == "apply_patch"
+                    && !provider_id.is_some_and(provider_uses_json_function_tools)
             }
             _ => false,
         });

@@ -275,6 +275,26 @@ async fn get_model_info_tracks_fallback_usage() {
 }
 
 #[tokio::test]
+async fn bundled_qwen_27b_model_uses_catalog_metadata() {
+    let codex_home = tempdir().expect("temp dir");
+    let config = ModelsManagerConfig::default();
+    let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
+    let manager = ModelsManager::new(
+        codex_home.path().to_path_buf(),
+        auth_manager,
+        /*model_catalog*/ None,
+        CollaborationModesConfig::default(),
+    );
+
+    let model_info = manager
+        .get_model_info("Qwen3.6-27B-UD-Q4_K_XL", &config)
+        .await;
+
+    assert!(!model_info.used_fallback_model_metadata);
+    assert_eq!(model_info.slug, "Qwen3.6-27B-UD-Q4_K_XL");
+}
+
+#[tokio::test]
 async fn get_model_info_uses_custom_catalog() {
     let codex_home = tempdir().expect("temp dir");
     let config = ModelsManagerConfig::default();

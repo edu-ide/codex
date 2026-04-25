@@ -329,6 +329,53 @@ fn tool_search_payloads_roundtrip_as_tool_search_outputs() {
 }
 
 #[test]
+fn tool_search_function_payloads_roundtrip_as_function_outputs() {
+    let payload = ToolPayload::Function {
+        arguments: json!({"query": "calendar"}).to_string(),
+    };
+    let response = ToolSearchOutput {
+        tools: vec![LoadableToolSpec::Function(codex_tools::ResponsesApiTool {
+            name: "create_event".to_string(),
+            description: String::new(),
+            strict: false,
+            defer_loading: Some(true),
+            parameters: codex_tools::JsonSchema::object(
+                /*properties*/ Default::default(),
+                /*required*/ None,
+                /*additional_properties*/ None,
+            ),
+            output_schema: None,
+        })],
+    }
+    .to_response_item("search-1", &payload);
+
+    match response {
+        ResponseInputItem::FunctionCallOutput { call_id, output } => {
+            assert_eq!(call_id, "search-1");
+            let tools: serde_json::Value =
+                serde_json::from_str(&output.body.to_text().expect("tool output text"))
+                    .expect("tool_search function output should be JSON");
+            assert_eq!(
+                tools,
+                json!([{
+                    "type": "function",
+                    "name": "create_event",
+                    "description": "",
+                    "strict": false,
+                    "defer_loading": true,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }])
+            );
+            assert_eq!(output.success, Some(true));
+        }
+        other => panic!("expected FunctionCallOutput, got {other:?}"),
+    }
+}
+
+#[test]
 fn log_preview_uses_content_items_when_plain_text_is_missing() {
     let output = FunctionToolOutput::from_content(
         vec![FunctionCallOutputContentItem::InputText {

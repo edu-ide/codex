@@ -393,11 +393,23 @@ impl ModelProviderInfo {
 
 pub const DEFAULT_LMSTUDIO_PORT: u16 = 1234;
 pub const DEFAULT_OLLAMA_PORT: u16 = 11434;
-pub const DEFAULT_LLAMA_SERVER_PORT: u16 = 8080;
+pub const DEFAULT_LLAMA_SERVER_PORT: u16 = 8082;
 
 pub const LMSTUDIO_OSS_PROVIDER_ID: &str = "lmstudio";
 pub const OLLAMA_OSS_PROVIDER_ID: &str = "ollama";
 pub const LLAMA_SERVER_OSS_PROVIDER_ID: &str = "llama-server";
+pub const SGLANG_OSS_PROVIDER_ID: &str = "sglang";
+pub const ILHAE_NATIVE_PROVIDER_PREFIX: &str = "ilhae-native-";
+
+pub fn provider_uses_json_function_tools(provider_id: &str) -> bool {
+    matches!(
+        provider_id,
+        LLAMA_SERVER_OSS_PROVIDER_ID
+            | SGLANG_OSS_PROVIDER_ID
+            | OLLAMA_OSS_PROVIDER_ID
+            | LMSTUDIO_OSS_PROVIDER_ID
+    ) || provider_id.starts_with(ILHAE_NATIVE_PROVIDER_PREFIX)
+}
 
 /// Built-in default provider list.
 pub fn built_in_model_providers(
@@ -427,7 +439,7 @@ pub fn built_in_model_providers(
             create_oss_provider(DEFAULT_LMSTUDIO_PORT, WireApi::Responses),
         ),
         (
-            "sglang",
+            SGLANG_OSS_PROVIDER_ID,
             ModelProviderInfo {
                 name: "SGLang GPU Server".into(),
                 base_url: Some(

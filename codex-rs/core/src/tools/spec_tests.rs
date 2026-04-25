@@ -1062,6 +1062,69 @@ fn llama_server_flattens_namespaced_mcp_tools() {
     assert_eq!(tools[0]["description"], "Navigate to a URL");
 }
 
+#[test]
+fn local_function_compat_providers_lower_internal_tools_to_json_functions() {
+    let tools = create_tools_json_for_responses_api_with_provider(
+        &[
+            ToolSpec::Namespace(ResponsesApiNamespace {
+                name: "mcp__browser__".to_string(),
+                description: "Browser MCP tools".to_string(),
+                tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                    name: "browser_navigate".to_string(),
+                    description: "Navigate to a URL".to_string(),
+                    strict: false,
+                    defer_loading: None,
+                    parameters: JsonSchema::object(Default::default(), None, None),
+                    output_schema: None,
+                })],
+            }),
+            ToolSpec::ToolSearch {
+                execution: "client".to_string(),
+                description: "Search available tools".to_string(),
+                parameters: JsonSchema::object(
+                    BTreeMap::from([(
+                        "query".to_string(),
+                        JsonSchema::string(Some("Search query".to_string())),
+                    )]),
+                    Some(vec!["query".to_string()]),
+                    Some(false.into()),
+                ),
+            },
+        ],
+        "sglang",
+    )
+    .expect("sglang tool serialization should succeed");
+
+    let names = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("function tool name"))
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["mcp__browser__browser_navigate", "tool_search"]);
+    assert!(tools.iter().all(|tool| tool["type"] == "function"));
+}
+
+#[test]
+fn ilhae_native_providers_lower_internal_tools_to_json_functions() {
+    let tools = create_tools_json_for_responses_api_with_provider(
+        &[ToolSpec::Freeform(codex_tools::FreeformTool {
+            name: "apply_patch".to_string(),
+            description: "patch".to_string(),
+            format: codex_tools::FreeformToolFormat {
+                r#type: "grammar".to_string(),
+                syntax: "lark".to_string(),
+                definition: "start:".to_string(),
+            },
+        })],
+        "ilhae-native-qwen3.6-local",
+    )
+    .expect("ilhae native tool serialization should succeed");
+
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0]["type"], "function");
+    assert_eq!(tools[0]["name"], "apply_patch");
+    assert!(tools[0]["parameters"]["properties"].get("input").is_some());
+}
+
 #[tokio::test]
 async fn unavailable_mcp_tools_are_exposed_as_dummy_function_tools() {
     let config = test_config().await;

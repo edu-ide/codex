@@ -5,6 +5,7 @@ use codex_features::Feature;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::ToolInfo as McpToolInfo;
 use codex_mcp::filter_non_codex_apps_mcp_tools_only;
+use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_tools::ToolsConfig;
 
 use crate::config::Config;
@@ -35,6 +36,7 @@ pub(crate) fn build_mcp_tool_exposure(
     }
 
     let should_defer = tools_config.search_tool
+        && !provider_uses_json_function_tools(&config.model_provider_id)
         && (config
             .features
             .enabled(Feature::ToolSearchAlwaysDeferMcpTools)

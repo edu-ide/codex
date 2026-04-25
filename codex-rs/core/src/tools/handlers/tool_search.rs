@@ -9,6 +9,7 @@ use bm25::Document;
 use bm25::Language;
 use bm25::SearchEngine;
 use bm25::SearchEngineBuilder;
+use codex_protocol::models::SearchToolCallParams;
 use codex_tools::LoadableToolSpec;
 use codex_tools::TOOL_SEARCH_DEFAULT_LIMIT;
 use codex_tools::TOOL_SEARCH_TOOL_NAME;
@@ -39,6 +40,25 @@ impl ToolSearchHandler {
             search_engine,
         }
     }
+
+    fn args_from_payload(
+        &self,
+        payload: ToolPayload,
+    ) -> Result<SearchToolCallParams, FunctionCallError> {
+        match payload {
+            ToolPayload::ToolSearch { arguments } => Ok(arguments),
+            ToolPayload::Function { arguments } => {
+                serde_json::from_str(&arguments).map_err(|err| {
+                    FunctionCallError::RespondToModel(format!(
+                        "failed to parse tool_search arguments: {err}"
+                    ))
+                })
+            }
+            _ => Err(FunctionCallError::Fatal(format!(
+                "{TOOL_SEARCH_TOOL_NAME} handler received unsupported payload"
+            ))),
+        }
+    }
 }
 
 impl ToolHandler for ToolSearchHandler {
@@ -54,14 +74,7 @@ impl ToolHandler for ToolSearchHandler {
     ) -> Result<ToolSearchOutput, FunctionCallError> {
         let ToolInvocation { payload, .. } = invocation;
 
-        let args = match payload {
-            ToolPayload::ToolSearch { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::Fatal(format!(
-                    "{TOOL_SEARCH_TOOL_NAME} handler received unsupported payload"
-                )));
-            }
-        };
+        let args = self.args_from_payload(payload)?;
 
         let query = args.query.trim();
         if query.is_empty() {
@@ -176,6 +189,7 @@ mod tests {
     use crate::tools::tool_search_entry::build_tool_search_entries;
     use codex_mcp::ToolInfo;
     use codex_protocol::dynamic_tools::DynamicToolSpec;
+    use codex_protocol::models::SearchToolCallParams;
     use codex_tools::ResponsesApiNamespace;
     use codex_tools::ResponsesApiNamespaceTool;
     use codex_tools::ResponsesApiTool;
@@ -276,6 +290,35 @@ mod tests {
                     })],
                 }),
             ],
+        );
+    }
+
+    #[test]
+    fn tool_search_accepts_json_function_payload_for_local_compat_providers() {
+        let handler = handler_from_tools(
+            Some(&std::collections::HashMap::from([(
+                "mcp__calendar__create_event".to_string(),
+                tool_info("calendar", "create_event", "Create events"),
+            )])),
+            &[],
+        );
+
+        let args = handler
+            .args_from_payload(ToolPayload::Function {
+                arguments: serde_json::json!({
+                    "query": "calendar",
+                    "limit": 1
+                })
+                .to_string(),
+            })
+            .expect("function payload should parse as tool_search arguments");
+
+        assert_eq!(
+            args,
+            SearchToolCallParams {
+                query: "calendar".to_string(),
+                limit: Some(1),
+            }
         );
     }
 

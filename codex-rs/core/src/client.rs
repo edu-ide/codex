@@ -83,7 +83,6 @@ use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout_trace::CompactionTraceContext;
 use codex_rollout_trace::InferenceTraceAttempt;
 use codex_rollout_trace::InferenceTraceContext;
-use codex_tools::create_tools_json_for_responses_api;
 use eventsource_stream::Event;
 use eventsource_stream::EventStreamError;
 use futures::StreamExt;
@@ -118,10 +117,15 @@ use codex_model_provider::SharedModelProvider;
 use codex_model_provider::create_model_provider;
 #[cfg(test)]
 use codex_model_provider_info::DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
+use codex_model_provider_info::ILHAE_NATIVE_PROVIDER_PREFIX;
+use codex_model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
+use codex_model_provider_info::SGLANG_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
+use codex_responses_api_proxy::SglangQwenProxy;
+use codex_responses_api_proxy::maybe_start_sglang_qwen_proxy;
 
 use codex_response_debug_context::extract_response_debug_context;
 use codex_response_debug_context::extract_response_debug_context_from_api_error;
@@ -165,6 +169,7 @@ struct ModelClientState {
     beta_features_header: Option<String>,
     disable_websockets: AtomicBool,
     cached_websocket_session: StdMutex<WebsocketSession>,
+    _responses_proxy: Option<SglangQwenProxy>,
 }
 
 /// Resolved API client setup for a single request attempt.
@@ -290,6 +295,56 @@ fn sideband_websocket_auth_headers(api_auth: &dyn AuthProvider) -> ApiHeaderMap 
     headers
 }
 
+fn maybe_start_local_responses_proxy(
+    model_provider_id: &str,
+    provider_info: &mut ModelProviderInfo,
+) -> Option<SglangQwenProxy> {
+    let compat_provider_id =
+        local_responses_proxy_compat_provider_id(model_provider_id, provider_info)?;
+    let current_exe = std::env::current_exe().ok();
+    match maybe_start_sglang_qwen_proxy(
+        compat_provider_id,
+        provider_info.base_url.as_deref(),
+        current_exe.as_deref(),
+    ) {
+        Ok(Some(proxy)) => {
+            provider_info.base_url = Some(proxy.base_url().to_string());
+            Some(proxy)
+        }
+        Ok(None) => None,
+        Err(err) => {
+            warn!(
+                provider_id = model_provider_id,
+                compat_provider_id,
+                error = %err,
+                "failed to start local responses compatibility proxy; falling back to provider base_url"
+            );
+            None
+        }
+    }
+}
+
+fn local_responses_proxy_compat_provider_id(
+    model_provider_id: &str,
+    provider_info: &ModelProviderInfo,
+) -> Option<&'static str> {
+    match model_provider_id {
+        SGLANG_OSS_PROVIDER_ID => return Some(SGLANG_OSS_PROVIDER_ID),
+        LLAMA_SERVER_OSS_PROVIDER_ID => return Some(LLAMA_SERVER_OSS_PROVIDER_ID),
+        _ => {}
+    }
+
+    if !model_provider_id.starts_with(ILHAE_NATIVE_PROVIDER_PREFIX) {
+        return None;
+    }
+
+    match provider_info.name.trim().to_ascii_lowercase().as_str() {
+        SGLANG_OSS_PROVIDER_ID => Some(SGLANG_OSS_PROVIDER_ID),
+        LLAMA_SERVER_OSS_PROVIDER_ID | "" => Some(LLAMA_SERVER_OSS_PROVIDER_ID),
+        _ => None,
+    }
+}
+
 impl ModelClient {
     #[allow(clippy::too_many_arguments)]
     /// Creates a new session-scoped `ModelClient`.
@@ -301,13 +356,15 @@ impl ModelClient {
         conversation_id: ThreadId,
         model_provider_id: String,
         installation_id: String,
-        provider_info: ModelProviderInfo,
+        mut provider_info: ModelProviderInfo,
         session_source: SessionSource,
         model_verbosity: Option<VerbosityConfig>,
         enable_request_compression: bool,
         include_timing_metrics: bool,
         beta_features_header: Option<String>,
     ) -> Self {
+        let responses_proxy =
+            maybe_start_local_responses_proxy(&model_provider_id, &mut provider_info);
         let model_provider = create_model_provider(provider_info, auth_manager);
         let codex_api_key_env_enabled = model_provider
             .auth_manager()
@@ -330,6 +387,7 @@ impl ModelClient {
                 beta_features_header,
                 disable_websockets: AtomicBool::new(false),
                 cached_websocket_session: StdMutex::new(WebsocketSession::default()),
+                _responses_proxy: responses_proxy,
             }),
         }
     }

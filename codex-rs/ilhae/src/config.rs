@@ -1110,7 +1110,60 @@ fn native_runtime_for_profile(
     }
 }
 
-fn codex_profile_table_for_ilhae_profile(profile: &IlhaeProfileConfig) -> toml::value::Table {
+fn native_model_provider_id_for_profile(profile_id: &str) -> String {
+    format!("ilhae-native-{profile_id}")
+}
+
+fn native_model_provider_table(runtime: &IlhaeProfileNativeRuntimeConfig) -> toml::value::Table {
+    let mut table = toml::value::Table::new();
+    table.insert(
+        "name".to_string(),
+        toml::Value::String(
+            runtime
+                .provider
+                .as_deref()
+                .map(str::trim)
+                .filter(|provider| !provider.is_empty())
+                .unwrap_or("llama-server")
+                .to_string(),
+        ),
+    );
+    table.insert(
+        "base_url".to_string(),
+        toml::Value::String(runtime.base_url.trim().to_string()),
+    );
+    table.insert(
+        "wire_api".to_string(),
+        toml::Value::String("responses".to_string()),
+    );
+    table.insert(
+        "requires_openai_auth".to_string(),
+        toml::Value::Boolean(false),
+    );
+    table
+}
+
+fn insert_native_model_provider(
+    model_providers: &mut toml::value::Table,
+    profile_id: &str,
+    profile: &IlhaeProfileConfig,
+) {
+    let Some(runtime) = native_runtime_for_profile(profile) else {
+        return;
+    };
+    if runtime.base_url.trim().is_empty() {
+        return;
+    }
+    model_providers.insert(
+        native_model_provider_id_for_profile(profile_id),
+        toml::Value::Table(native_model_provider_table(runtime)),
+    );
+}
+
+fn codex_profile_table_for_ilhae_profile(
+    profile_id: &str,
+    profile: &IlhaeProfileConfig,
+) -> toml::value::Table {
     let native = native_runtime_for_profile(profile);
     let mut table = toml::value::Table::new();
     let model_name = native
@@ -1126,15 +1179,14 @@ fn codex_profile_table_for_ilhae_profile(profile: &IlhaeProfileConfig) -> toml::
         .map(|runtime| parse_context_window_from_native_args(&runtime.args))
         .unwrap_or(32_768);
     let model_provider = native
-        .and_then(|runtime| runtime.provider.clone())
-        .filter(|provider| !provider.trim().is_empty())
-        .unwrap_or_else(|| {
-            if native.is_some() {
-                "llama-server".to_string()
-            } else {
-                profile_engine_id(profile)
-            }
-        });
+        .filter(|runtime| !runtime.base_url.trim().is_empty())
+        .map(|_| native_model_provider_id_for_profile(profile_id))
+        .or_else(|| {
+            native
+                .and_then(|runtime| runtime.provider.clone())
+                .filter(|provider| !provider.trim().is_empty())
+        })
+        .unwrap_or_else(|| profile_engine_id(profile));
 
     table.insert("model".to_string(), toml::Value::String(model_name));
     table.insert(
@@ -1145,13 +1197,6 @@ fn codex_profile_table_for_ilhae_profile(profile: &IlhaeProfileConfig) -> toml::
         "model_provider".to_string(),
         toml::Value::String(model_provider),
     );
-
-    if let Some(url) = native
-        .map(|runtime| runtime.base_url.trim())
-        .filter(|url| !url.is_empty())
-    {
-        table.insert("url".to_string(), toml::Value::String(url.to_string()));
-    }
 
     table
 }
@@ -1330,6 +1375,14 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
     }
 
     let mut features = toml::value::Table::new();
+    features.insert(
+        "apply_patch_freeform".to_string(),
+        toml::Value::Boolean(true),
+    );
+    features.insert(
+        "apply_patch_streaming_events".to_string(),
+        toml::Value::Boolean(true),
+    );
     features.insert("fast_mode".to_string(), toml::Value::Boolean(true));
     features.insert("multi_agent".to_string(), toml::Value::Boolean(true));
     root.insert("features".to_string(), toml::Value::Table(features));
@@ -1392,14 +1445,6 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
 
     root.insert("mcp_servers".to_string(), toml::Value::Table(mcp_servers));
 
-    let model_providers = user_model_providers_for_managed_config();
-    if !model_providers.is_empty() {
-        root.insert(
-            "model_providers".to_string(),
-            toml::Value::Table(model_providers),
-        );
-    }
-
     let mut plugins = toml::value::Table::new();
     for plugin in [
         "canva@openai-curated",
@@ -1412,16 +1457,39 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
     }
     root.insert("plugins".to_string(), toml::Value::Table(plugins));
 
+    let mut model_providers = user_model_providers_for_managed_config();
+    for (profile_id, profile) in &config.profiles {
+        insert_native_model_provider(&mut model_providers, profile_id, profile);
+    }
+    let active_profile_provider_id = active_profile_name
+        .as_deref()
+        .unwrap_or("ilhae-active")
+        .to_string();
+    insert_native_model_provider(
+        &mut model_providers,
+        &active_profile_provider_id,
+        &active_profile,
+    );
+    if !model_providers.is_empty() {
+        root.insert(
+            "model_providers".to_string(),
+            toml::Value::Table(model_providers),
+        );
+    }
+
     let mut profiles = toml::value::Table::new();
     for (profile_id, profile) in &config.profiles {
         profiles.insert(
             profile_id.clone(),
-            toml::Value::Table(codex_profile_table_for_ilhae_profile(profile)),
+            toml::Value::Table(codex_profile_table_for_ilhae_profile(profile_id, profile)),
         );
     }
     profiles.insert(
         "ilhae-active".to_string(),
-        toml::Value::Table(codex_profile_table_for_ilhae_profile(&active_profile)),
+        toml::Value::Table(codex_profile_table_for_ilhae_profile(
+            &active_profile_provider_id,
+            &active_profile,
+        )),
     );
     root.insert("profiles".to_string(), toml::Value::Table(profiles));
 
@@ -1709,12 +1777,9 @@ requires_openai_auth = false
             nemotron_profile
                 .get("model_provider")
                 .and_then(toml::Value::as_str),
-            Some("llama-server")
+            Some("ilhae-native-nemotron-local")
         );
-        assert_eq!(
-            nemotron_profile.get("url").and_then(toml::Value::as_str),
-            Some("http://127.0.0.1:8081/v1")
-        );
+        assert!(nemotron_profile.get("url").is_none());
         assert_eq!(
             nemotron_profile
                 .get("model_context_window")
@@ -1757,6 +1822,22 @@ requires_openai_auth = false
             .expect("minimax provider");
         assert_eq!(
             minimax_provider
+                .get("requires_openai_auth")
+                .and_then(toml::Value::as_bool),
+            Some(false)
+        );
+        let nemotron_provider = model_providers
+            .get("ilhae-native-nemotron-local")
+            .and_then(toml::Value::as_table)
+            .expect("nemotron provider");
+        assert_eq!(
+            nemotron_provider
+                .get("base_url")
+                .and_then(toml::Value::as_str),
+            Some("http://127.0.0.1:8081/v1")
+        );
+        assert_eq!(
+            nemotron_provider
                 .get("requires_openai_auth")
                 .and_then(toml::Value::as_bool),
             Some(false)
@@ -1818,6 +1899,10 @@ requires_openai_auth = false
             .get("agent")
             .and_then(toml::Value::as_table)
             .expect("agent table");
+        let features = parsed
+            .get("features")
+            .and_then(toml::Value::as_table)
+            .expect("features table");
         let instructions = parsed
             .get("developer_instructions")
             .and_then(toml::Value::as_str)
@@ -1826,6 +1911,18 @@ requires_openai_auth = false
         assert_eq!(
             agent
                 .get("self_improvement_enabled")
+                .and_then(toml::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            features
+                .get("apply_patch_freeform")
+                .and_then(toml::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            features
+                .get("apply_patch_streaming_events")
                 .and_then(toml::Value::as_bool),
             Some(true)
         );
@@ -1902,10 +1999,23 @@ requires_openai_auth = false
             local_profile
                 .get("model_provider")
                 .and_then(toml::Value::as_str),
+            Some("ilhae-native-qwen3.6-local")
+        );
+        assert!(local_profile.get("url").is_none());
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .expect("model providers table");
+        let local_provider = model_providers
+            .get("ilhae-native-qwen3.6-local")
+            .and_then(toml::Value::as_table)
+            .expect("local provider");
+        assert_eq!(
+            local_provider.get("name").and_then(toml::Value::as_str),
             Some("sglang")
         );
         assert_eq!(
-            local_profile.get("url").and_then(toml::Value::as_str),
+            local_provider.get("base_url").and_then(toml::Value::as_str),
             Some("http://127.0.0.1:8081/v1")
         );
     }

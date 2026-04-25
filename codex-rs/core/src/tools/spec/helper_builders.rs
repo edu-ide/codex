@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use codex_model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
+use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
@@ -12,8 +12,8 @@ pub fn create_tools_json_for_responses_api_with_provider(
     tools: &[ToolSpec],
     provider_id: &str,
 ) -> codex_protocol::error::Result<Vec<serde_json::Value>> {
-    if provider_id == LLAMA_SERVER_OSS_PROVIDER_ID {
-        return create_tools_json_for_llama_server(tools);
+    if provider_uses_json_function_tools(provider_id) {
+        return create_tools_json_for_json_function_provider(tools);
     }
 
     codex_tools::create_tools_json_for_responses_api(tools)
@@ -87,13 +87,13 @@ pub(super) fn create_advisor_request_tool() -> ToolSpec {
     })
 }
 
-fn create_tools_json_for_llama_server(
+fn create_tools_json_for_json_function_provider(
     tools: &[ToolSpec],
 ) -> codex_protocol::error::Result<Vec<serde_json::Value>> {
     let mut tools_json = Vec::new();
 
     for tool in tools {
-        for tool in llama_server_tool_specs(tool) {
+        for tool in json_function_provider_tool_specs(tool) {
             let json = serde_json::to_value(tool)?;
             tools_json.push(json);
         }
@@ -102,7 +102,7 @@ fn create_tools_json_for_llama_server(
     Ok(tools_json)
 }
 
-fn llama_server_tool_specs(tool: &ToolSpec) -> Vec<ToolSpec> {
+fn json_function_provider_tool_specs(tool: &ToolSpec) -> Vec<ToolSpec> {
     match tool {
         ToolSpec::Function(tool) => vec![ToolSpec::Function(tool.clone())],
         ToolSpec::Namespace(namespace) => namespace
@@ -121,11 +121,29 @@ fn llama_server_tool_specs(tool: &ToolSpec) -> Vec<ToolSpec> {
             vec![create_apply_patch_json_tool()]
         }
         ToolSpec::Freeform(tool) if tool.name == "js_repl" => vec![create_js_repl_json_tool()],
-        ToolSpec::ToolSearch { .. }
-        | ToolSpec::ImageGeneration { .. }
-        | ToolSpec::WebSearch { .. }
-        | ToolSpec::Freeform(_) => Vec::new(),
+        ToolSpec::ToolSearch {
+            description,
+            parameters,
+            ..
+        } => vec![create_tool_search_json_tool(
+            description.clone(),
+            parameters.clone(),
+        )],
+        ToolSpec::ImageGeneration { .. } | ToolSpec::WebSearch { .. } | ToolSpec::Freeform(_) => {
+            Vec::new()
+        }
     }
+}
+
+fn create_tool_search_json_tool(description: String, parameters: JsonSchema) -> ToolSpec {
+    ToolSpec::Function(ResponsesApiTool {
+        name: "tool_search".to_string(),
+        description,
+        strict: false,
+        defer_loading: None,
+        parameters,
+        output_schema: None,
+    })
 }
 
 fn create_local_shell_json_tool() -> ToolSpec {

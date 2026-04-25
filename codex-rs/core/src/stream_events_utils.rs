@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::items::TurnItem;
 use codex_utils_stream_parser::strip_citations;
@@ -64,7 +65,7 @@ pub(crate) fn image_generation_artifact_path(
 }
 
 pub(crate) fn should_hide_think_tags(provider_id: &str) -> bool {
-    provider_id == crate::LLAMA_SERVER_OSS_PROVIDER_ID
+    provider_uses_json_function_tools(provider_id)
 }
 
 fn strip_hidden_assistant_markup(text: &str, plan_mode: bool, hide_think_tags: bool) -> String {

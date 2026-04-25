@@ -214,7 +214,28 @@ impl ToolOutput for ToolSearchOutput {
         true
     }
 
-    fn to_response_item(&self, call_id: &str, _payload: &ToolPayload) -> ResponseInputItem {
+    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
+        if matches!(payload, ToolPayload::Function { .. }) {
+            let tools = self
+                .tools
+                .iter()
+                .map(|tool| {
+                    serde_json::to_value(tool).unwrap_or_else(|err| {
+                        JsonValue::String(format!("failed to serialize tool_search output: {err}"))
+                    })
+                })
+                .collect::<Vec<_>>();
+            return function_tool_response(
+                call_id,
+                payload,
+                vec![FunctionCallOutputContentItem::InputText {
+                    text: JsonValue::Array(tools).to_string(),
+                }],
+                Some(true),
+                None,
+            );
+        }
+
         ResponseInputItem::ToolSearchOutput {
             call_id: call_id.to_string(),
             status: "completed".to_string(),

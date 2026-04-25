@@ -406,6 +406,78 @@
       "supports_search_tool": true,
       "additional_speed_tiers": [],
       "supports_reasoning_summaries": true
+    },
+    {
+      "slug": "Qwen3.6-35B-A3B-UD-IQ4_XS",
+      "display_name": "Qwen3.6-35B-A3B-UD-IQ4_XS",
+      "description": "Local quantized Qwen3.6 model (35B total, 3B active parameters) served via llama-server.",
+      "default_reasoning_level": null,
+      "supported_reasoning_levels": [],
+      "shell_type": "default",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 99,
+      "base_instructions": "",
+      "model_messages": null,
+      "supports_reasoning_summaries": false,
+      "default_reasoning_summary": "auto",
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": null,
+      "web_search_tool_type": "text",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": false,
+      "supports_image_detail_original": false,
+      "context_window": 272000,
+      "max_context_window": 272000,
+      "auto_compact_token_limit": null,
+      "effective_context_window_percent": 95,
+      "experimental_supported_tools": [],
+      "input_modalities": [
+        "text"
+      ],
+      "supports_search_tool": false,
+      "additional_speed_tiers": [],
+      "available_in_plans": []
+    },
+    {
+      "slug": "Qwen3.6-27B-UD-Q4_K_XL",
+      "display_name": "Qwen3.6-27B-UD-Q4_K_XL",
+      "description": "Local quantized Qwen3.6 model (27B parameters) served via llama-server.",
+      "default_reasoning_level": null,
+      "supported_reasoning_levels": [],
+      "shell_type": "default",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 99,
+      "base_instructions": "",
+      "model_messages": null,
+      "supports_reasoning_summaries": false,
+      "default_reasoning_summary": "auto",
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": null,
+      "web_search_tool_type": "text",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": false,
+      "supports_image_detail_original": false,
+      "context_window": 202144,
+      "max_context_window": 202144,
+      "auto_compact_token_limit": null,
+      "effective_context_window_percent": 95,
+      "experimental_supported_tools": [],
+      "input_modalities": [
+        "text"
+      ],
+      "supports_search_tool": false,
+      "additional_speed_tiers": [],
+      "available_in_plans": []
     }
   ]
 }

@@ -33,6 +33,7 @@ mod autostart;
 mod dump;
 mod read_api_key;
 mod sglang_qwen;
+pub use autostart::SglangQwenProxy;
 pub use autostart::maybe_start_sglang_qwen_proxy;
 use dump::ExchangeDumper;
 use read_api_key::read_auth_header_from_stdin;

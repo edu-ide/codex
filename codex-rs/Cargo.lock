@@ -3212,6 +3212,7 @@ dependencies = [
  "codex-plugin",
  "codex-protocol",
  "codex-response-debug-context",
+ "codex-responses-api-proxy",
  "codex-rmcp-client",
  "codex-rollout",
  "codex-rollout-trace",

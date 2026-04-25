@@ -281,6 +281,20 @@ fn test_built_in_model_providers_include_amazon_bedrock() {
 }
 
 #[test]
+fn test_local_oss_providers_use_json_function_tools() {
+    assert!(provider_uses_json_function_tools(
+        LLAMA_SERVER_OSS_PROVIDER_ID
+    ));
+    assert!(provider_uses_json_function_tools(SGLANG_OSS_PROVIDER_ID));
+    assert!(provider_uses_json_function_tools(OLLAMA_OSS_PROVIDER_ID));
+    assert!(provider_uses_json_function_tools(LMSTUDIO_OSS_PROVIDER_ID));
+    assert!(provider_uses_json_function_tools(
+        "ilhae-native-qwen3.6-local"
+    ));
+    assert!(!provider_uses_json_function_tools(OPENAI_PROVIDER_ID));
+}
+
+#[test]
 fn test_merge_configured_model_providers_adds_custom_provider() {
     let custom_provider = ModelProviderInfo {
         name: "Custom".to_string(),

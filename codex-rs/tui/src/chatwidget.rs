@@ -3398,7 +3398,7 @@ impl ChatWidget {
                 .map(|pending| pending.user_message)
                 .collect();
             if !pending_steers.is_empty() {
-                self.submit_user_message(merge_user_messages(pending_steers));
+                self.resubmit_or_restore_user_message(merge_user_messages(pending_steers));
             } else if let Some(combined) = self.drain_pending_messages_for_restore() {
                 self.restore_user_message_to_composer(combined);
             }
@@ -3408,6 +3408,29 @@ impl ChatWidget {
         self.refresh_pending_input_preview();
 
         self.request_redraw();
+    }
+
+    fn resubmit_or_restore_user_message(&mut self, user_message: UserMessage) {
+        let queued_before = self.queued_user_messages.len();
+        let was_session_configured = self.is_session_configured();
+        if self
+            .submit_user_message_with_shell_escape_policy(
+                user_message.clone(),
+                ShellEscapePolicy::Allow,
+            )
+            .is_some()
+        {
+            return;
+        }
+
+        // If submission was queued because the session is still initializing,
+        // leave it in the queue. Otherwise, restore the text so an interrupted
+        // steer is never silently dropped.
+        if !was_session_configured && self.queued_user_messages.len() > queued_before {
+            return;
+        }
+
+        self.restore_user_message_to_composer(user_message);
     }
 
     /// Merge pending steers, queued drafts, and the current composer state into a single message.

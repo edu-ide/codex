@@ -100,7 +100,7 @@ async fn ensure_llama_server_ready(config: &Config) -> io::Result<()> {
     }
 
     Err(io::Error::other(format!(
-        "No running llama-server detected. Start llama.cpp with an OpenAI-compatible server on {host_root} (default port 8080)."
+        "No running llama-server detected. Start llama.cpp with an OpenAI-compatible server on {host_root} (default port 8082)."
     )))
 }
 
