@@ -15,6 +15,8 @@ use std::path::PathBuf;
 const GENERATED_DIR: &str = "generated";
 const POST_TOOL_USE_INPUT_FIXTURE: &str = "post-tool-use.command.input.schema.json";
 const POST_TOOL_USE_OUTPUT_FIXTURE: &str = "post-tool-use.command.output.schema.json";
+const PERMISSION_REQUEST_INPUT_FIXTURE: &str = "permission-request.command.input.schema.json";
+const PERMISSION_REQUEST_OUTPUT_FIXTURE: &str = "permission-request.command.output.schema.json";
 const PRE_TOOL_USE_INPUT_FIXTURE: &str = "pre-tool-use.command.input.schema.json";
 const PRE_TOOL_USE_OUTPUT_FIXTURE: &str = "pre-tool-use.command.output.schema.json";
 const SESSION_START_INPUT_FIXTURE: &str = "session-start.command.input.schema.json";
@@ -24,9 +26,9 @@ const USER_PROMPT_SUBMIT_OUTPUT_FIXTURE: &str = "user-prompt-submit.command.outp
 const STOP_INPUT_FIXTURE: &str = "stop.command.input.schema.json";
 const STOP_OUTPUT_FIXTURE: &str = "stop.command.output.schema.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(transparent)]
-pub struct NullableString(Option<String>);
+pub(crate) struct NullableString(Option<String>);
 
 impl NullableString {
     pub(crate) fn from_path(path: Option<PathBuf>) -> Self {
@@ -54,7 +56,7 @@ impl JsonSchema for NullableString {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct HookUniversalOutputWire {
+pub(crate) struct HookUniversalOutputWire {
     #[serde(default = "default_continue")]
     pub r#continue: bool,
     #[serde(default)]
@@ -66,9 +68,11 @@ pub struct HookUniversalOutputWire {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub enum HookEventNameWire {
+pub(crate) enum HookEventNameWire {
     #[serde(rename = "PreToolUse")]
     PreToolUse,
+    #[serde(rename = "PermissionRequest")]
+    PermissionRequest,
     #[serde(rename = "PostToolUse")]
     PostToolUse,
     #[serde(rename = "SessionStart")]
@@ -83,7 +87,7 @@ pub enum HookEventNameWire {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "pre-tool-use.command.output")]
-pub struct PreToolUseCommandOutputWire {
+pub(crate) struct PreToolUseCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
     #[serde(default)]
@@ -98,7 +102,7 @@ pub struct PreToolUseCommandOutputWire {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "post-tool-use.command.output")]
-pub struct PostToolUseCommandOutputWire {
+pub(crate) struct PostToolUseCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
     #[serde(default)]
@@ -112,7 +116,59 @@ pub struct PostToolUseCommandOutputWire {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct PostToolUseHookSpecificOutputWire {
+#[schemars(rename = "permission-request.command.output")]
+pub(crate) struct PermissionRequestCommandOutputWire {
+    #[serde(flatten)]
+    pub universal: HookUniversalOutputWire,
+    #[serde(default)]
+    pub hook_specific_output: Option<PermissionRequestHookSpecificOutputWire>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PermissionRequestHookSpecificOutputWire {
+    pub hook_event_name: HookEventNameWire,
+    #[serde(default)]
+    pub decision: Option<PermissionRequestDecisionWire>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PermissionRequestDecisionWire {
+    pub behavior: PermissionRequestBehaviorWire,
+    /// Reserved for a future input-rewrite capability.
+    ///
+    /// PermissionRequest hooks currently fail closed if this field is present.
+    #[serde(default)]
+    pub updated_input: Option<Value>,
+    /// Reserved for a future permission-rewrite capability.
+    ///
+    /// PermissionRequest hooks currently fail closed if this field is present.
+    #[serde(default)]
+    pub updated_permissions: Option<Value>,
+    #[serde(default)]
+    pub message: Option<String>,
+    /// Reserved for future short-circuiting semantics.
+    ///
+    /// PermissionRequest hooks currently fail closed if this field is `true`.
+    #[serde(default)]
+    pub interrupt: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub(crate) enum PermissionRequestBehaviorWire {
+    #[serde(rename = "allow")]
+    Allow,
+    #[serde(rename = "deny")]
+    Deny,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PostToolUseHookSpecificOutputWire {
     pub hook_event_name: HookEventNameWire,
     #[serde(default)]
     pub additional_context: Option<String>,
@@ -124,7 +180,7 @@ pub struct PostToolUseHookSpecificOutputWire {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct PreToolUseHookSpecificOutputWire {
+pub(crate) struct PreToolUseHookSpecificOutputWire {
     pub hook_event_name: HookEventNameWire,
     #[serde(default)]
     pub permission_decision: Option<PreToolUsePermissionDecisionWire>,
@@ -137,7 +193,7 @@ pub struct PreToolUseHookSpecificOutputWire {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub enum PreToolUsePermissionDecisionWire {
+pub(crate) enum PreToolUsePermissionDecisionWire {
     #[serde(rename = "allow")]
     Allow,
     #[serde(rename = "deny")]
@@ -147,7 +203,7 @@ pub enum PreToolUsePermissionDecisionWire {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub enum PreToolUseDecisionWire {
+pub(crate) enum PreToolUseDecisionWire {
     #[serde(rename = "approve")]
     Approve,
     #[serde(rename = "block")]
@@ -157,14 +213,14 @@ pub enum PreToolUseDecisionWire {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct PreToolUseToolInput {
+pub(crate) struct PreToolUseToolInput {
     pub command: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "pre-tool-use.command.input")]
-pub struct PreToolUseCommandInput {
+pub(crate) struct PreToolUseCommandInput {
     pub session_id: String,
     /// Codex extension: expose the active turn id to internal turn-scoped hooks.
     pub turn_id: String,
@@ -175,7 +231,6 @@ pub struct PreToolUseCommandInput {
     pub model: String,
     #[schemars(schema_with = "permission_mode_schema")]
     pub permission_mode: String,
-    #[schemars(schema_with = "pre_tool_use_tool_name_schema")]
     pub tool_name: String,
     pub tool_input: PreToolUseToolInput,
     pub tool_use_id: String,
@@ -184,14 +239,41 @@ pub struct PreToolUseCommandInput {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct PostToolUseToolInput {
+pub(crate) struct PermissionRequestToolInput {
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "permission-request.command.input")]
+pub(crate) struct PermissionRequestCommandInput {
+    pub session_id: String,
+    /// Codex extension: expose the active turn id to internal turn-scoped hooks.
+    pub turn_id: String,
+    pub transcript_path: NullableString,
+    pub cwd: String,
+    #[schemars(schema_with = "permission_request_hook_event_name_schema")]
+    pub hook_event_name: String,
+    pub model: String,
+    #[schemars(schema_with = "permission_mode_schema")]
+    pub permission_mode: String,
+    pub tool_name: String,
+    pub tool_input: PermissionRequestToolInput,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PostToolUseToolInput {
     pub command: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "post-tool-use.command.input")]
-pub struct PostToolUseCommandInput {
+pub(crate) struct PostToolUseCommandInput {
     pub session_id: String,
     /// Codex extension: expose the active turn id to internal turn-scoped hooks.
     pub turn_id: String,
@@ -202,7 +284,6 @@ pub struct PostToolUseCommandInput {
     pub model: String,
     #[schemars(schema_with = "permission_mode_schema")]
     pub permission_mode: String,
-    #[schemars(schema_with = "post_tool_use_tool_name_schema")]
     pub tool_name: String,
     pub tool_input: PostToolUseToolInput,
     pub tool_response: Value,
@@ -213,7 +294,7 @@ pub struct PostToolUseCommandInput {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "session-start.command.output")]
-pub struct SessionStartCommandOutputWire {
+pub(crate) struct SessionStartCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
     #[serde(default)]
@@ -223,7 +304,7 @@ pub struct SessionStartCommandOutputWire {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct SessionStartHookSpecificOutputWire {
+pub(crate) struct SessionStartHookSpecificOutputWire {
     pub hook_event_name: HookEventNameWire,
     #[serde(default)]
     pub additional_context: Option<String>,
@@ -233,7 +314,7 @@ pub struct SessionStartHookSpecificOutputWire {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "user-prompt-submit.command.output")]
-pub struct UserPromptSubmitCommandOutputWire {
+pub(crate) struct UserPromptSubmitCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
     #[serde(default)]
@@ -247,7 +328,7 @@ pub struct UserPromptSubmitCommandOutputWire {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct UserPromptSubmitHookSpecificOutputWire {
+pub(crate) struct UserPromptSubmitHookSpecificOutputWire {
     pub hook_event_name: HookEventNameWire,
     #[serde(default)]
     pub additional_context: Option<String>,
@@ -257,7 +338,7 @@ pub struct UserPromptSubmitHookSpecificOutputWire {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "stop.command.output")]
-pub struct StopCommandOutputWire {
+pub(crate) struct StopCommandOutputWire {
     #[serde(flatten)]
     pub universal: HookUniversalOutputWire,
     #[serde(default)]
@@ -269,15 +350,15 @@ pub struct StopCommandOutputWire {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub enum BlockDecisionWire {
+pub(crate) enum BlockDecisionWire {
     #[serde(rename = "block")]
     Block,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "session-start.command.input")]
-pub struct SessionStartCommandInput {
+pub(crate) struct SessionStartCommandInput {
     pub session_id: String,
     pub transcript_path: NullableString,
     pub cwd: String,
@@ -314,7 +395,7 @@ impl SessionStartCommandInput {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "user-prompt-submit.command.input")]
-pub struct UserPromptSubmitCommandInput {
+pub(crate) struct UserPromptSubmitCommandInput {
     pub session_id: String,
     /// Codex extension: expose the active turn id to internal turn-scoped hooks.
     pub turn_id: String,
@@ -331,7 +412,7 @@ pub struct UserPromptSubmitCommandInput {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "stop.command.input")]
-pub struct StopCommandInput {
+pub(crate) struct StopCommandInput {
     pub session_id: String,
     /// Codex extension: expose the active turn id to internal turn-scoped hooks.
     pub turn_id: String,
@@ -357,6 +438,14 @@ pub fn write_schema_fixtures(schema_root: &Path) -> anyhow::Result<()> {
     write_schema(
         &generated_dir.join(POST_TOOL_USE_OUTPUT_FIXTURE),
         schema_json::<PostToolUseCommandOutputWire>()?,
+    )?;
+    write_schema(
+        &generated_dir.join(PERMISSION_REQUEST_INPUT_FIXTURE),
+        schema_json::<PermissionRequestCommandInput>()?,
+    )?;
+    write_schema(
+        &generated_dir.join(PERMISSION_REQUEST_OUTPUT_FIXTURE),
+        schema_json::<PermissionRequestCommandOutputWire>()?,
     )?;
     write_schema(
         &generated_dir.join(PRE_TOOL_USE_INPUT_FIXTURE),
@@ -453,16 +542,12 @@ fn post_tool_use_hook_event_name_schema(_gen: &mut SchemaGenerator) -> Schema {
     string_const_schema("PostToolUse")
 }
 
-fn post_tool_use_tool_name_schema(_gen: &mut SchemaGenerator) -> Schema {
-    string_const_schema("Bash")
-}
-
 fn pre_tool_use_hook_event_name_schema(_gen: &mut SchemaGenerator) -> Schema {
     string_const_schema("PreToolUse")
 }
 
-fn pre_tool_use_tool_name_schema(_gen: &mut SchemaGenerator) -> Schema {
-    string_const_schema("Bash")
+fn permission_request_hook_event_name_schema(_gen: &mut SchemaGenerator) -> Schema {
+    string_const_schema("PermissionRequest")
 }
 
 fn user_prompt_submit_hook_event_name_schema(_gen: &mut SchemaGenerator) -> Schema {
@@ -516,10 +601,13 @@ fn default_continue() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::PERMISSION_REQUEST_INPUT_FIXTURE;
+    use super::PERMISSION_REQUEST_OUTPUT_FIXTURE;
     use super::POST_TOOL_USE_INPUT_FIXTURE;
     use super::POST_TOOL_USE_OUTPUT_FIXTURE;
     use super::PRE_TOOL_USE_INPUT_FIXTURE;
     use super::PRE_TOOL_USE_OUTPUT_FIXTURE;
+    use super::PermissionRequestCommandInput;
     use super::PostToolUseCommandInput;
     use super::PreToolUseCommandInput;
     use super::SESSION_START_INPUT_FIXTURE;
@@ -543,6 +631,12 @@ mod tests {
             }
             POST_TOOL_USE_OUTPUT_FIXTURE => {
                 include_str!("../schema/generated/post-tool-use.command.output.schema.json")
+            }
+            PERMISSION_REQUEST_INPUT_FIXTURE => {
+                include_str!("../schema/generated/permission-request.command.input.schema.json")
+            }
+            PERMISSION_REQUEST_OUTPUT_FIXTURE => {
+                include_str!("../schema/generated/permission-request.command.output.schema.json")
             }
             PRE_TOOL_USE_INPUT_FIXTURE => {
                 include_str!("../schema/generated/pre-tool-use.command.input.schema.json")
@@ -585,6 +679,8 @@ mod tests {
         for fixture in [
             POST_TOOL_USE_INPUT_FIXTURE,
             POST_TOOL_USE_OUTPUT_FIXTURE,
+            PERMISSION_REQUEST_INPUT_FIXTURE,
+            PERMISSION_REQUEST_OUTPUT_FIXTURE,
             PRE_TOOL_USE_INPUT_FIXTURE,
             PRE_TOOL_USE_OUTPUT_FIXTURE,
             SESSION_START_INPUT_FIXTURE,
@@ -615,6 +711,11 @@ mod tests {
                 .expect("serialize post tool use input schema"),
         )
         .expect("parse post tool use input schema");
+        let permission_request: Value = serde_json::from_slice(
+            &schema_json::<PermissionRequestCommandInput>()
+                .expect("serialize permission request input schema"),
+        )
+        .expect("parse permission request input schema");
         let user_prompt_submit: Value = serde_json::from_slice(
             &schema_json::<UserPromptSubmitCommandInput>()
                 .expect("serialize user prompt submit input schema"),
@@ -625,7 +726,13 @@ mod tests {
         )
         .expect("parse stop input schema");
 
-        for schema in [&pre_tool_use, &post_tool_use, &user_prompt_submit, &stop] {
+        for schema in [
+            &pre_tool_use,
+            &permission_request,
+            &post_tool_use,
+            &user_prompt_submit,
+            &stop,
+        ] {
             assert_eq!(schema["properties"]["turn_id"]["type"], "string");
             assert!(
                 schema["required"]

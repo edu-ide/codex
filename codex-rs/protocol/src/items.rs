@@ -533,20 +533,19 @@ mod tests {
             })
         );
 
-        let decoded: LoopLifecycleItem =
-            serde_json::from_value(json!({
-                "id": "loop-1",
-                "kind": "advisor",
-                "title": "Escalating to advisor",
-                "summary": "Need deeper planning",
-                "detail": "multi_file_refactor",
-                "status": "completed",
-                "reason": "ambiguity",
-                "counts": { "attempts": 2 },
-                "duration_ms": 1200,
-                "target_profile": "minimax-m2.7-turboquant",
-            }))
-            .expect("deserialize loop lifecycle item");
+        let decoded: LoopLifecycleItem = serde_json::from_value(json!({
+            "id": "loop-1",
+            "kind": "advisor",
+            "title": "Escalating to advisor",
+            "summary": "Need deeper planning",
+            "detail": "multi_file_refactor",
+            "status": "completed",
+            "reason": "ambiguity",
+            "counts": { "attempts": 2 },
+            "duration_ms": 1200,
+            "target_profile": "minimax-m2.7-turboquant",
+        }))
+        .expect("deserialize loop lifecycle item");
 
         assert_eq!(decoded, item);
     }
@@ -570,6 +569,9 @@ mod tests {
         let turn_item = TurnItem::LoopLifecycle(item.clone());
         assert_eq!(turn_item.id(), "loop-2".to_string());
         assert!(turn_item.as_legacy_events(false).is_empty());
-        assert_eq!(turn_item, TurnItem::LoopLifecycle(item));
+        let TurnItem::LoopLifecycle(decoded) = turn_item else {
+            panic!("expected loop lifecycle turn item");
+        };
+        assert_eq!(decoded, item);
     }
 }

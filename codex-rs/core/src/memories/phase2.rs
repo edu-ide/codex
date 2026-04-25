@@ -1,7 +1,5 @@
 use crate::agent::AgentStatus;
 use crate::agent::status::is_final as is_final_agent_status;
-use crate::codex::Session;
-use crate::codex::emit_subagent_session_started;
 use crate::config::Config;
 use crate::memories::extensions::PendingExtensionResourceRemoval;
 use crate::memories::extensions::find_old_extension_resources;
@@ -13,6 +11,8 @@ use crate::memories::prompts::build_consolidation_prompt;
 use crate::memories::storage::rebuild_raw_memories_file_from_memories;
 use crate::memories::storage::rollout_summary_file_stem;
 use crate::memories::storage::sync_rollout_summaries_from_memories;
+use crate::session::emit_subagent_session_started;
+use crate::session::session::Session;
 use codex_config::Constrained;
 use codex_features::Feature;
 use codex_protocol::ThreadId;
@@ -139,9 +139,8 @@ pub(super) async fn run(session: &Arc<Session>, config: Arc<Config>) {
     // 5. Spawn the agent
     let prompt = agent::get_prompt(config, &selection, &removed_extension_resources);
     let source = SessionSource::SubAgent(SubAgentSource::MemoryConsolidation);
-    let thread_id = match session
-        .services
-        .agent_control
+    let agent_control = session.services.agent_control.detached_registry();
+    let thread_id = match agent_control
         .spawn_agent(agent_config, prompt.into(), Some(source))
         .await
     {
@@ -182,6 +181,7 @@ pub(super) async fn run(session: &Arc<Session>, config: Arc<Config>) {
         raw_memories.clone(),
         pending_extension_resource_removals,
         thread_id,
+        agent_control,
         phase_two_e2e_timer,
     );
 
@@ -300,7 +300,9 @@ mod agent {
 
         agent_config.cwd = root.clone();
         // Consolidation threads must never feed back into phase-1 memory generation.
+        agent_config.ephemeral = true;
         agent_config.memories.generate_memories = false;
+        agent_config.memories.use_memories = false;
         // Approval policy
         agent_config.permissions.approval_policy = Constrained::allow_only(AskForApproval::Never);
         // Consolidation runs as an internal sub-agent and must not recursively delegate.
@@ -360,6 +362,7 @@ mod agent {
     }
 
     /// Handle the agent while it is running.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle(
         session: &Arc<Session>,
         claim: Claim,
@@ -367,6 +370,7 @@ mod agent {
         selected_outputs: Vec<codex_state::Stage1Output>,
         pending_extension_resource_removals: Vec<PendingExtensionResourceRemoval>,
         thread_id: ThreadId,
+        agent_control: crate::agent::AgentControl,
         phase_two_e2e_timer: Option<codex_otel::Timer>,
     ) {
         let Some(db) = session.services.state_db.clone() else {
@@ -376,7 +380,6 @@ mod agent {
 
         tokio::spawn(async move {
             let _phase_two_e2e_timer = phase_two_e2e_timer;
-            let agent_control = session.services.agent_control.clone();
 
             // TODO(jif) we might have a very small race here.
             let rx = match agent_control.subscribe_status(thread_id).await {

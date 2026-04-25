@@ -1240,7 +1240,8 @@ pub(crate) fn new_session_info(
         config.cwd.to_path_buf(),
         CODEX_CLI_VERSION,
     )
-    .with_yolo_mode(has_yolo_permissions(approval_policy, &sandbox_policy));
+    .with_yolo_mode(has_yolo_permissions(approval_policy, &sandbox_policy))
+    .with_runtime_profile(current_ilhae_runtime_profile_for_header());
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
     if is_first_event {
@@ -1336,8 +1337,18 @@ pub(crate) struct SessionHeaderHistoryCell {
     model_style: Style,
     reasoning_effort: Option<ReasoningEffortConfig>,
     show_fast_status: bool,
+    runtime_profile: Option<String>,
     directory: PathBuf,
     yolo_mode: bool,
+}
+
+pub(crate) fn current_ilhae_runtime_profile_for_header() -> Option<String> {
+    codex_ilhae::native_runtime_context()?;
+    codex_ilhae::config::load_ilhae_toml_config()
+        .profile
+        .active
+        .map(|profile| profile.trim().to_string())
+        .filter(|profile| !profile.is_empty())
 }
 
 impl SessionHeaderHistoryCell {
@@ -1372,6 +1383,7 @@ impl SessionHeaderHistoryCell {
             model_style,
             reasoning_effort,
             show_fast_status,
+            runtime_profile: None,
             directory,
             yolo_mode: false,
         }
@@ -1379,6 +1391,13 @@ impl SessionHeaderHistoryCell {
 
     pub(crate) fn with_yolo_mode(mut self, yolo_mode: bool) -> Self {
         self.yolo_mode = yolo_mode;
+        self
+    }
+
+    pub(crate) fn with_runtime_profile(mut self, runtime_profile: Option<String>) -> Self {
+        self.runtime_profile = runtime_profile
+            .map(|profile| profile.trim().to_string())
+            .filter(|profile| !profile.is_empty());
         self
     }
 
@@ -1439,13 +1458,20 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
+        const CHANGE_PROFILE_HINT_COMMAND: &str = "/profile";
+        const PROFILE_LABEL: &str = "profile:";
         const DIR_LABEL: &str = "directory:";
         const PERMISSIONS_LABEL: &str = "permissions:";
         let label_width = if self.yolo_mode {
             DIR_LABEL.len().max(PERMISSIONS_LABEL.len())
         } else {
             DIR_LABEL.len()
-        };
+        }
+        .max(if self.runtime_profile.is_some() {
+            PROFILE_LABEL.len()
+        } else {
+            0
+        });
 
         let model_label = format!(
             "{model_label:<label_width$}",
@@ -1472,6 +1498,17 @@ impl HistoryCell for SessionHeaderHistoryCell {
             spans
         };
 
+        let profile_spans = self.runtime_profile.as_ref().map(|profile| {
+            let profile_label = format!("{PROFILE_LABEL:<label_width$}");
+            vec![
+                Span::from(format!("{profile_label} ")).dim(),
+                Span::styled(profile.clone(), self.model_style),
+                "   ".dim(),
+                CHANGE_PROFILE_HINT_COMMAND.cyan(),
+                CHANGE_MODEL_HINT_EXPLANATION.dim(),
+            ]
+        });
+
         let dir_label = format!("{DIR_LABEL:<label_width$}");
         let dir_prefix = format!("{dir_label} ");
         let dir_prefix_width = UnicodeWidthStr::width(dir_prefix.as_str());
@@ -1485,6 +1522,9 @@ impl HistoryCell for SessionHeaderHistoryCell {
             make_row(model_spans),
             make_row(dir_spans),
         ];
+        if let Some(profile_spans) = profile_spans {
+            lines.insert(3, make_row(profile_spans));
+        }
 
         if self.yolo_mode {
             let permissions_label = format!("{PERMISSIONS_LABEL:<label_width$}");
@@ -1850,9 +1890,7 @@ fn loop_lifecycle_header(
         (LoopLifecycleKind::Advisor, LoopLifecycleStatus::Completed) => {
             "Advisor Returned".to_string()
         }
-        (LoopLifecycleKind::Advisor, LoopLifecycleStatus::Failed) => {
-            "Advisor Failed".to_string()
-        }
+        (LoopLifecycleKind::Advisor, LoopLifecycleStatus::Failed) => "Advisor Failed".to_string(),
         (LoopLifecycleKind::SuperLoop, LoopLifecycleStatus::InProgress) => {
             "Running Super Loop".to_string()
         }
@@ -1988,8 +2026,7 @@ impl HistoryCell for LoopLifecycleCell {
             LoopLifecycleStatus::Failed => "•".red().bold(),
         };
 
-        let header =
-            loop_lifecycle_header(self.kind.clone(), self.status.clone(), &self.title);
+        let header = loop_lifecycle_header(self.kind.clone(), self.status.clone(), &self.title);
         let mut first_line = Line::from(vec![header.bold()]);
         if !self.summary.trim().is_empty() {
             first_line.push_span(" ");
@@ -1998,7 +2035,10 @@ impl HistoryCell for LoopLifecycleCell {
 
         let mut text = Text::from(vec![line_to_static(&first_line)]);
         let mut meta_parts = Vec::new();
-        if let Some(target_profile) = self.target_profile.as_deref().filter(|value| !value.is_empty())
+        if let Some(target_profile) = self
+            .target_profile
+            .as_deref()
+            .filter(|value| !value.is_empty())
         {
             meta_parts.push(format!("target={target_profile}"));
         }
@@ -2012,14 +2052,22 @@ impl HistoryCell for LoopLifecycleCell {
             meta_parts.push(format!("{} ms", duration_ms));
         }
         if !meta_parts.is_empty() {
-            text.lines
-                .push(Line::from(meta_parts.join(" | ").dim()));
+            text.lines.push(Line::from(meta_parts.join(" | ").dim()));
         }
-        if let Some(detail) = self.detail.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(detail) = self
+            .detail
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             text.lines.push(Line::from(detail.trim().to_string().dim()));
         }
-        if let Some(error) = self.error.as_deref().filter(|value| !value.trim().is_empty()) {
-            text.lines.push(Line::from(format!("Error: {}", error.trim()).red()));
+        if let Some(error) = self
+            .error
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            text.lines
+                .push(Line::from(format!("Error: {}", error.trim()).red()));
         }
 
         PrefixedWrappedHistoryCell::new(text, vec![bullet, " ".into()], "  ").display_lines(width)
@@ -2418,6 +2466,18 @@ pub(crate) fn new_mcp_tools_output_from_statuses(
         let header: Vec<Span<'static>> = vec!["  • ".into(), server.clone().into()];
 
         lines.push(header.into());
+        if matches!(detail, McpServerStatusDetail::Full) {
+            let enabled = cfg.map(|cfg| cfg.enabled).unwrap_or(true);
+            let status_text = if enabled {
+                "enabled".green()
+            } else {
+                "disabled".red()
+            };
+            lines.push(vec!["    • Status: ".into(), status_text].into());
+            if let Some(reason) = cfg.and_then(|cfg| cfg.disabled_reason.as_ref()) {
+                lines.push(vec!["    • Reason: ".into(), reason.to_string().dim()].into());
+            }
+        }
         let auth_status = status
             .map(|status| match status.auth_status {
                 codex_app_server_protocol::McpAuthStatus::Unsupported => McpAuthStatus::Unsupported,
@@ -3817,6 +3877,7 @@ mod tests {
             )]),
             resources: Vec::new(),
             resource_templates: Vec::new(),
+            prompts: Vec::new(),
             auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
         }];
 
@@ -3825,6 +3886,62 @@ mod tests {
             &statuses,
             McpServerStatusDetail::ToolsAndAuthOnly,
         );
+        let rendered = render_lines(&cell.display_lines(/*width*/ 120)).join("\n");
+
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_output_from_statuses_renders_verbose_inventory() {
+        let mut config = test_config().await;
+        let plugin_docs =
+            stdio_server_config("docs-server", vec!["--stdio"], /*env*/ None, vec![]);
+        let servers = HashMap::from([("plugin_docs".to_string(), plugin_docs)]);
+        config
+            .mcp_servers
+            .set(servers)
+            .expect("test mcp servers should accept any configuration");
+
+        let statuses = vec![McpServerStatus {
+            name: "plugin_docs".to_string(),
+            tools: HashMap::from([(
+                "lookup".to_string(),
+                Tool {
+                    description: None,
+                    name: "lookup".to_string(),
+                    title: None,
+                    input_schema: serde_json::json!({"type": "object", "properties": {}}),
+                    output_schema: None,
+                    annotations: None,
+                    icons: None,
+                    meta: None,
+                },
+            )]),
+            resources: vec![Resource {
+                annotations: None,
+                description: None,
+                mime_type: None,
+                name: "docs".to_string(),
+                size: None,
+                title: Some("Docs".to_string()),
+                uri: "file:///docs".to_string(),
+                icons: None,
+                meta: None,
+            }],
+            resource_templates: vec![ResourceTemplate {
+                annotations: None,
+                uri_template: "file:///docs/{id}".to_string(),
+                name: "doc-template".to_string(),
+                title: Some("Doc Template".to_string()),
+                description: None,
+                mime_type: None,
+            }],
+            prompts: Vec::new(),
+            auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
+        }];
+
+        let cell =
+            new_mcp_tools_output_from_statuses(&config, &statuses, McpServerStatusDetail::Full);
         let rendered = render_lines(&cell.display_lines(/*width*/ 120)).join("\n");
 
         insta::assert_snapshot!(rendered);
@@ -4444,6 +4561,27 @@ mod tests {
 
         assert!(model_line.contains("gpt-4o high"));
         assert!(!model_line.contains("fast"));
+    }
+
+    #[test]
+    fn session_header_includes_runtime_profile_when_present() {
+        let cell = SessionHeaderHistoryCell::new(
+            "Qwen3.6-27B-UD-Q4_K_XL".to_string(),
+            Some(ReasoningEffortConfig::Medium),
+            /*show_fast_status*/ false,
+            std::env::temp_dir(),
+            "test",
+        )
+        .with_runtime_profile(Some("qwen3.6-27b-ud-q4-k-xl".to_string()));
+
+        let lines = render_lines(&cell.display_lines(/*width*/ 100));
+        let profile_line = lines
+            .iter()
+            .find(|line| line.contains("profile:"))
+            .expect("profile line");
+
+        assert!(profile_line.contains("qwen3.6-27b-ud-q4-k-xl"));
+        assert!(profile_line.contains("/profile to change"));
     }
 
     #[test]

@@ -1,9 +1,11 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
+use codex_rmcp_client::LocalStdioServerLauncher;
 use codex_rmcp_client::RmcpClient;
 use codex_utils_cargo_bin::CargoBinError;
 use futures::FutureExt as _;
@@ -61,6 +63,7 @@ async fn rmcp_client_can_list_and_read_resources() -> anyhow::Result<()> {
         /*env*/ None,
         &[],
         /*cwd*/ None,
+        Arc::new(LocalStdioServerLauncher::new(std::env::current_dir()?)),
     )
     .await?;
 
@@ -129,10 +132,7 @@ async fn rmcp_client_can_list_and_read_resources() -> anyhow::Result<()> {
 
     let read = client
         .read_resource(
-            ReadResourceRequestParams {
-                meta: None,
-                uri: RESOURCE_URI.to_string(),
-            },
+            ReadResourceRequestParams::new(RESOURCE_URI.to_string()),
             Some(Duration::from_secs(5)),
         )
         .await?;
@@ -146,6 +146,53 @@ async fn rmcp_client_can_list_and_read_resources() -> anyhow::Result<()> {
             meta: None,
         }
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn rmcp_client_merges_tool_call_meta_with_progress_token() -> anyhow::Result<()> {
+    let client = RmcpClient::new_stdio_client(
+        stdio_server_bin()?.into(),
+        Vec::<OsString>::new(),
+        /*env*/ None,
+        &[],
+        /*cwd*/ None,
+        Arc::new(LocalStdioServerLauncher::new(std::env::current_dir()?)),
+    )
+    .await?;
+
+    client
+        .initialize(
+            init_params(),
+            Some(Duration::from_secs(5)),
+            Box::new(|_, _| {
+                async {
+                    Ok(ElicitationResponse {
+                        action: ElicitationAction::Accept,
+                        content: Some(json!({})),
+                        meta: None,
+                    })
+                }
+                .boxed()
+            }),
+        )
+        .await?;
+
+    let result = client
+        .call_tool(
+            "sandbox_meta".to_string(),
+            Some(json!({})),
+            Some(json!({ "threadId": "thread-live" })),
+            Some(Duration::from_secs(5)),
+        )
+        .await?;
+
+    let meta = result
+        .structured_content
+        .expect("sandbox_meta returns structured content");
+    assert_eq!(meta["threadId"], "thread-live");
+    assert!(meta.get("progressToken").is_some());
 
     Ok(())
 }

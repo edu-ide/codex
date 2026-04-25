@@ -285,6 +285,25 @@
       ],
       "type": "object"
     },
+    "LoopLifecycleKind": {
+      "enum": [
+        "context_injection",
+        "execution_loop",
+        "verification_loop",
+        "advisor",
+        "super_loop",
+        "improvement_loop"
+      ],
+      "type": "string"
+    },
+    "LoopLifecycleStatus": {
+      "enum": [
+        "in_progress",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
+    },
     "McpToolCallError": {
       "properties": {
         "message": {
@@ -854,6 +873,12 @@
             "id": {
               "type": "string"
             },
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "status": {
               "$ref": "#/definitions/DynamicToolCallStatus"
             },
@@ -1069,6 +1094,83 @@
             "type"
           ],
           "title": "ImageGenerationThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "counts": {
+              "additionalProperties": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "durationMs": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/LoopLifecycleKind"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/definitions/LoopLifecycleStatus"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "targetProfile": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "loopLifecycle"
+              ],
+              "title": "LoopLifecycleThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "status",
+            "summary",
+            "title",
+            "type"
+          ],
+          "title": "LoopLifecycleThreadItem",
           "type": "object"
         },
         {

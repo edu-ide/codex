@@ -1,6 +1,6 @@
-use crate::LLAMA_SERVER_OSS_PROVIDER_ID;
 pub use codex_api::ResponseEvent;
 use codex_config::types::Personality;
+use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::FunctionCallOutputBody;
@@ -24,7 +24,7 @@ pub const REVIEW_EXIT_INTERRUPTED_TMPL: &str =
     include_str!("../templates/review/exit_interrupted.xml");
 
 /// API request payload for a single model turn
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Prompt {
     /// Conversation context input items.
     pub input: Vec<ResponseItem>,
@@ -43,6 +43,23 @@ pub struct Prompt {
 
     /// Optional the output schema for the model's response.
     pub output_schema: Option<Value>,
+
+    /// Whether the Responses API should strictly validate `output_schema`.
+    pub output_schema_strict: bool,
+}
+
+impl Default for Prompt {
+    fn default() -> Self {
+        Self {
+            input: Vec::new(),
+            tools: Vec::new(),
+            parallel_tool_calls: false,
+            base_instructions: BaseInstructions::default(),
+            personality: None,
+            output_schema: None,
+            output_schema_strict: true,
+        }
+    }
 }
 
 impl Prompt {
@@ -58,7 +75,8 @@ impl Prompt {
         // instructions. We declare the result as a named variable for clarity.
         let is_freeform_apply_patch_tool_present = self.tools.iter().any(|tool| match tool {
             ToolSpec::Freeform(f) => {
-                f.name == "apply_patch" && provider_id != Some(LLAMA_SERVER_OSS_PROVIDER_ID)
+                f.name == "apply_patch"
+                    && !provider_id.is_some_and(provider_uses_json_function_tools)
             }
             _ => false,
         });

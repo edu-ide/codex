@@ -14,8 +14,8 @@ use crate::{
     MemoryToolDreamPreviewInput, MemoryToolDreamPromoteInput, MemoryToolExtractInput,
     MemoryToolForgetInput, MemoryToolListInput, MemoryToolPinInput, MemoryToolPromoteInput,
     MemoryToolSearchInput, MemoryToolStatsInput, MemoryToolStoreInput, MemoryWriteInput,
-    SessionIdInput, SessionRenameInput, TaskAddHistoryInput, TaskCreateInput, TaskUpdateInput,
-    TeamDelegateInput, TeamProposeInput, UiNotifyInput, tool_to_plugin_id,
+    SessionIdInput, SessionRenameInput, SkillUpsertInput, TaskAddHistoryInput, TaskCreateInput,
+    TaskUpdateInput, TeamDelegateInput, TeamProposeInput, UiNotifyInput, tool_to_plugin_id,
 };
 
 // ─── ToolsProxy state ──────────────────────────────────────────────────

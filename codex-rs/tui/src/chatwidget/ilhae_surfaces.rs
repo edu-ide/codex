@@ -5,6 +5,10 @@
 //! existing call sites.
 
 use super::*;
+use codex_ilhae::native_runtime_context;
+use codex_protocol::openai_models::InputModality;
+use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::openai_models::ReasoningEffortPreset;
 
 impl ChatWidget {
     pub(super) fn ilhae_local_model_presets(&self) -> Option<Vec<ModelPreset>> {
@@ -50,21 +54,22 @@ impl ChatWidget {
             return;
         };
 
-        let (active_profile, profiles) = codex_ilhae::config::list_ilhae_profiles();
-        let active_profile = active_profile.unwrap_or_else(|| "default".to_string());
-        let initial_selected_idx = profiles
+        let config = codex_ilhae::config::load_ilhae_toml_config();
+        let active_profile = config
+            .profile
+            .active
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+        let initial_selected_idx = config
+            .profiles
             .iter()
-            .position(|profile| profile.id == active_profile);
-        let items: Vec<SelectionItem> = profiles
+            .position(|(profile_id, _)| profile_id == &active_profile);
+        let items: Vec<SelectionItem> = config
+            .profiles
             .into_iter()
-            .map(|profile| {
-                let profile_id = profile.id.clone();
-                let mut summary_parts = Vec::new();
-                if let Some(engine_id) = profile.agent.engine_id.as_deref()
-                    && !engine_id.trim().is_empty()
-                {
-                    summary_parts.push(engine_id.to_string());
-                }
+            .map(|(profile_id, profile)| {
+                let mut summary_parts =
+                    codex_ilhae::config::profile_runtime_display_parts(&profile);
                 if profile.agent.advisor {
                     summary_parts.push(format!("advisor:{}", profile.agent.advisor_preset.trim()));
                 }
@@ -81,15 +86,17 @@ impl ChatWidget {
                     summary_parts.push("improve".to_string());
                 }
                 let description = (!summary_parts.is_empty()).then(|| summary_parts.join("  "));
+                let is_current = profile_id == active_profile;
+                let item_name = profile_id.clone();
                 let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
                     tx.send(AppEvent::SetIlhaeRuntimeProfile {
                         profile_id: profile_id.clone(),
                     })
                 })];
                 SelectionItem {
-                    name: profile.id.clone(),
+                    name: item_name,
                     description,
-                    is_current: profile.id == active_profile,
+                    is_current,
                     actions,
                     dismiss_on_select: true,
                     ..Default::default()

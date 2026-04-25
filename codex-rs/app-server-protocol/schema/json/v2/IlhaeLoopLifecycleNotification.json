@@ -1,0 +1,207 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "LoopLifecycleItem": {
+      "properties": {
+        "counts": {
+          "additionalProperties": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/LoopLifecycleKind"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/LoopLifecycleStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "target_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "status",
+        "summary",
+        "title"
+      ],
+      "type": "object"
+    },
+    "LoopLifecycleKind": {
+      "enum": [
+        "context_injection",
+        "execution_loop",
+        "verification_loop",
+        "advisor",
+        "super_loop",
+        "improvement_loop"
+      ],
+      "type": "string"
+    },
+    "LoopLifecycleStatus": {
+      "enum": [
+        "in_progress",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "event": {
+          "enum": [
+            "started"
+          ],
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/definitions/LoopLifecycleItem"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "item",
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "counts": {
+          "additionalProperties": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event": {
+          "enum": [
+            "progress"
+          ],
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/LoopLifecycleKind"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "itemId",
+        "kind",
+        "sessionId",
+        "summary"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "event": {
+          "enum": [
+            "completed"
+          ],
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/definitions/LoopLifecycleItem"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "item",
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "event": {
+          "enum": [
+            "failed"
+          ],
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/definitions/LoopLifecycleItem"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "item",
+        "sessionId"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "IlhaeLoopLifecycleNotification"
+}

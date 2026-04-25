@@ -1,5 +1,8 @@
 [package]
+edition.workspace = true
+license.workspace = true
 name = "codex-core-skills"
+version.workspace = true
 
 [lib]
 doctest = false
@@ -9,85 +12,30 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[package.edition]
-workspace = true
+[dependencies]
+anyhow = { workspace = true }
+codex-analytics = { workspace = true }
+codex-app-server-protocol = { workspace = true }
+codex-config = { workspace = true }
+codex-exec-server = { workspace = true }
+codex-login = { workspace = true }
+codex-otel = { workspace = true }
+codex-protocol = { workspace = true }
+codex-skills = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+codex-utils-plugins = { workspace = true }
+dirs = { workspace = true }
+dunce = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+shlex = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "rt"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+zip = { workspace = true }
 
-[package.license]
-workspace = true
-
-[package.version]
-workspace = true
-
-[dependencies.anyhow]
-workspace = true
-
-[dependencies.codex-analytics]
-workspace = true
-
-[dependencies.codex-app-server-protocol]
-workspace = true
-
-[dependencies.codex-config]
-workspace = true
-
-[dependencies.codex-instructions]
-workspace = true
-
-[dependencies.codex-login]
-workspace = true
-
-[dependencies.codex-otel]
-workspace = true
-
-[dependencies.codex-protocol]
-workspace = true
-
-[dependencies.codex-skills]
-workspace = true
-
-[dependencies.codex-exec-server]
-workspace = true
-
-[dependencies.codex-utils-absolute-path]
-workspace = true
-
-[dependencies.codex-utils-plugins]
-workspace = true
-
-[dependencies.dirs]
-workspace = true
-
-[dependencies.dunce]
-workspace = true
-
-[dependencies.serde]
-version = "1"
-features = [ "derive",]
-
-[dependencies.serde_json]
-workspace = true
-
-[dependencies.serde_yaml]
-workspace = true
-
-[dependencies.shlex]
-workspace = true
-
-[dependencies.tokio]
-version = "1"
-features = [ "fs", "macros", "rt",]
-
-[dependencies.toml]
-workspace = true
-
-[dependencies.tracing]
-version = "0.1.44"
-
-[dependencies.zip]
-workspace = true
-
-[dev-dependencies.pretty_assertions]
-workspace = true
-
-[dev-dependencies.tempfile]
-workspace = true
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

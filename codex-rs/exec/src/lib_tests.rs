@@ -8,6 +8,7 @@ use opentelemetry::trace::TraceId;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use pretty_assertions::assert_eq;
+use std::time::Duration;
 use tempfile::tempdir;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -361,6 +362,11 @@ async fn thread_start_params_include_review_policy_when_review_policy_is_manual_
         params.approvals_reviewer,
         Some(codex_app_server_protocol::ApprovalsReviewer::User)
     );
+    assert_eq!(params.sandbox, None);
+    assert_eq!(
+        params.permission_profile,
+        Some(config.permissions.permission_profile().into())
+    );
 }
 
 #[tokio::test]
@@ -370,7 +376,7 @@ async fn thread_start_params_include_review_policy_when_auto_review_is_enabled()
     let config = ConfigBuilder::default()
         .codex_home(codex_home.path().to_path_buf())
         .harness_overrides(ConfigOverrides {
-            approvals_reviewer: Some(ApprovalsReviewer::GuardianSubagent),
+            approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
             ..Default::default()
         })
         .fallback_cwd(Some(cwd.path().to_path_buf()))
@@ -382,7 +388,30 @@ async fn thread_start_params_include_review_policy_when_auto_review_is_enabled()
 
     assert_eq!(
         params.approvals_reviewer,
-        Some(codex_app_server_protocol::ApprovalsReviewer::GuardianSubagent)
+        Some(codex_app_server_protocol::ApprovalsReviewer::AutoReview)
+    );
+}
+
+#[tokio::test]
+async fn thread_start_params_include_developer_instructions_from_config() {
+    let codex_home = tempdir().expect("create temp codex home");
+    let cwd = tempdir().expect("create temp cwd");
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            developer_instructions: Some("ILHAE RUNTIME LOOP STATE".to_string()),
+            ..Default::default()
+        })
+        .fallback_cwd(Some(cwd.path().to_path_buf()))
+        .build()
+        .await
+        .expect("build config with developer instructions");
+
+    let params = thread_start_params_from_config(&config);
+
+    assert_eq!(
+        params.developer_instructions.as_deref(),
+        Some("ILHAE RUNTIME LOOP STATE")
     );
 }
 
@@ -414,7 +443,7 @@ fn session_configured_from_thread_response_uses_review_policy_from_response() {
         cwd: test_path_buf("/tmp").abs(),
         instruction_sources: Vec::new(),
         approval_policy: codex_app_server_protocol::AskForApproval::OnRequest,
-        approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::GuardianSubagent,
+        approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::AutoReview,
         sandbox: codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
             read_only_access: codex_app_server_protocol::ReadOnlyAccess::FullAccess,
@@ -422,16 +451,20 @@ fn session_configured_from_thread_response_uses_review_policy_from_response() {
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,
         },
+        permission_profile: Some(
+            codex_protocol::models::PermissionProfile::from_legacy_sandbox_policy(
+                &codex_protocol::protocol::SandboxPolicy::new_workspace_write_policy(),
+                &test_path_buf("/tmp"),
+            )
+            .into(),
+        ),
         reasoning_effort: None,
     };
 
     let event = session_configured_from_thread_start_response(&response)
         .expect("build bootstrap session configured event");
 
-    assert_eq!(
-        event.approvals_reviewer,
-        ApprovalsReviewer::GuardianSubagent
-    );
+    assert_eq!(event.approvals_reviewer, ApprovalsReviewer::AutoReview);
 }
 
 // Tests from HEAD
@@ -445,6 +478,9 @@ fn should_process_notification_ignores_followup_turns_without_autonomous_follow(
             items: Vec::new(),
             status: codex_app_server_protocol::TurnStatus::InProgress,
             error: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
         },
     });
 
@@ -487,6 +523,9 @@ fn should_process_notification_accepts_follow_on_turn_for_same_thread() {
             items: Vec::new(),
             status: codex_app_server_protocol::TurnStatus::InProgress,
             error: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
         },
     });
 
@@ -510,7 +549,7 @@ fn turn_items_need_backfill_when_completion_payload_contains_in_progress_item() 
         exit_code: None,
         status: codex_app_server_protocol::CommandExecutionStatus::InProgress,
         duration_ms: None,
-        cwd: PathBuf::from("/tmp"),
+        cwd: test_path_buf("/tmp").abs(),
         process_id: None,
         source: codex_app_server_protocol::CommandExecutionSource::UserShell,
         command_actions: vec![codex_app_server_protocol::CommandAction::Unknown {
@@ -531,7 +570,7 @@ fn turn_items_need_backfill_is_false_when_payload_already_has_completed_items() 
             exit_code: Some(0),
             status: codex_app_server_protocol::CommandExecutionStatus::Completed,
             duration_ms: Some(5),
-            cwd: PathBuf::from("/tmp"),
+            cwd: test_path_buf("/tmp").abs(),
             process_id: None,
             source: codex_app_server_protocol::CommandExecutionSource::UserShell,
             command_actions: vec![codex_app_server_protocol::CommandAction::Unknown {

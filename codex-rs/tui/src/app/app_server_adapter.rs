@@ -14,7 +14,7 @@ should shrink and eventually disappear.
 use super::App;
 use crate::app_command::AppCommand;
 use crate::app_event::AppEvent;
-use crate::app_server_session::SelectedConversationRuntime as AppServerSession;
+use crate::app_server_session::AppServerSession;
 use crate::app_server_session::app_server_rate_limit_snapshot_to_core;
 use crate::app_server_session::status_account_display_from_auth_mode;
 #[cfg(test)]
@@ -81,6 +81,10 @@ use codex_protocol::protocol::ExecOutputStream;
 use codex_protocol::protocol::ItemCompletedEvent;
 #[cfg(test)]
 use codex_protocol::protocol::ItemStartedEvent;
+#[cfg(test)]
+use codex_protocol::protocol::LoopLifecycleCompletedEvent;
+#[cfg(test)]
+use codex_protocol::protocol::LoopLifecycleProgressEvent;
 #[cfg(test)]
 use codex_protocol::protocol::PlanDeltaEvent;
 #[cfg(test)]
@@ -279,8 +283,7 @@ impl App {
             if self.primary_thread_id == Some(thread_id) || self.primary_thread_id.is_none() {
                 self.enqueue_primary_thread_request(request).await
             } else {
-                self.enqueue_thread_request(app_server_client, thread_id, request)
-                    .await
+                self.enqueue_thread_request(thread_id, request).await
             };
         if let Err(err) = result {
             tracing::warn!("failed to enqueue app-server request: {err}");
@@ -387,6 +390,9 @@ fn server_notification_thread_target(
         ServerNotification::FileChangeOutputDelta(notification) => {
             Some(notification.thread_id.as_str())
         }
+        ServerNotification::FileChangePatchUpdated(notification) => {
+            Some(notification.thread_id.as_str())
+        }
         ServerNotification::ServerRequestResolved(notification) => {
             Some(notification.thread_id.as_str())
         }
@@ -431,6 +437,8 @@ fn server_notification_thread_target(
         ServerNotification::ThreadRealtimeClosed(notification) => {
             Some(notification.thread_id.as_str())
         }
+        ServerNotification::Warning(notification) => notification.thread_id.as_deref(),
+        ServerNotification::GuardianWarning(notification) => Some(notification.thread_id.as_str()),
         ServerNotification::SkillsChanged(_)
         | ServerNotification::McpServerStatusUpdated(_)
         | ServerNotification::McpServerOauthLoginCompleted(_)
@@ -442,6 +450,7 @@ fn server_notification_thread_target(
         | ServerNotification::ConfigWarning(_)
         | ServerNotification::FuzzyFileSearchSessionUpdated(_)
         | ServerNotification::FuzzyFileSearchSessionCompleted(_)
+        | ServerNotification::IlhaeLoopLifecycle(_)
         | ServerNotification::CommandExecOutputDelta(_)
         | ServerNotification::FsChanged(_)
         | ServerNotification::WindowsWorldWritableWarning(_)
@@ -814,6 +823,7 @@ fn append_terminal_turn_events(events: &mut Vec<Event>, turn: &Turn, include_fai
                 last_agent_message: None,
                 completed_at: turn.completed_at,
                 duration_ms: turn.duration_ms,
+                time_to_first_token_ms: None,
             }),
         }),
         TurnStatus::Interrupted => events.push(Event {
@@ -845,6 +855,7 @@ fn append_terminal_turn_events(events: &mut Vec<Event>, turn: &Turn, include_fai
                     last_agent_message: None,
                     completed_at: turn.completed_at,
                     duration_ms: turn.duration_ms,
+                    time_to_first_token_ms: None,
                 }),
             });
         }
@@ -1107,8 +1118,10 @@ fn app_server_codex_error_info_to_core(
 
 #[cfg(test)]
 mod tests {
+    use super::ServerNotificationThreadTarget;
     use super::command_execution_started_event;
     use super::server_notification_thread_events;
+    use super::server_notification_thread_target;
     use super::thread_snapshot_events;
     use super::turn_snapshot_events;
     use codex_app_server_protocol::AgentMessageDeltaNotification;
@@ -1117,6 +1130,7 @@ mod tests {
     use codex_app_server_protocol::CommandExecutionOutputDeltaNotification;
     use codex_app_server_protocol::CommandExecutionSource;
     use codex_app_server_protocol::CommandExecutionStatus;
+    use codex_app_server_protocol::GuardianWarningNotification;
     use codex_app_server_protocol::ItemCompletedNotification;
     use codex_app_server_protocol::ItemStartedNotification;
     use codex_app_server_protocol::ReasoningSummaryTextDeltaNotification;
@@ -1128,6 +1142,7 @@ mod tests {
     use codex_app_server_protocol::TurnCompletedNotification;
     use codex_app_server_protocol::TurnError;
     use codex_app_server_protocol::TurnStatus;
+    use codex_app_server_protocol::WarningNotification;
     use codex_protocol::ThreadId;
     use codex_protocol::items::AgentMessageContent;
     use codex_protocol::items::AgentMessageItem;
@@ -1721,5 +1736,31 @@ mod tests {
         };
         assert_eq!(raw_reasoning.text, "hidden chain");
         assert!(matches!(events[3].msg, EventMsg::TurnComplete(_)));
+    }
+
+    #[test]
+    fn warning_notifications_route_to_threads_when_thread_id_is_present() {
+        let thread_id = ThreadId::new();
+        let notification = ServerNotification::Warning(WarningNotification {
+            thread_id: Some(thread_id.to_string()),
+            message: "warning".to_string(),
+        });
+
+        let target = server_notification_thread_target(&notification);
+
+        assert_eq!(target, ServerNotificationThreadTarget::Thread(thread_id));
+    }
+
+    #[test]
+    fn guardian_warning_notifications_route_to_threads() {
+        let thread_id = ThreadId::new();
+        let notification = ServerNotification::GuardianWarning(GuardianWarningNotification {
+            thread_id: thread_id.to_string(),
+            message: "warning".to_string(),
+        });
+
+        let target = server_notification_thread_target(&notification);
+
+        assert_eq!(target, ServerNotificationThreadTarget::Thread(thread_id));
     }
 }

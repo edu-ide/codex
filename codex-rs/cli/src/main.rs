@@ -32,11 +32,12 @@ use codex_utils_cli::CliConfigOverrides;
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
 use std::path::PathBuf;
+use std::sync::Arc;
 use supports_color::Stream;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod app_cmd;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop_app;
 mod marketplace_cmd;
 mod mcp_cmd;
@@ -49,6 +50,7 @@ use crate::mcp_cmd::McpCli;
 use crate::responses_cmd::ResponsesCommand;
 use crate::responses_cmd::run_responses_command;
 
+use codex_core::build_models_manager;
 use codex_core::clear_memory_roots_contents;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
@@ -57,11 +59,15 @@ use codex_core::config::find_codex_home;
 use codex_features::FEATURES;
 use codex_features::Stage;
 use codex_features::is_known_feature_key;
+use codex_models_manager::AuthManager;
+use codex_models_manager::bundled_models_response;
+use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
+use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::user_input::UserInput;
 use codex_terminal_detection::TerminalName;
 
-/// Ilhae CLI
+/// Codex CLI
 ///
 /// If no subcommand is specified, options will be forwarded to the interactive CLI.
 #[derive(Debug, Parser)]
@@ -71,10 +77,10 @@ use codex_terminal_detection::TerminalName;
     // If a sub‑command is given, ignore requirements of the default args.
     subcommand_negates_reqs = true,
     // The executable is sometimes invoked via a platform‑specific name like
-    // `ilhae-x86_64-unknown-linux-musl`, but the help output should always use
-    // the generic `ilhae` command name that users run.
-    bin_name = "ilhae",
-    override_usage = "ilhae [OPTIONS] [PROMPT]\n       ilhae [OPTIONS] <COMMAND> [ARGS]"
+    // `codex-x86_64-unknown-linux-musl`, but the help output should always use
+    // the generic `codex` command name that users run.
+    bin_name = "codex",
+    override_usage = "codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]"
 )]
 struct MultitoolCli {
     #[clap(flatten)]
@@ -95,7 +101,7 @@ struct MultitoolCli {
 
 #[derive(Debug, clap::Subcommand)]
 enum Subcommand {
-    /// Run Ilhae non-interactively.
+    /// Run Codex non-interactively.
     #[clap(visible_alias = "e")]
     Exec(ExecCli),
 
@@ -108,13 +114,13 @@ enum Subcommand {
     /// Remove stored authentication credentials.
     Logout(LogoutCommand),
 
-    /// Manage external MCP servers for Ilhae.
+    /// Manage external MCP servers for Codex.
     Mcp(McpCli),
 
     /// Manage Codex plugins.
     Plugin(PluginCli),
 
-    /// Start Ilhae as an MCP server (stdio).
+    /// Start Codex as an MCP server (stdio).
     McpServer,
 
     /// [experimental] Run the app server or related tooling.
@@ -129,14 +135,18 @@ enum Subcommand {
     #[cfg(feature = "ilhae")]
     Stop,
 
-    /// Launch the Ilhae desktop app (downloads the macOS installer if missing).
-    #[cfg(target_os = "macos")]
+    /// Manage Ilhae runtime profiles.
+    #[cfg(feature = "ilhae")]
+    Profile(ProfileCommand),
+
+    /// Launch the Codex desktop app (opens the app installer if missing).
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     App(app_cmd::AppCommand),
 
     /// Generate shell completion scripts.
     Completion(CompletionCommand),
 
-    /// Run commands within an Ilhae-provided sandbox.
+    /// Run commands within a Codex-provided sandbox.
     Sandbox(SandboxArgs),
 
     /// Debugging tools.
@@ -146,7 +156,7 @@ enum Subcommand {
     #[clap(hide = true)]
     Execpolicy(ExecpolicyCommand),
 
-    /// Apply the latest diff produced by the Ilhae agent as a `git apply` to your local working tree.
+    /// Apply the latest diff produced by Codex agent as a `git apply` to your local working tree.
     #[clap(visible_alias = "a")]
     Apply(ApplyCommand),
 
@@ -156,7 +166,7 @@ enum Subcommand {
     /// Fork a previous interactive session (picker by default; use --last to fork the most recent).
     Fork(ForkCommand),
 
-    /// [EXPERIMENTAL] Browse tasks from Ilhae Cloud and apply changes locally.
+    /// [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally.
     #[clap(name = "cloud", alias = "cloud-tasks")]
     Cloud(CloudTasksCli),
 
@@ -176,7 +186,7 @@ enum Subcommand {
     #[clap(hide = true)]
     Internal(InternalArgs),
 
-    /// [EXPERIMENTAL] Run the standalone exec-server binary.
+    /// [EXPERIMENTAL] Run the standalone exec-server service.
     ExecServer(ExecServerCommand),
 
     /// Inspect feature flags.
@@ -213,6 +223,9 @@ struct DebugCommand {
 
 #[derive(Debug, clap::Subcommand)]
 enum DebugSubcommand {
+    /// Render the raw model catalog as JSON.
+    Models(DebugModelsCommand),
+
     /// Tooling: helps debug the app server.
     AppServer(DebugAppServerCommand),
 
@@ -251,6 +264,13 @@ struct DebugPromptInputCommand {
     /// Optional image(s) to attach to the user prompt.
     #[arg(long = "image", short = 'i', value_name = "FILE", value_delimiter = ',', num_args = 1..)]
     images: Vec<PathBuf>,
+}
+
+#[derive(Debug, Parser)]
+struct DebugModelsCommand {
+    /// Skip refresh and dump only the bundled catalog shipped with this binary.
+    #[arg(long = "bundled", default_value_t = false)]
+    bundled: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -335,7 +355,7 @@ struct InternalArgs {
 
 #[derive(Debug, clap::Subcommand)]
 enum InternalCommand {
-    /// Extract session context dynamically for SessionStart hook
+    /// Extract session context dynamically for SessionStart hook.
     #[clap(name = "get-session-context")]
     GetSessionContext,
 }
@@ -354,7 +374,7 @@ struct LoginCommand {
 
     #[arg(
         long = "with-api-key",
-        help = "Read the API key from stdin (e.g. `printenv OPENAI_API_KEY | ilhae login --with-api-key`)"
+        help = "Read the API key from stdin (e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`)"
     )]
     with_api_key: bool,
 
@@ -433,6 +453,30 @@ struct AppServerCommand {
     auth: codex_app_server::AppServerWebsocketAuthArgs,
 }
 
+#[cfg(feature = "ilhae")]
+#[derive(Debug, Parser)]
+struct ProfileCommand {
+    #[command(subcommand)]
+    subcommand: ProfileSubcommand,
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, clap::Subcommand)]
+enum ProfileSubcommand {
+    /// List configured Ilhae profiles.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Activate a profile and switch its managed local runtime.
+    Set {
+        profile_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Debug, Parser)]
 struct ExecServerCommand {
     /// Transport endpoint URL. Supported values: `ws://IP:PORT` (default).
@@ -453,7 +497,7 @@ enum AppServerSubcommand {
     /// [experimental] Generate JSON Schema for the app server protocol.
     GenerateJsonSchema(GenerateJsonSchemaCommand),
 
-    /// [internal] Generate internal JSON Schema artifacts for Ilhae tooling.
+    /// [internal] Generate internal JSON Schema artifacts for Codex tooling.
     #[clap(hide = true)]
     GenerateInternalJsonSchema(GenerateInternalJsonSchemaCommand),
 }
@@ -502,7 +546,6 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
     let AppExitInfo {
         token_usage,
         thread_id: conversation_id,
-        thread_name,
         ..
     } = exit_info;
 
@@ -515,7 +558,7 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
     }
 
     if let Some(resume_cmd) =
-        codex_core::util::resume_command(thread_name.as_deref(), conversation_id)
+        codex_core::util::resume_command(/*thread_name*/ None, conversation_id)
     {
         let command = if color_enabled {
             resume_cmd.cyan().to_string()
@@ -553,7 +596,7 @@ fn handle_app_exit(exit_info: AppExitInfo) -> anyhow::Result<()> {
 fn run_update_action(action: UpdateAction) -> anyhow::Result<()> {
     println!();
     let cmd_str = action.command_str();
-    println!("Updating Ilhae via `{cmd_str}`...");
+    println!("Updating Codex via `{cmd_str}`...");
 
     let status = {
         #[cfg(windows)]
@@ -588,7 +631,7 @@ fn run_update_action(action: UpdateAction) -> anyhow::Result<()> {
     if !status.success() {
         anyhow::bail!("`{cmd_str}` failed with status {status}");
     }
-    println!("\n🎉 Update ran successfully! Please restart Ilhae.");
+    println!("\n🎉 Update ran successfully! Please restart Codex.");
     Ok(())
 }
 
@@ -693,9 +736,356 @@ fn main() -> anyhow::Result<()> {
     })
 }
 
+#[cfg(feature = "ilhae")]
+fn is_invoked_as_ilhae_cli() -> bool {
+    if std::env::var("ILHAE_APP_SERVER").ok().as_deref() == Some("1")
+        || std::env::var("ILHAE_RUNTIME").ok().as_deref() == Some("1")
+    {
+        return true;
+    }
+
+    std::env::args_os()
+        .next()
+        .and_then(|arg0| {
+            std::path::Path::new(&arg0)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .is_some_and(|name| matches!(name.as_str(), "ilhae" | "codex-ilhae" | "codex-ilhae-cli"))
+}
+
+#[cfg(feature = "ilhae")]
+fn prepare_ilhae_cli_environment_if_needed() -> anyhow::Result<Option<std::path::PathBuf>> {
+    if !is_invoked_as_ilhae_cli() {
+        return Ok(None);
+    }
+
+    let codex_home = codex_ilhae::config::prepare_ilhae_codex_home().map_err(anyhow::Error::msg)?;
+    Ok(Some(codex_home))
+}
+
+#[cfg(feature = "ilhae")]
+fn ilhae_loop_lifecycle_to_server_notification(
+    notification: codex_ilhae::IlhaeLoopLifecycleNotification,
+) -> codex_app_server_protocol::ServerNotification {
+    use codex_app_server_protocol::IlhaeLoopLifecycleNotification as AppServerLoopLifecycleNotification;
+
+    let notification = match notification {
+        codex_ilhae::IlhaeLoopLifecycleNotification::Started { session_id, item } => {
+            AppServerLoopLifecycleNotification::Started { session_id, item }
+        }
+        codex_ilhae::IlhaeLoopLifecycleNotification::Progress {
+            session_id,
+            item_id,
+            kind,
+            summary,
+            detail,
+            counts,
+        } => AppServerLoopLifecycleNotification::Progress {
+            session_id,
+            item_id,
+            kind,
+            summary,
+            detail,
+            counts,
+        },
+        codex_ilhae::IlhaeLoopLifecycleNotification::Completed { session_id, item } => {
+            AppServerLoopLifecycleNotification::Completed { session_id, item }
+        }
+        codex_ilhae::IlhaeLoopLifecycleNotification::Failed { session_id, item } => {
+            AppServerLoopLifecycleNotification::Failed { session_id, item }
+        }
+    };
+
+    codex_app_server_protocol::ServerNotification::IlhaeLoopLifecycle(notification)
+}
+
+#[cfg(feature = "ilhae")]
+fn spawn_ilhae_loop_lifecycle_app_server_bridge()
+-> codex_app_server::ExternalServerNotificationReceiver {
+    let (tx, rx) = tokio::sync::mpsc::channel(256);
+    let mut lifecycle_rx = codex_ilhae::subscribe_native_loop_lifecycle();
+
+    tokio::spawn(async move {
+        loop {
+            match lifecycle_rx.recv().await {
+                Ok(notification) => {
+                    let notification = ilhae_loop_lifecycle_to_server_notification(notification);
+                    if tx.send(notification).await.is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
+    rx
+}
+
+#[cfg(feature = "ilhae")]
+fn ilhae_profile_engine_id(profile: &codex_ilhae::config::IlhaeProfileConfig) -> String {
+    profile
+        .agent
+        .engine_id
+        .clone()
+        .or_else(|| {
+            profile
+                .agent
+                .command
+                .as_deref()
+                .map(codex_ilhae::helpers::infer_agent_id_from_command)
+        })
+        .unwrap_or_else(|| "ilhae".to_string())
+}
+
+#[cfg(feature = "ilhae")]
+fn native_runtime_provider_name(
+    runtime: &codex_ilhae::config::IlhaeProfileNativeRuntimeConfig,
+) -> String {
+    runtime
+        .provider
+        .clone()
+        .filter(|provider| !provider.trim().is_empty())
+        .unwrap_or_else(|| "llama-server".to_string())
+}
+
+#[cfg(feature = "ilhae")]
+fn ilhae_profile_provider_id(profile: &codex_ilhae::config::IlhaeProfileConfig) -> String {
+    if profile.native_runtime.enabled {
+        native_runtime_provider_name(&profile.native_runtime)
+    } else {
+        ilhae_profile_engine_id(profile)
+    }
+}
+
+#[cfg(feature = "ilhae")]
+fn native_runtime_oss_provider(profile_id: Option<&str>) -> Option<String> {
+    codex_ilhae::config::get_native_runtime_config(profile_id)
+        .map(|(_, runtime)| native_runtime_provider_name(&runtime))
+}
+
+#[cfg(feature = "ilhae")]
+fn toml_bool(value: &toml::Value) -> Option<bool> {
+    value.as_bool().or_else(|| {
+        match value
+            .as_str()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("true" | "1" | "on" | "enabled") => Some(true),
+            Some("false" | "0" | "off" | "disabled") => Some(false),
+            _ => None,
+        }
+    })
+}
+
+#[cfg(feature = "ilhae")]
+fn toml_string(value: &toml::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(feature = "ilhae")]
+fn apply_ilhae_agent_cli_overrides(
+    settings: &mut codex_ilhae::settings_types::Settings,
+    overrides: &[(String, toml::Value)],
+) {
+    for (key, value) in overrides {
+        match key.as_str() {
+            "agent.kairos_enabled" | "agent.kairos" => {
+                if let Some(enabled) = toml_bool(value) {
+                    settings.agent.kairos_enabled = enabled;
+                }
+            }
+            "agent.self_improvement_enabled" | "agent.self_improvement" => {
+                if let Some(enabled) = toml_bool(value) {
+                    settings.agent.self_improvement_enabled = enabled;
+                }
+            }
+            "agent.self_improvement_preset" => {
+                if let Some(preset) = toml_string(value) {
+                    settings.agent.self_improvement_preset = preset;
+                }
+            }
+            "agent.autonomous_mode" | "agent.autonomous" => {
+                if let Some(enabled) = toml_bool(value) {
+                    settings.agent.autonomous_mode = enabled;
+                }
+            }
+            "agent.knowledge_mode" => {
+                if let Some(mode) = toml_string(value) {
+                    settings.agent.knowledge_mode = mode;
+                }
+            }
+            "agent.hygiene_mode" => {
+                if let Some(mode) = toml_string(value) {
+                    settings.agent.hygiene_mode = mode;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(feature = "ilhae")]
+fn ilhae_exec_runtime_settings_from_overrides(
+    overrides: &CliConfigOverrides,
+) -> Option<codex_ilhae::settings_types::Settings> {
+    let parsed = overrides.parse_overrides().ok()?;
+    let ilhae_dir = codex_ilhae::config::resolve_ilhae_data_dir();
+    let store = codex_ilhae::settings_store::SettingsStore::new(&ilhae_dir);
+    let mut settings = store.get();
+    apply_ilhae_agent_cli_overrides(&mut settings, &parsed);
+    Some(settings)
+}
+
+#[cfg(feature = "ilhae")]
+fn ilhae_exec_loop_developer_instructions_from_settings(
+    settings: &codex_ilhae::settings_types::Settings,
+) -> Option<String> {
+    codex_ilhae::session_context_service::build_runtime_loop_developer_instructions(&settings)
+}
+
+#[cfg(feature = "ilhae")]
+#[cfg(test)]
+fn ilhae_exec_loop_developer_instructions_from_overrides(
+    overrides: &CliConfigOverrides,
+) -> Option<String> {
+    let settings = ilhae_exec_runtime_settings_from_overrides(overrides)?;
+    ilhae_exec_loop_developer_instructions_from_settings(&settings)
+}
+
+#[cfg(feature = "ilhae")]
+fn ilhae_exec_should_run_foreground_loops(
+    settings: &codex_ilhae::settings_types::Settings,
+) -> bool {
+    ilhae_exec_loop_developer_instructions_from_settings(settings).is_some()
+}
+
+#[cfg(feature = "ilhae")]
+fn ilhae_exec_autonomy_settings_from_settings(
+    settings: &codex_ilhae::settings_types::Settings,
+) -> Option<codex_exec::ExecAutonomySettings> {
+    settings.agent.autonomous_mode.then(|| {
+        codex_exec::ExecAutonomySettings::new(
+            settings.agent.auto_max_turns,
+            std::time::Duration::from_secs(
+                u64::from(settings.agent.auto_timebox_minutes.max(1)) * 60,
+            ),
+        )
+    })
+}
+
+#[cfg(feature = "ilhae")]
+fn ilhae_profile_display_name(
+    profile_id: &str,
+    profile: &codex_ilhae::config::IlhaeProfileConfig,
+) -> String {
+    if profile.native_runtime.enabled
+        && let Some(model) = std::path::Path::new(&profile.native_runtime.model_path)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .filter(|stem| !stem.trim().is_empty())
+    {
+        return model;
+    }
+
+    profile
+        .agent
+        .engine_id
+        .clone()
+        .or_else(|| profile.agent.command.clone())
+        .unwrap_or_else(|| profile_id.to_string())
+}
+
+#[cfg(feature = "ilhae")]
+async fn run_ilhae_profile_command(cmd: ProfileCommand) -> anyhow::Result<()> {
+    match cmd.subcommand {
+        ProfileSubcommand::List { json } => {
+            let config = codex_ilhae::config::load_ilhae_toml_config();
+            if json {
+                let profiles = config
+                    .profiles
+                    .iter()
+                    .map(|(id, profile)| {
+                        serde_json::json!({
+                            "id": id,
+                            "name": ilhae_profile_display_name(id, profile),
+                            "provider": ilhae_profile_provider_id(profile),
+                            "nativeRuntime": profile.native_runtime.enabled,
+                            "baseUrl": profile.native_runtime.base_url,
+                            "healthUrl": profile.native_runtime.health_url,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "activeProfile": config.profile.active,
+                        "profiles": profiles,
+                    }))?
+                );
+            } else {
+                let active = config.profile.active.as_deref().unwrap_or("none");
+                println!("Active profile: {active}");
+                for (id, profile) in &config.profiles {
+                    let marker = if Some(id) == config.profile.active.as_ref() {
+                        "*"
+                    } else {
+                        " "
+                    };
+                    println!(
+                        "{marker} {id}\t{}\t{}",
+                        ilhae_profile_display_name(id, profile),
+                        ilhae_profile_provider_id(profile)
+                    );
+                }
+            }
+        }
+        ProfileSubcommand::Set { profile_id, json } => {
+            let previous_active = codex_ilhae::config::load_ilhae_toml_config().profile.active;
+            let profile = codex_ilhae::config::set_active_ilhae_profile(&profile_id)
+                .map_err(anyhow::Error::msg)?;
+            let ilhae_dir = codex_ilhae::config::resolve_ilhae_data_dir();
+            let settings = codex_ilhae::settings_store::SettingsStore::new(&ilhae_dir);
+            codex_ilhae::config::apply_ilhae_profile_projection(&settings, &profile)
+                .map_err(anyhow::Error::msg)?;
+            codex_ilhae::config::prepare_ilhae_codex_home().map_err(anyhow::Error::msg)?;
+            codex_ilhae::switch_native_runtime_for_cli(
+                previous_active.as_deref(),
+                Some(profile.id.as_str()),
+            )
+            .await?;
+
+            if json {
+                let active_profile = profile.id.clone();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": true,
+                        "activeProfile": active_profile,
+                        "profile": profile,
+                    }))?
+                );
+            } else {
+                println!("Active profile: {}", profile.id);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     #[cfg(feature = "ilhae")]
-    codex_ilhae::config::prepare_ilhae_codex_home().map_err(anyhow::Error::msg)?;
+    let prepared_ilhae_codex_home = prepare_ilhae_cli_environment_if_needed()?;
 
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
@@ -737,8 +1127,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         }
         #[cfg(feature = "ilhae")]
         Some(Subcommand::Stop) => {
-            codex_ilhae::stop_native_runtime_for_cli(interactive.config_profile.as_deref())
-                .await?;
+            codex_ilhae::stop_native_runtime_for_cli(interactive.config_profile.as_deref()).await?;
+        }
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Profile(profile_cli)) => {
+            run_ilhae_profile_command(profile_cli).await?;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -746,19 +1139,19 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "exec",
             )?;
-            if exec_cli.config_profile.is_none() {
-                exec_cli.config_profile = interactive.config_profile.clone();
-            }
+            exec_cli
+                .shared
+                .inherit_exec_root_options(&interactive.shared);
             #[cfg(feature = "ilhae")]
             {
                 codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile.as_deref())
                     .await?;
-                if codex_ilhae::config::get_native_runtime_config(exec_cli.config_profile.as_deref())
-                    .is_some()
+                if let Some(provider) =
+                    native_runtime_oss_provider(exec_cli.config_profile.as_deref())
                 {
                     exec_cli.oss = true;
                     if exec_cli.oss_provider.is_none() {
-                        exec_cli.oss_provider = Some("llama-server".to_string());
+                        exec_cli.oss_provider = Some(provider);
                     }
                 }
             }
@@ -766,6 +1159,43 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            #[cfg(feature = "ilhae")]
+            {
+                let runtime_settings =
+                    ilhae_exec_runtime_settings_from_overrides(&exec_cli.config_overrides);
+                let loop_developer_instructions = runtime_settings
+                    .as_ref()
+                    .and_then(ilhae_exec_loop_developer_instructions_from_settings);
+                let exec_autonomy_settings = runtime_settings
+                    .as_ref()
+                    .and_then(ilhae_exec_autonomy_settings_from_settings);
+                let external_notifications = loop_developer_instructions
+                    .is_some()
+                    .then(spawn_ilhae_loop_lifecycle_app_server_bridge);
+                if let Some(settings) = runtime_settings.clone()
+                    && ilhae_exec_should_run_foreground_loops(&settings)
+                {
+                    tokio::spawn(async move {
+                        if let Err(err) =
+                            codex_ilhae::run_exec_foreground_loop_cycle(settings).await
+                        {
+                            tracing::warn!(
+                                error = ?err,
+                                "ilhae exec foreground loop cycle failed"
+                            );
+                        }
+                    });
+                }
+                codex_exec::run_main_with_extra_developer_instructions_server_notifications_and_autonomy(
+                    exec_cli,
+                    arg0_paths.clone(),
+                    loop_developer_instructions,
+                    external_notifications,
+                    exec_autonomy_settings,
+                )
+                .await?;
+            }
+            #[cfg(not(feature = "ilhae"))]
             codex_exec::run_main(exec_cli, arg0_paths.clone()).await?;
         }
         Some(Subcommand::Review(review_args)) => {
@@ -774,18 +1204,20 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "review",
             )?;
-            let review_profile = interactive.config_profile.clone();
-            #[cfg(feature = "ilhae")]
-            {
-                codex_ilhae::ensure_native_runtime_for_cli(review_profile.as_deref()).await?;
-            }
             let mut exec_cli = ExecCli::try_parse_from(["codex", "exec"])?;
-            exec_cli.config_profile = review_profile.clone();
+            exec_cli
+                .shared
+                .inherit_exec_root_options(&interactive.shared);
             #[cfg(feature = "ilhae")]
-            if codex_ilhae::config::get_native_runtime_config(review_profile.as_deref()).is_some()
             {
-                exec_cli.oss = true;
-                exec_cli.oss_provider = Some("llama-server".to_string());
+                codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile.as_deref())
+                    .await?;
+                if let Some(provider) =
+                    native_runtime_oss_provider(exec_cli.config_profile.as_deref())
+                {
+                    exec_cli.oss = true;
+                    exec_cli.oss_provider = Some(provider);
+                }
             }
             exec_cli.command = Some(ExecCommand::Review(review_args));
             prepend_config_flags(
@@ -846,14 +1278,64 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 None => {
                     let transport = listen;
                     let auth = auth.try_into_settings()?;
-                    codex_app_server::run_main_with_transport(
+                    let mut loader_overrides =
+                        codex_core::config_loader::LoaderOverrides::default();
+                    #[cfg(feature = "ilhae")]
+                    let is_ilhae_app_server = is_invoked_as_ilhae_cli();
+                    #[cfg(feature = "ilhae")]
+                    let external_notifications = if is_ilhae_app_server {
+                        Some(spawn_ilhae_loop_lifecycle_app_server_bridge())
+                    } else {
+                        None
+                    };
+                    #[cfg(not(feature = "ilhae"))]
+                    let external_notifications = None;
+                    #[cfg(feature = "ilhae")]
+                    let runtime_hooks = if is_ilhae_app_server {
+                        codex_app_server::AppServerRuntimeHooks {
+                            before_turn_start: Some(Arc::new(|| {
+                                Box::pin(async {
+                                    if let Err(err) =
+                                        codex_ilhae::run_active_foreground_loop_cycle().await
+                                    {
+                                        tracing::warn!(
+                                            error = ?err,
+                                            "ilhae foreground loop cycle failed before app-server turn"
+                                        );
+                                    }
+                                })
+                            })),
+                        }
+                    } else {
+                        codex_app_server::AppServerRuntimeHooks::default()
+                    };
+                    #[cfg(not(feature = "ilhae"))]
+                    let runtime_hooks = codex_app_server::AppServerRuntimeHooks::default();
+                    #[cfg(feature = "ilhae")]
+                    if is_ilhae_app_server {
+                        let codex_home = match prepared_ilhae_codex_home.as_ref() {
+                            Some(codex_home) => codex_home.clone(),
+                            None => codex_ilhae::config::prepare_ilhae_codex_home()
+                                .map_err(anyhow::Error::msg)?,
+                        };
+                        loader_overrides.managed_config_path =
+                            Some(codex_home.join("managed_config.toml"));
+                        codex_ilhae::ensure_native_runtime_for_cli(
+                            interactive.config_profile.as_deref(),
+                        )
+                        .await?;
+                        let _ = codex_ilhae::bootstrap_ilhae_runtime().await?;
+                    }
+                    codex_app_server::run_main_with_transport_notifications_and_runtime_hooks(
                         arg0_paths.clone(),
                         root_config_overrides,
-                        codex_core::config_loader::LoaderOverrides::default(),
+                        loader_overrides,
                         analytics_default_enabled,
                         transport,
                         codex_protocol::protocol::SessionSource::VSCode,
                         auth,
+                        external_notifications,
+                        runtime_hooks,
                     )
                     .await?;
                 }
@@ -879,7 +1361,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 }
             }
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         Some(Subcommand::App(app_cli)) => {
             reject_remote_mode_for_subcommand(
                 root_remote.as_deref(),
@@ -905,11 +1387,6 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 include_non_interactive,
                 config_overrides,
             );
-            #[cfg(feature = "ilhae")]
-            if remote.remote.is_none() && root_remote.is_none() {
-                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
-                    .await?;
-            }
             let exit_info = run_interactive_tui(
                 interactive,
                 remote.remote.or(root_remote.clone()),
@@ -936,11 +1413,6 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 all,
                 config_overrides,
             );
-            #[cfg(feature = "ilhae")]
-            if remote.remote.is_none() && root_remote.is_none() {
-                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
-                    .await?;
-            }
             let exit_info = run_interactive_tui(
                 interactive,
                 remote.remote.or(root_remote.clone()),
@@ -976,7 +1448,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         .await;
                     } else if login_cli.api_key.is_some() {
                         eprintln!(
-                            "The --api-key flag is no longer supported. Pipe the key instead, e.g. `printenv OPENAI_API_KEY | ilhae login --with-api-key`."
+                            "The --api-key flag is no longer supported. Pipe the key instead, e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`."
                         );
                         std::process::exit(1);
                     } else if login_cli.with_api_key {
@@ -1072,6 +1544,14 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             }
         },
         Some(Subcommand::Debug(DebugCommand { subcommand })) => match subcommand {
+            DebugSubcommand::Models(cmd) => {
+                reject_remote_mode_for_subcommand(
+                    root_remote.as_deref(),
+                    root_remote_auth_token_env.as_deref(),
+                    "debug models",
+                )?;
+                run_debug_models_command(cmd, root_config_overrides).await?;
+            }
             DebugSubcommand::AppServer(cmd) => {
                 reject_remote_mode_for_subcommand(
                     root_remote.as_deref(),
@@ -1117,8 +1597,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             InternalCommand::GetSessionContext => {
                 #[cfg(feature = "ilhae")]
                 {
-                    tokio::task::spawn_blocking(move || codex_ilhae::context_proxy::run_get_session_context())
-                        .await??;
+                    tokio::task::spawn_blocking(move || {
+                        codex_ilhae::context_proxy::run_get_session_context()
+                    })
+                    .await??;
                 }
             }
         },
@@ -1158,8 +1640,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 "stdio-to-uds",
             )?;
             let socket_path = cmd.socket_path;
-            tokio::task::spawn_blocking(move || codex_stdio_to_uds::run(socket_path.as_path()))
-                .await??;
+            codex_stdio_to_uds::run(socket_path.as_path()).await?;
         }
         Some(Subcommand::ExecServer(cmd)) => {
             reject_remote_mode_for_subcommand(
@@ -1310,6 +1791,7 @@ async fn run_debug_prompt_input_command(
     interactive: TuiCli,
     arg0_paths: Arg0DispatchPaths,
 ) -> anyhow::Result<()> {
+    let shared = interactive.shared.into_inner();
     let mut cli_kv_overrides = root_config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
@@ -1320,38 +1802,38 @@ async fn run_debug_prompt_input_command(
         ));
     }
 
-    let approval_policy = if interactive.full_auto {
+    let approval_policy = if shared.full_auto {
         Some(AskForApproval::OnRequest)
-    } else if interactive.dangerously_bypass_approvals_and_sandbox {
+    } else if shared.dangerously_bypass_approvals_and_sandbox {
         Some(AskForApproval::Never)
     } else {
         interactive.approval_policy.map(Into::into)
     };
-    let sandbox_mode = if interactive.full_auto {
+    let sandbox_mode = if shared.full_auto {
         Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite)
-    } else if interactive.dangerously_bypass_approvals_and_sandbox {
+    } else if shared.dangerously_bypass_approvals_and_sandbox {
         Some(codex_protocol::config_types::SandboxMode::DangerFullAccess)
     } else {
-        interactive.sandbox_mode.map(Into::into)
+        shared.sandbox_mode.map(Into::into)
     };
     let overrides = ConfigOverrides {
-        model: interactive.model,
-        config_profile: interactive.config_profile,
+        model: shared.model,
+        config_profile: shared.config_profile,
         approval_policy,
         sandbox_mode,
-        cwd: interactive.cwd,
+        cwd: shared.cwd,
         codex_self_exe: arg0_paths.codex_self_exe,
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe,
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe,
-        show_raw_agent_reasoning: interactive.oss.then_some(true),
+        show_raw_agent_reasoning: shared.oss.then_some(true),
         ephemeral: Some(true),
-        additional_writable_roots: interactive.add_dir,
+        additional_writable_roots: shared.add_dir,
         ..Default::default()
     };
     let config =
         Config::load_with_cli_overrides_and_harness_overrides(cli_kv_overrides, overrides).await?;
 
-    let mut input = interactive
+    let mut input = shared
         .images
         .into_iter()
         .chain(cmd.images)
@@ -1367,6 +1849,31 @@ async fn run_debug_prompt_input_command(
     let prompt_input = codex_core::build_prompt_input(config, input).await?;
     println!("{}", serde_json::to_string_pretty(&prompt_input)?);
 
+    Ok(())
+}
+
+async fn run_debug_models_command(
+    cmd: DebugModelsCommand,
+    root_config_overrides: CliConfigOverrides,
+) -> anyhow::Result<()> {
+    let catalog = if cmd.bundled {
+        bundled_models_response()?
+    } else {
+        let cli_overrides = root_config_overrides
+            .parse_overrides()
+            .map_err(anyhow::Error::msg)?;
+        let config = Config::load_with_cli_overrides(cli_overrides).await?;
+        let auth_manager =
+            AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ true);
+        let models_manager =
+            build_models_manager(&config, auth_manager, CollaborationModesConfig::default());
+        models_manager
+            .raw_model_catalog(RefreshStrategy::OnlineIfUncached)
+            .await
+    };
+
+    serde_json::to_writer(std::io::stdout(), &catalog)?;
+    println!();
     Ok(())
 }
 
@@ -1429,12 +1936,12 @@ fn reject_remote_mode_for_subcommand(
 ) -> anyhow::Result<()> {
     if let Some(remote) = remote {
         anyhow::bail!(
-            "`--remote {remote}` is only supported for interactive TUI commands, not `ilhae {subcommand}`"
+            "`--remote {remote}` is only supported for interactive TUI commands, not `codex {subcommand}`"
         );
     }
     if remote_auth_token_env.is_some() {
         anyhow::bail!(
-            "`--remote-auth-token-env` is only supported for interactive TUI commands, not `ilhae {subcommand}`"
+            "`--remote-auth-token-env` is only supported for interactive TUI commands, not `codex {subcommand}`"
         );
     }
     Ok(())
@@ -1483,7 +1990,7 @@ async fn run_interactive_tui(
     arg0_paths: Arg0DispatchPaths,
 ) -> std::io::Result<AppExitInfo> {
     #[cfg(feature = "ilhae")]
-    if remote.is_none() {
+    if remote.is_none() && is_invoked_as_ilhae_cli() {
         let _ = codex_ilhae::bootstrap_ilhae_runtime()
             .await
             .map_err(std::io::Error::other)?;
@@ -1503,7 +2010,7 @@ async fn run_interactive_tui(
         }
 
         eprintln!(
-            "WARNING: TERM is set to \"dumb\". Ilhae's interactive TUI may not work in this terminal."
+            "WARNING: TERM is set to \"dumb\". Codex's interactive TUI may not work in this terminal."
         );
         if !confirm("Continue anyway? [y/N]: ")? {
             return Ok(AppExitInfo::fatal(
@@ -1604,40 +2111,24 @@ fn finalize_fork_interactive(
 /// root-level flags. Only overrides fields explicitly set on the subcommand-scoped
 /// CLI. Also appends `-c key=value` overrides with highest precedence.
 fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli) {
-    if let Some(model) = subcommand_cli.model {
-        interactive.model = Some(model);
-    }
-    if subcommand_cli.oss {
-        interactive.oss = true;
-    }
-    if let Some(profile) = subcommand_cli.config_profile {
-        interactive.config_profile = Some(profile);
-    }
-    if let Some(sandbox) = subcommand_cli.sandbox_mode {
-        interactive.sandbox_mode = Some(sandbox);
-    }
-    if let Some(approval) = subcommand_cli.approval_policy {
+    let TuiCli {
+        shared,
+        approval_policy,
+        web_search,
+        prompt,
+        config_overrides,
+        ..
+    } = subcommand_cli;
+    interactive
+        .shared
+        .apply_subcommand_overrides(shared.into_inner());
+    if let Some(approval) = approval_policy {
         interactive.approval_policy = Some(approval);
     }
-    if subcommand_cli.full_auto {
-        interactive.full_auto = true;
-    }
-    if subcommand_cli.dangerously_bypass_approvals_and_sandbox {
-        interactive.dangerously_bypass_approvals_and_sandbox = true;
-    }
-    if let Some(cwd) = subcommand_cli.cwd {
-        interactive.cwd = Some(cwd);
-    }
-    if subcommand_cli.web_search {
+    if web_search {
         interactive.web_search = true;
     }
-    if !subcommand_cli.images.is_empty() {
-        interactive.images = subcommand_cli.images;
-    }
-    if !subcommand_cli.add_dir.is_empty() {
-        interactive.add_dir.extend(subcommand_cli.add_dir);
-    }
-    if let Some(prompt) = subcommand_cli.prompt {
+    if let Some(prompt) = prompt {
         // Normalize CRLF/CR to LF so CLI-provided text can't leak `\r` into TUI state.
         interactive.prompt = Some(prompt.replace("\r\n", "\n").replace('\r', "\n"));
     }
@@ -1645,12 +2136,12 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
     interactive
         .config_overrides
         .raw_overrides
-        .extend(subcommand_cli.config_overrides.raw_overrides);
+        .extend(config_overrides.raw_overrides);
 }
 
 fn print_completion(cmd: CompletionCommand) {
     let mut app = MultitoolCli::command();
-    let name = "ilhae";
+    let name = "codex";
     generate(cmd.shell, &mut app, name, &mut std::io::stdout());
 }
 
@@ -1661,6 +2152,45 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::protocol::TokenUsage;
     use pretty_assertions::assert_eq;
+    use std::ffi::OsString;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            // SAFETY: tests scope process env mutations and restore values on drop.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            // SAFETY: tests scope process env mutations and restore values on drop.
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: tests restore process env to its previous value before exiting scope.
+            unsafe {
+                if let Some(previous) = self.previous.as_ref() {
+                    std::env::set_var(self.key, previous);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 
     fn finalize_resume_from_args(args: &[&str]) -> TuiCli {
         let cli = MultitoolCli::try_parse_from(args).expect("parse");
@@ -1719,6 +2249,115 @@ mod tests {
         finalize_fork_interactive(interactive, root_overrides, session_id, last, all, fork_cli)
     }
 
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn native_runtime_provider_name_prefers_explicit_provider() {
+        let runtime = codex_ilhae::config::IlhaeProfileNativeRuntimeConfig {
+            provider: Some("sglang".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(native_runtime_provider_name(&runtime), "sglang");
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn native_runtime_provider_name_defaults_to_llama_server() {
+        let runtime = codex_ilhae::config::IlhaeProfileNativeRuntimeConfig::default();
+        assert_eq!(native_runtime_provider_name(&runtime), "llama-server");
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn ilhae_cli_startup_prepares_codex_home_before_config_load() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config_dir = tmp.path().join(".ilhae");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(
+            config_dir.join("config.toml"),
+            r#"
+[profile]
+active = "qwen-local"
+
+[profiles.qwen-local.agent]
+command = "ilhae"
+
+[profiles.qwen-local.native_runtime]
+enabled = true
+provider = "llama-server"
+base_url = "http://127.0.0.1:8082/v1"
+model_path = "/models/Qwen3.6-27B-UD-Q4_K_XL.gguf"
+args = ["--ctx-size", "131072"]
+"#,
+        )
+        .expect("write ilhae config");
+
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", &config_dir);
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data"));
+        let _runtime_guard = EnvVarGuard::set("ILHAE_RUNTIME", "1");
+        let _codex_home_guard = EnvVarGuard::unset("CODEX_HOME");
+
+        prepare_ilhae_cli_environment_if_needed().expect("prepare ilhae cli env");
+
+        let codex_home = config_dir.join("codex-home");
+        assert_eq!(
+            std::env::var_os("CODEX_HOME"),
+            Some(codex_home.clone().into())
+        );
+        let managed = std::fs::read_to_string(codex_home.join("managed_config.toml"))
+            .expect("managed config written");
+        assert!(managed.contains(r#"profile = "qwen-local""#));
+        assert!(managed.contains(r#"model = "Qwen3.6-27B-UD-Q4_K_XL""#));
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn ilhae_exec_loop_developer_instructions_honor_agent_cli_overrides() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path());
+        let overrides = CliConfigOverrides {
+            raw_overrides: vec![
+                "agent.kairos_enabled=true".to_string(),
+                "agent.self_improvement_enabled=true".to_string(),
+                "agent.self_improvement_preset=\"foreground\"".to_string(),
+            ],
+        };
+
+        let instructions = ilhae_exec_loop_developer_instructions_from_overrides(&overrides)
+            .expect("loop instructions should be generated");
+
+        assert!(instructions.contains("ILHAE RUNTIME LOOP STATE"));
+        assert!(instructions.contains("Super Loop: enabled"));
+        assert!(instructions.contains("Self-improvement: enabled"));
+        assert!(instructions.contains("Preset: foreground"));
+        assert!(instructions.contains("Keep self-improvement work visible"));
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn ilhae_exec_foreground_loop_settings_honor_agent_cli_overrides() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path());
+        let overrides = CliConfigOverrides {
+            raw_overrides: vec![
+                "agent.kairos_enabled=true".to_string(),
+                "agent.self_improvement_enabled=true".to_string(),
+                "agent.self_improvement_preset=\"foreground\"".to_string(),
+                "agent.knowledge_mode=\"both\"".to_string(),
+                "agent.hygiene_mode=\"both\"".to_string(),
+            ],
+        };
+
+        let settings = ilhae_exec_runtime_settings_from_overrides(&overrides)
+            .expect("runtime settings should be generated");
+
+        assert!(settings.agent.kairos_enabled);
+        assert!(settings.agent.self_improvement_enabled);
+        assert_eq!(settings.agent.self_improvement_preset, "foreground");
+        assert_eq!(settings.agent.knowledge_mode, "both");
+        assert_eq!(settings.agent.hygiene_mode, "both");
+        assert!(ilhae_exec_should_run_foreground_loops(&settings));
+    }
+
     #[test]
     fn exec_resume_last_accepts_prompt_positional() {
         let cli =
@@ -1765,6 +2404,19 @@ mod tests {
         assert_eq!(args.prompt.as_deref(), Some("re-review"));
     }
 
+    #[test]
+    fn dangerous_bypass_conflicts_with_approval_policy() {
+        let err = MultitoolCli::try_parse_from([
+            "codex",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--ask-for-approval",
+            "on-request",
+        ])
+        .expect_err("conflicting permission flags should be rejected");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
     fn app_server_from_args(args: &[&str]) -> AppServerCommand {
         let cli = MultitoolCli::try_parse_from(args).expect("parse");
         let Subcommand::AppServer(app_server) = cli.subcommand.expect("app-server present") else {
@@ -1800,6 +2452,21 @@ mod tests {
     }
 
     #[test]
+    fn debug_models_parses_bundled_flag() {
+        let cli =
+            MultitoolCli::try_parse_from(["codex", "debug", "models", "--bundled"]).expect("parse");
+
+        let Some(Subcommand::Debug(DebugCommand {
+            subcommand: DebugSubcommand::Models(cmd),
+        })) = cli.subcommand
+        else {
+            panic!("expected debug models subcommand");
+        };
+
+        assert!(cmd.bundled);
+    }
+
+    #[test]
     fn responses_subcommand_is_hidden_from_help_but_parses() {
         let help = MultitoolCli::command().render_help().to_string();
         assert!(!help.contains("responses"));
@@ -1827,6 +2494,15 @@ mod tests {
     }
 
     #[test]
+    fn plugin_marketplace_remove_parses_under_plugin() {
+        let cli =
+            MultitoolCli::try_parse_from(["codex", "plugin", "marketplace", "remove", "debug"])
+                .expect("parse");
+
+        assert!(matches!(cli.subcommand, Some(Subcommand::Plugin(_))));
+    }
+
+    #[test]
     fn marketplace_no_longer_parses_at_top_level() {
         let add_result =
             MultitoolCli::try_parse_from(["codex", "marketplace", "add", "owner/repo"]);
@@ -1835,6 +2511,10 @@ mod tests {
         let upgrade_result =
             MultitoolCli::try_parse_from(["codex", "marketplace", "upgrade", "debug"]);
         assert!(upgrade_result.is_err());
+
+        let remove_result =
+            MultitoolCli::try_parse_from(["codex", "marketplace", "remove", "debug"]);
+        assert!(remove_result.is_err());
     }
 
     fn sample_exit_info(conversation_id: Option<&str>, thread_name: Option<&str>) -> AppExitInfo {
@@ -1896,7 +2576,7 @@ mod tests {
     }
 
     #[test]
-    fn format_exit_messages_prefers_thread_name() {
+    fn format_exit_messages_uses_id_even_when_thread_has_name() {
         let exit_info = sample_exit_info(
             Some("123e4567-e89b-12d3-a456-426614174000"),
             Some("my-thread"),
@@ -1906,7 +2586,8 @@ mod tests {
             lines,
             vec![
                 "Token usage: total=2 input=0 output=2".to_string(),
-                "To continue this session, run codex resume my-thread".to_string(),
+                "To continue this session, run codex resume 123e4567-e89b-12d3-a456-426614174000"
+                    .to_string(),
             ]
         );
     }
@@ -2375,5 +3056,33 @@ mod tests {
             .to_overrides()
             .expect_err("feature should be rejected");
         assert_eq!(err.to_string(), "Unknown feature flag: does_not_exist");
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn ilhae_loop_lifecycle_to_server_notification_preserves_native_payload() {
+        let notification = codex_ilhae::IlhaeLoopLifecycleNotification::Started {
+            session_id: "native-runtime".to_string(),
+            item: codex_protocol::items::LoopLifecycleItem {
+                id: "super_loop:worker:1".to_string(),
+                kind: codex_protocol::protocol::LoopLifecycleKind::SuperLoop,
+                title: "Running Super Loop".to_string(),
+                summary: "Scanning background follow-ups (worker)".to_string(),
+                detail: None,
+                status: codex_protocol::protocol::LoopLifecycleStatus::InProgress,
+                reason: Some("cycle_started".to_string()),
+                counts: None,
+                error: None,
+                duration_ms: None,
+                target_profile: None,
+            },
+        };
+
+        let converted = ilhae_loop_lifecycle_to_server_notification(notification);
+        let value = serde_json::to_value(converted).expect("serialize server notification");
+        assert_eq!(value["method"], "ilhae/loop_lifecycle");
+        assert_eq!(value["params"]["event"], "started");
+        assert_eq!(value["params"]["sessionId"], "native-runtime");
+        assert_eq!(value["params"]["item"]["kind"], "super_loop");
     }
 }

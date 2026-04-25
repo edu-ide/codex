@@ -6,6 +6,7 @@
 
 use agent_client_protocol_schema::NewSessionResponse;
 use serde_json::json;
+use std::path::Path;
 use tracing::info;
 
 use crate::helpers::ILHAE_DIR_NAME;
@@ -73,6 +74,29 @@ pub fn build_dynamic_instructions(settings: &settings_store::Settings) -> String
         "`list_mcp_resources`는 `cursor`를 사용할 때 반드시 같은 `server`를 함께 지정해야 합니다.\n",
         "`read_mcp_resource`는 이전 `list_mcp_resources` 결과에서 받은 정확한 `server`와 `uri`에만 사용하세요. `server = default` 같은 추측값을 쓰지 마세요.\n",
         "knowledge workspace 수리 중에는 `find /workspace`, `ls -R /workspace` 같은 광범위한 스캔을 피하고, 먼저 전용 도구로 대상 workspace를 좁히세요.\n",
+        "</dynamic_instructions>",
+    ));
+
+    parts.push(concat!(
+        "<dynamic_instructions>\n",
+        "## Browser MCP 라우팅 규칙\n",
+        "사용자가 웹 페이지 열기, 이동, 탐색, 검사, 스크린샷, 클릭, 입력, 스크롤, 페이지 내용 추출을 요청하면 shell 명령보다 Browser MCP 도구를 우선하세요.\n",
+        "Browser MCP 서버는 `mcp__browser__` namespace로 노출됩니다. 우선 사용할 도구 예: `mcp__browser__.browser_navigate`, `mcp__browser__.browser_snapshot`, `mcp__browser__.browser_get_text`, `mcp__browser__.browser_click`, `mcp__browser__.browser_input_fill`, `mcp__browser__.browser_screenshot`, `mcp__browser__.browser_tab_ops`, `mcp__browser__.browser_session_ops`.\n",
+        "클라이언트가 flat tool name으로 표시하는 경우 같은 도구는 `mcp__browser__browser_navigate`, `mcp__browser__browser_snapshot`, `mcp__browser__browser_screenshot`처럼 보입니다.\n",
+        "일반적인 데스크탑 브라우저 패널 작업에서는 `xdg-open`, `open`, `firefox`, `chromium`, `google-chrome`, `browser` CLI 같은 shell 명령으로 fallback하지 마세요.\n",
+        "Browser MCP가 없거나 실패하면 browser CLI를 실행하지 말고 MCP 연결 문제를 보고하거나 MCP discovery를 재시도하세요. 사용자가 명시적으로 CLI fallback을 요청한 경우에만 browser CLI를 사용하세요.\n",
+        "</dynamic_instructions>",
+    ));
+
+    parts.push(concat!(
+        "<dynamic_instructions>\n",
+        "## MCP / Tool Discovery 라우팅 규칙\n",
+        "Ilhae Desktop/app-server에서는 현재 세션의 도구 가용성 확인이나 MCP 도구 탐색을 위해 shell 명령을 실행하지 마세요.\n",
+        "`tool_search`는 shell subcommand가 아니라 내장 함수 도구입니다. 도구 검색이 필요하면 `tool_search`를 호출하세요.\n",
+        "특히 `codex mcp`, `ilhae mcp`, `codex tools`, `ilhae tools`, `codex tool-search`, `ilhae tool-search`, `which codex`, `which ilhae` 같은 shell 명령으로 tool inventory를 확인하려고 하지 마세요.\n",
+        "`codex mcp`와 `ilhae mcp`는 설정 관리용 CLI이며, 현재 턴에서 모델이 사용할 수 있는 도구 목록이나 연결 상태를 나타내지 않습니다.\n",
+        "이미 노출된 MCP 도구나 namespace가 있으면 즉시 그 도구를 호출하고, 도구가 보이지 않으면 먼저 `tool_search`를 사용하세요.\n",
+        "`tool_search` 결과에도 원하는 도구가 없거나 MCP 호출이 실패하면 shell probing 대신 MCP 연결 문제를 설명하거나 discovery를 재시도하세요.\n",
         "</dynamic_instructions>",
     ));
 
@@ -146,6 +170,31 @@ mod tests {
         assert!(instructions.contains("`action = list`"));
         assert!(instructions.contains("`server = default`"));
     }
+
+    #[test]
+    fn build_dynamic_instructions_includes_browser_mcp_routing_guardrails() {
+        let settings = crate::settings_store::Settings::default();
+        let instructions = build_dynamic_instructions(&settings);
+
+        assert!(instructions.contains("Browser MCP 라우팅 규칙"));
+        assert!(instructions.contains("`mcp__browser__.browser_navigate`"));
+        assert!(instructions.contains("`mcp__browser__.browser_snapshot`"));
+        assert!(instructions.contains("`mcp__browser__.browser_screenshot`"));
+        assert!(instructions.contains("`mcp__browser__browser_navigate`"));
+        assert!(instructions.contains("`xdg-open`"));
+    }
+
+    #[test]
+    fn build_dynamic_instructions_includes_mcp_tool_discovery_guardrails() {
+        let settings = crate::settings_store::Settings::default();
+        let instructions = build_dynamic_instructions(&settings);
+
+        assert!(instructions.contains("MCP / Tool Discovery 라우팅 규칙"));
+        assert!(instructions.contains("`tool_search`는 shell subcommand가 아니라"));
+        assert!(instructions.contains("`codex mcp`"));
+        assert!(instructions.contains("`ilhae mcp`"));
+        assert!(instructions.contains("`codex tool-search`"));
+    }
 }
 
 // ─── Codex capability injection ──────────────────────────────────────────
@@ -218,8 +267,29 @@ pub fn build_codex_config_options() -> Vec<serde_json::Value> {
         .and_then(|v| v.as_str())
         .unwrap_or("gpt-5");
 
+    let ilhae_config = crate::config::load_ilhae_toml_config();
+    let current_profile = ilhae_config
+        .profile
+        .active
+        .clone()
+        .or_else(|| {
+            config
+                .get("profile")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| current_model.to_string());
+
     let mut model_values: Vec<serde_json::Value> = vec![];
-    if let Some(profiles) = config.get("profiles").and_then(|p| p.as_table()) {
+    if !ilhae_config.profiles.is_empty() {
+        for (name, profile) in &ilhae_config.profiles {
+            model_values.push(json!({
+                "value": name,
+                "name": ilhae_profile_model_name(name, profile),
+                "description": null,
+            }));
+        }
+    } else if let Some(profiles) = config.get("profiles").and_then(|p| p.as_table()) {
         for (name, profile) in profiles {
             let model = profile
                 .get("model")
@@ -240,10 +310,6 @@ pub fn build_codex_config_options() -> Vec<serde_json::Value> {
         }));
     }
 
-    let current_profile = config
-        .get("profile")
-        .and_then(|v| v.as_str())
-        .unwrap_or(current_model);
     options.push(json!({
         "id": "model",
         "name": "Model",
@@ -254,7 +320,40 @@ pub fn build_codex_config_options() -> Vec<serde_json::Value> {
         "options": model_values,
     }));
 
+    let current_thinking_mode = crate::config::current_thinking_mode();
+    options.push(json!({
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Controls local Ilhae native-runtime reasoning mode",
+        "type": "select",
+        "category": "mode",
+        "currentValue": current_thinking_mode,
+        "options": [
+            { "value": "on", "name": "On", "description": "Show model reasoning/thinking output when the local runtime supports it" },
+            { "value": "off", "name": "Off", "description": "Force local native runtimes to answer without thinking traces" }
+        ],
+    }));
+
     options
+}
+
+fn ilhae_profile_model_name(
+    profile_id: &str,
+    profile: &crate::config::IlhaeProfileConfig,
+) -> String {
+    let native_model = if profile.native_runtime.enabled {
+        Path::new(&profile.native_runtime.model_path)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .filter(|stem| !stem.trim().is_empty())
+    } else {
+        None
+    };
+
+    native_model
+        .or_else(|| profile.agent.engine_id.clone())
+        .or_else(|| profile.agent.command.clone())
+        .unwrap_or_else(|| profile_id.to_string())
 }
 
 /// Build configOptions for Gemini CLI by reading `~/.gemini/settings.json`

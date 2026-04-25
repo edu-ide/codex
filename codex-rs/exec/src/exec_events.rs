@@ -34,6 +34,9 @@ pub enum ThreadEvent {
     /// Signals that an item has reached a terminal state—either success or failure.
     #[serde(rename = "item.completed")]
     ItemCompleted(ItemCompletedEvent),
+    /// Ilhae runtime loop lifecycle event emitted outside the active turn.
+    #[serde(rename = "loop_lifecycle")]
+    LoopLifecycle(LoopLifecycleEvent),
     /// Represents an unrecoverable error emitted directly by the event stream.
     #[serde(rename = "error")]
     Error(ThreadErrorEvent),
@@ -100,6 +103,11 @@ pub struct ItemCompletedEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 pub struct ItemUpdatedEvent {
     pub item: ThreadItem,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+pub struct LoopLifecycleEvent {
+    pub notification: JsonValue,
 }
 
 /// Fatal error emitted by the stream.

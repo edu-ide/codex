@@ -1,7 +1,6 @@
 //! Prototype MCP server.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
-use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::io::Result as IoResult;
 use std::sync::Arc;
@@ -9,6 +8,7 @@ use std::sync::Arc;
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::Config;
 use codex_exec_server::EnvironmentManager;
+use codex_exec_server::EnvironmentManagerArgs;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_utils_cli::CliConfigOverrides;
@@ -18,6 +18,7 @@ use rmcp::model::ClientRequest;
 use rmcp::model::JsonRpcMessage;
 use serde_json::Value;
 use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::io::{self};
 use tokio::sync::mpsc;
@@ -30,12 +31,12 @@ use tracing_subscriber::prelude::*;
 mod codex_tool_config;
 mod codex_tool_runner;
 mod exec_approval;
-pub mod http_transport;
 pub(crate) mod message_processor;
 mod outgoing_message;
 mod patch_approval;
 
 use crate::message_processor::MessageProcessor;
+use crate::outgoing_message::OutgoingJsonRpcMessage;
 use crate::outgoing_message::OutgoingMessage;
 use crate::outgoing_message::OutgoingMessageSender;
 
@@ -46,51 +47,25 @@ pub use crate::exec_approval::ExecApprovalResponse;
 pub use crate::patch_approval::PatchApprovalElicitRequestParams;
 pub use crate::patch_approval::PatchApprovalResponse;
 
-/// Size of the bounded channels used to communicate between tasks.
+/// Size of the bounded channels used to communicate between tasks. The value
+/// is a balance between throughput and memory usage – 128 messages should be
+/// plenty for an interactive CLI.
 const CHANNEL_CAPACITY: usize = 128;
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
 const OTEL_SERVICE_NAME: &str = "codex_mcp_server";
 
 type IncomingMessage = JsonRpcMessage<ClientRequest, Value, ClientNotification>;
 
-/// Shared pending map type for routing MCP responses to their requestors.
-type PendingMap = Arc<
-    tokio::sync::Mutex<
-        HashMap<
-            String,
-            tokio::sync::oneshot::Sender<crate::outgoing_message::OutgoingJsonRpcMessage>,
-        >,
-    >,
->;
-
-/// Options for controlling which transports to start.
-#[derive(Default)]
-pub struct TransportOptions {
-    /// If set, start an MCP HTTP server on this port in addition to (or
-    /// instead of) stdin/stdout.
-    pub http_port: Option<u16>,
-    /// When true, disable the stdin/stdout transport entirely (HTTP-only mode).
-    pub http_only: bool,
-}
-
 pub async fn run_main(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
 ) -> IoResult<()> {
-    run_main_with_transport(
-        arg0_paths,
-        cli_config_overrides,
-        TransportOptions::default(),
-    )
-    .await
-}
-
-pub async fn run_main_with_transport(
-    arg0_paths: Arg0DispatchPaths,
-    cli_config_overrides: CliConfigOverrides,
-    transport: TransportOptions,
-) -> IoResult<()> {
-    let environment_manager = Arc::new(EnvironmentManager::from_env());
+    let environment_manager = Arc::new(EnvironmentManager::new(EnvironmentManagerArgs::from_env(
+        ExecServerRuntimePaths::from_optional_paths(
+            arg0_paths.codex_self_exe.clone(),
+            arg0_paths.codex_linux_sandbox_exe.clone(),
+        )?,
+    )));
     // Parse CLI overrides once and derive the base Config eagerly so later
     // components do not need to work with raw TOML values.
     let cli_kv_overrides = cli_config_overrides.parse_overrides().map_err(|e| {
@@ -133,12 +108,11 @@ pub async fn run_main_with_transport(
 
     // Set up channels.
     let (incoming_tx, mut incoming_rx) = mpsc::channel::<IncomingMessage>(CHANNEL_CAPACITY);
-    let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
+    let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
 
-    // --- Stdin reader (optional) ---
-    let stdin_handle = if !transport.http_only {
-        let tx = incoming_tx.clone();
-        Some(tokio::spawn(async move {
+    // Task: read from stdin, push to `incoming_tx`.
+    let stdin_reader_handle = tokio::spawn({
+        async move {
             let stdin = io::stdin();
             let reader = BufReader::new(stdin);
             let mut lines = reader.lines();
@@ -146,7 +120,8 @@ pub async fn run_main_with_transport(
             while let Some(line) = lines.next_line().await.unwrap_or_default() {
                 match serde_json::from_str::<IncomingMessage>(&line) {
                     Ok(msg) => {
-                        if tx.send(msg).await.is_err() {
+                        if incoming_tx.send(msg).await.is_err() {
+                            // Receiver gone – nothing left to do.
                             break;
                         }
                     }
@@ -155,101 +130,10 @@ pub async fn run_main_with_transport(
             }
 
             debug!("stdin reader finished (EOF)");
-        }))
-    } else {
-        None
-    };
+        }
+    });
 
-    // Shared pending map: routes MCP responses to HTTP requestors.
-    let shared_pending: PendingMap = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
-
-    // --- HTTP server (optional) ---
-    let mut outgoing_rx = Some(outgoing_rx);
-    let http_handle = if let Some(port) = transport.http_port {
-        let (sse_tx, _) = tokio::sync::broadcast::channel::<String>(256);
-
-        let state = http_transport::HttpState {
-            incoming_tx: incoming_tx.clone(),
-            pending: shared_pending.clone(),
-            sse_tx: sse_tx.clone(),
-        };
-
-        let router = http_transport::build_router(state);
-
-        // Start the outgoing interceptor that routes responses to HTTP
-        // handlers and/or stdout.
-        let write_stdout = !transport.http_only;
-        let interceptor_handle = tokio::spawn(http_transport::outgoing_http_interceptor(
-            outgoing_rx.take().expect("outgoing_rx already taken"),
-            shared_pending.clone(),
-            sse_tx,
-            write_stdout,
-        ));
-
-        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-        info!("HTTP MCP server listening on http://{addr}/mcp");
-
-        let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-            std::io::Error::new(
-                ErrorKind::AddrInUse,
-                format!("failed to bind HTTP server to {addr}: {e}"),
-            )
-        })?;
-
-        let server_handle = tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, router).await {
-                error!("HTTP server error: {e}");
-            }
-        });
-
-        Some((server_handle, interceptor_handle))
-    } else {
-        None
-    };
-
-    // --- Stdout writer (when no HTTP or dual mode without interceptor) ---
-    let stdout_pending = shared_pending.clone();
-    let stdout_handle = if let Some(mut outgoing_rx) = outgoing_rx.take() {
-        Some(tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            let mut stdout = io::stdout();
-            while let Some(outgoing_message) = outgoing_rx.recv().await {
-                let msg: crate::outgoing_message::OutgoingJsonRpcMessage = outgoing_message.into();
-
-                // Route responses to pending requestors (from A2A executor).
-                let id_str = extract_outgoing_id(&msg);
-                let mut routed = false;
-                if let Some(id) = id_str {
-                    let mut map = stdout_pending.lock().await;
-                    if let Some(tx) = map.remove(&id) {
-                        let _ = tx.send(msg.clone());
-                        routed = true;
-                    }
-                }
-
-                match serde_json::to_string(&msg) {
-                    Ok(json) => {
-                        if !routed {
-                            if let Err(e) = stdout.write_all(json.as_bytes()).await {
-                                error!("Failed to write to stdout: {e}");
-                                break;
-                            }
-                            if let Err(e) = stdout.write_all(b"\n").await {
-                                error!("Failed to write newline to stdout: {e}");
-                                break;
-                            }
-                        }
-                    }
-                    Err(e) => error!("Failed to serialize JSON-RPC message: {e}"),
-                }
-            }
-            info!("stdout writer exited (channel closed)");
-        }))
-    } else {
-        None
-    };
-
-    // --- Message processor (shared between both transports) ---
+    // Task: process incoming messages.
     let processor_handle = tokio::spawn({
         let outgoing_message_sender = OutgoingMessageSender::new(outgoing_tx);
         let mut processor = MessageProcessor::new(
@@ -267,35 +151,40 @@ pub async fn run_main_with_transport(
                     JsonRpcMessage::Error(e) => processor.process_error(e),
                 }
             }
+
             info!("processor task exited (channel closed)");
         }
     });
 
-    // Wait for tasks to complete.
-    if let Some(h) = stdin_handle {
-        let _ = h.await;
-    }
-    let _ = processor_handle.await;
-    if let Some(h) = stdout_handle {
-        let _ = h.await;
-    }
-    if let Some((server_h, interceptor_h)) = http_handle {
-        let _ = tokio::join!(server_h, interceptor_h);
-    }
-
-    Ok(())
-}
-
-/// Extract the JSON-RPC `id` field from a serialized outgoing message.
-fn extract_outgoing_id(msg: &crate::outgoing_message::OutgoingJsonRpcMessage) -> Option<String> {
-    if let Ok(v) = serde_json::to_value(msg) {
-        if let Some(id) = v.get("id") {
-            if !id.is_null() {
-                return Some(id.to_string());
+    // Task: write outgoing messages to stdout.
+    let stdout_writer_handle = tokio::spawn(async move {
+        let mut stdout = io::stdout();
+        while let Some(outgoing_message) = outgoing_rx.recv().await {
+            let msg: OutgoingJsonRpcMessage = outgoing_message.into();
+            match serde_json::to_string(&msg) {
+                Ok(json) => {
+                    if let Err(e) = stdout.write_all(json.as_bytes()).await {
+                        error!("Failed to write to stdout: {e}");
+                        break;
+                    }
+                    if let Err(e) = stdout.write_all(b"\n").await {
+                        error!("Failed to write newline to stdout: {e}");
+                        break;
+                    }
+                }
+                Err(e) => error!("Failed to serialize JSON-RPC message: {e}"),
             }
         }
-    }
-    None
+
+        info!("stdout writer exited (channel closed)");
+    });
+
+    // Wait for all tasks to finish.  The typical exit path is the stdin reader
+    // hitting EOF which, once it drops `incoming_tx`, propagates shutdown to
+    // the processor and then to the stdout task.
+    let _ = tokio::join!(stdin_reader_handle, processor_handle, stdout_writer_handle);
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -349,4 +238,3 @@ mod tests {
         Ok(())
     }
 }
-pub mod test_non_exhaustive;

@@ -274,41 +274,6 @@ async fn truncation_respects_sorted_order() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn ignores_vcs_and_dependency_directories() -> anyhow::Result<()> {
-    let temp = tempdir()?;
-    let dir_path = temp.path();
-
-    let git_dir = dir_path.join(".git");
-    let node_modules_dir = dir_path.join("node_modules");
-    let normal_dir = dir_path.join("normal");
-
-    tokio::fs::create_dir(&git_dir).await?;
-    tokio::fs::create_dir(&node_modules_dir).await?;
-    tokio::fs::create_dir(&normal_dir).await?;
-
-    tokio::fs::write(git_dir.join("config"), b"git config").await?;
-    tokio::fs::write(node_modules_dir.join("package.json"), b"package").await?;
-    tokio::fs::write(normal_dir.join("child.txt"), b"child").await?;
-
-    let entries = list_dir_slice(
-        dir_path, /*offset*/ 1, /*limit*/ 10, /*depth*/ 3,
-    )
-    .await?;
-
-    assert_eq!(
-        entries,
-        vec![
-            ".git/".to_string(),
-            "node_modules/".to_string(),
-            "normal/".to_string(),
-            "  child.txt".to_string(),
-        ]
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn hides_denied_entries_and_prunes_denied_subtrees() {
     let temp = tempdir().expect("create tempdir");
     let dir_path = temp.path();

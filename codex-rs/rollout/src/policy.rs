@@ -136,6 +136,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::LoopLifecycleCompleted(_)
         | EventMsg::LoopLifecycleFailed(_) => Some(EventPersistenceMode::Extended),
         EventMsg::Warning(_)
+        | EventMsg::GuardianWarning(_)
         | EventMsg::RealtimeConversationStarted(_)
         | EventMsg::RealtimeConversationSdp(_)
         | EventMsg::RealtimeConversationRealtime(_)

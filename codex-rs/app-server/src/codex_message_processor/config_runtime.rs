@@ -199,19 +199,19 @@ pub(super) fn collect_resume_override_mismatches(
     if let Some(requested_sandbox) = request.sandbox.as_ref() {
         let sandbox_matches = matches!(
             (requested_sandbox, &config_snapshot.sandbox_policy),
-            (
-                SandboxMode::ReadOnly,
-                SandboxPolicy::ReadOnly { .. }
-            ) | (
-                SandboxMode::WorkspaceWrite,
-                SandboxPolicy::WorkspaceWrite { .. }
-            ) | (
-                SandboxMode::DangerFullAccess,
-                SandboxPolicy::DangerFullAccess
-            ) | (
-                SandboxMode::DangerFullAccess,
-                SandboxPolicy::ExternalSandbox { .. }
-            )
+            (SandboxMode::ReadOnly, SandboxPolicy::ReadOnly { .. })
+                | (
+                    SandboxMode::WorkspaceWrite,
+                    SandboxPolicy::WorkspaceWrite { .. }
+                )
+                | (
+                    SandboxMode::DangerFullAccess,
+                    SandboxPolicy::DangerFullAccess
+                )
+                | (
+                    SandboxMode::DangerFullAccess,
+                    SandboxPolicy::ExternalSandbox { .. }
+                )
         );
         if !sandbox_matches {
             mismatch_details.push(format!(

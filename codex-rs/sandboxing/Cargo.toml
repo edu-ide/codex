@@ -1,5 +1,8 @@
 [package]
 name = "codex-sandboxing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "codex_sandboxing"
@@ -8,48 +11,21 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[package.version]
-workspace = true
+[dependencies]
+codex-network-proxy = { workspace = true }
+codex-protocol = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+dunce = { workspace = true }
+libc = { workspace = true }
+serde_json = { workspace = true }
+regex-lite = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+url = { workspace = true }
+which = { workspace = true }
 
-[package.edition]
-workspace = true
-
-[package.license]
-workspace = true
-
-[dependencies.codex-network-proxy]
-workspace = true
-
-[dependencies.codex-protocol]
-workspace = true
-
-[dependencies.codex-utils-absolute-path]
-workspace = true
-
-[dependencies.dunce]
-workspace = true
-
-[dependencies.libc]
-workspace = true
-
-[dependencies.serde_json]
-workspace = true
-
-[dependencies.regex-lite]
-workspace = true
-
-[dependencies.tracing]
-version = "0.1.44"
-features = [ "log",]
-
-[dependencies.url]
-version = "2"
-
-[dependencies.which]
-workspace = true
-
-[dev-dependencies.pretty_assertions]
-workspace = true
-
-[dev-dependencies.tempfile]
-workspace = true
+[dev-dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

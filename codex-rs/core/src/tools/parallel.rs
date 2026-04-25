@@ -9,9 +9,9 @@ use tracing::Instrument;
 use tracing::instrument;
 use tracing::trace_span;
 
-use crate::codex::Session;
-use crate::codex::TurnContext;
 use crate::function_tool::FunctionCallError;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use crate::tools::context::AbortedToolOutput;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolPayload;
@@ -92,6 +92,7 @@ impl ToolCallRuntime {
         let turn = Arc::clone(&self.turn_context);
         let tracker = Arc::clone(&self.tracker);
         let lock = Arc::clone(&self.parallel_execution);
+        let invocation_cancellation_token = cancellation_token.clone();
         let started = Instant::now();
         let display_name = call.tool_name.display();
 
@@ -122,6 +123,7 @@ impl ToolCallRuntime {
                             .dispatch_tool_call_with_code_mode_result(
                                 session,
                                 turn,
+                                invocation_cancellation_token,
                                 tracker,
                                 call.clone(),
                                 source,
@@ -178,6 +180,7 @@ impl ToolCallRuntime {
             result: Box::new(AbortedToolOutput {
                 message: Self::abort_message(call, secs),
             }),
+            post_tool_use_payload: None,
         }
     }
 

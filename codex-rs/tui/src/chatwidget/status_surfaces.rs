@@ -4,13 +4,10 @@
 //! behavior easier to review without paging through the rest of `chatwidget.rs`.
 
 use super::*;
-use codex_git_utils::{get_git_repo_root, resolve_root_git_project_for_trust};
-use codex_exec_server::LOCAL_FS;
-use codex_utils_absolute_path::AbsolutePathBuf;
 
 /// Items shown in the terminal title when the user has not configured a
 /// custom selection. Intentionally minimal: spinner + project name.
-pub(super) const DEFAULT_TERMINAL_TITLE_ITEMS: [&str; 2] = ["spinner", "project"];
+pub(super) const DEFAULT_TERMINAL_TITLE_ITEMS: [&str; 2] = ["spinner", "project-name"];
 
 /// Braille-pattern dot-spinner frames for the terminal title animation.
 pub(super) const TERMINAL_TITLE_SPINNER_FRAMES: [&str; 10] =
@@ -68,150 +65,6 @@ pub(super) struct CachedProjectRootName {
 }
 
 impl ChatWidget {
-    fn advisor_preset_label(advisor_preset: &str) -> &'static str {
-        match advisor_preset {
-            "risk_first" => "risk",
-            "plan_first" => "plan",
-            _ => "review",
-        }
-    }
-
-    fn team_merge_policy_label(team_merge_policy: &str) -> &str {
-        match team_merge_policy {
-            "leader_only" => "leader",
-            "append_all" => "append",
-            other => other,
-        }
-    }
-
-    fn pause_policy_label(pause_on_error: bool) -> &'static str {
-        if pause_on_error { "pause" } else { "cont" }
-    }
-
-    fn knowledge_mode_label(mode: &str) -> &'static str {
-        match mode {
-            "worker" => "wk",
-            "kairos" => "kx",
-            "both" => "both",
-            _ => "off",
-        }
-    }
-
-    fn knowledge_result_label(result: &str) -> &'static str {
-        match result {
-            "ok" => "ok",
-            "error" => "err",
-            _ => "idle",
-        }
-    }
-
-    fn execution_loop_status_text(&self) -> Option<String> {
-        let workflow_surface = self.workflow_surface_status_text();
-        let Some(runtime) = native_runtime_context() else {
-            return Some(workflow_surface);
-        };
-        let settings = runtime.settings_store.get();
-        let agent = &settings.agent;
-
-        let mut parts = Vec::new();
-        parts.push(format!(
-            "p:{}",
-            agent.active_profile.as_deref().unwrap_or("default")
-        ));
-        parts.push(workflow_surface);
-
-        if agent.advisor_mode {
-            parts.push(format!(
-                "adv:{}",
-                Self::advisor_preset_label(&agent.advisor_preset)
-            ));
-        }
-
-        if agent.autonomous_mode {
-            parts.push(format!(
-                "auto:{}t/{}m/{}",
-                agent.auto_max_turns.max(1),
-                agent.auto_timebox_minutes.max(1),
-                Self::pause_policy_label(agent.auto_pause_on_error)
-            ));
-        }
-
-        if agent.team_mode {
-            parts.push(format!(
-                "team:{}/{}/{}",
-                Self::team_merge_policy_label(&agent.team_merge_policy),
-                agent.team_max_retries.max(1),
-                Self::pause_policy_label(agent.team_pause_on_error)
-            ));
-        }
-
-        if agent.kairos_enabled {
-            parts.push("kairos".to_string());
-        }
-
-        if agent.self_improvement_enabled {
-            parts.push("improve".to_string());
-        }
-
-        if agent.knowledge_mode != "off" {
-            let runtime = &agent.knowledge_runtime;
-            let mut knowledge = format!(
-                "kb:{}:{}",
-                Self::knowledge_mode_label(&agent.knowledge_mode),
-                Self::knowledge_result_label(&runtime.last_result)
-            );
-            if runtime.last_issue_count > 0 {
-                knowledge.push_str(&format!("/{}i", runtime.last_issue_count));
-            }
-            parts.push(knowledge);
-        }
-
-        if parts.len() == 1 {
-            parts.push("idle".to_string());
-        }
-
-        Some(parts.join(" "))
-    }
-
-    pub(super) fn workflow_surface_status_text(&self) -> String {
-        let tmux = if std::env::var_os("TMUX").is_some() {
-            "on"
-        } else {
-            "off"
-        };
-        let worktree = Self::workflow_surface_worktree_status(self.status_line_cwd());
-        let remote = if native_runtime_context().is_some() {
-            "native"
-        } else {
-            "remote"
-        };
-
-        format!("wf:tmux:{tmux} worktree:{worktree} remote:{remote}")
-    }
-
-    pub(super) fn workflow_surface_worktree_status(cwd: &Path) -> &'static str {
-        let Some(repo_root) = get_git_repo_root(cwd) else {
-            return "none";
-        };
-        let Ok(cwd_absolute) = AbsolutePathBuf::from_absolute_path(cwd) else {
-            return "repo";
-        };
-        let Some(trust_root) = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(resolve_root_git_project_for_trust(
-                LOCAL_FS.as_ref(),
-                &cwd_absolute,
-            ))
-        }) else {
-            return "repo";
-        };
-
-        if repo_root.as_path() == trust_root.as_path() {
-            "repo"
-        } else {
-            "linked"
-        }
-    }
-
     fn status_surface_selections(&self) -> StatusSurfaceSelections {
         let (status_line_items, invalid_status_line_items) = self.status_line_items_with_invalids();
         let (terminal_title_items, invalid_terminal_title_items) =
@@ -263,6 +116,84 @@ impl ChatWidget {
                 proper_join(invalid_items)
             );
             self.on_warning(message);
+        }
+    }
+
+    fn execution_loop_status_text(&self) -> Option<String> {
+        let workflow_surface = self.workflow_surface_status_text();
+        let Some(runtime) = codex_ilhae::native_runtime_context() else {
+            return Some(workflow_surface);
+        };
+        let settings = runtime.settings_store.get();
+        let agent = &settings.agent;
+
+        let mut parts = Vec::new();
+        parts.push(format!(
+            "p:{}",
+            agent.active_profile.as_deref().unwrap_or("default")
+        ));
+        parts.push(workflow_surface);
+
+        if agent.advisor_mode {
+            parts.push(format!("adv:{}", agent.advisor_preset.trim()));
+        }
+        if agent.autonomous_mode {
+            parts.push(format!(
+                "auto:{}t/{}m",
+                agent.auto_max_turns.max(1),
+                agent.auto_timebox_minutes.max(1)
+            ));
+        }
+        if agent.team_mode {
+            parts.push(format!(
+                "team:{}/{}",
+                agent.team_merge_policy.trim(),
+                agent.team_max_retries.max(1)
+            ));
+        }
+        if agent.dream_mode {
+            parts.push("dream".to_string());
+        }
+        if agent.embed_mode {
+            parts.push("embed".to_string());
+        }
+        if agent.kairos_enabled {
+            parts.push("kairos".to_string());
+        }
+        if agent.self_improvement_enabled {
+            parts.push("improve".to_string());
+        }
+        if agent.knowledge_mode != "off" {
+            parts.push(format!("kb:{}", agent.knowledge_mode.trim()));
+        }
+        if parts.len() == 2 {
+            parts.push("idle".to_string());
+        }
+
+        Some(parts.join(" "))
+    }
+
+    pub(super) fn workflow_surface_status_text(&self) -> String {
+        let tmux = if std::env::var_os("TMUX").is_some() {
+            "on"
+        } else {
+            "off"
+        };
+        let worktree = Self::workflow_surface_worktree_status(self.status_line_cwd());
+        let remote = if codex_ilhae::native_runtime_context().is_some() {
+            "native"
+        } else {
+            "remote"
+        };
+
+        format!("wf:tmux:{tmux} worktree:{worktree} remote:{remote}")
+    }
+
+    pub(super) fn workflow_surface_worktree_status(cwd: &Path) -> &'static str {
+        if get_git_repo_root(cwd).is_some() {
+            "repo"
+        } else {
+            "none"
         }
     }
 
@@ -568,19 +499,7 @@ impl ChatWidget {
     pub(super) fn status_line_value_for_item(&mut self, item: &StatusLineItem) -> Option<String> {
         match item {
             StatusLineItem::ModelName => Some(self.model_display_name().to_string()),
-            StatusLineItem::ModelWithReasoning => {
-                let label =
-                    Self::status_line_reasoning_effort_label(self.effective_reasoning_effort());
-                let fast_label = if self
-                    .should_show_fast_status(self.current_model(), self.config.service_tier)
-                {
-                    " fast"
-                } else {
-                    ""
-                };
-                Some(format!("{} {label}{fast_label}", self.model_display_name()))
-            }
-            StatusLineItem::ExecutionLoop => self.execution_loop_status_text(),
+            StatusLineItem::ModelWithReasoning => Some(self.model_with_reasoning_display_name()),
             StatusLineItem::CurrentDir => {
                 Some(format_directory_display(
                     self.status_line_cwd(),
@@ -589,6 +508,7 @@ impl ChatWidget {
             }
             StatusLineItem::ProjectRoot => self.status_line_project_root_name(),
             StatusLineItem::GitBranch => self.status_line_branch.clone(),
+            StatusLineItem::Status => Some(self.terminal_title_status_text()),
             StatusLineItem::UsedTokens => {
                 let usage = self.status_line_total_usage();
                 let total = usage.tokens_in_context_window();
@@ -650,14 +570,47 @@ impl ChatWidget {
                 let trimmed = name.trim();
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             }),
+            StatusLineItem::ExecutionLoop => self.execution_loop_status_text(),
+            StatusLineItem::TaskProgress => self.terminal_title_task_progress(),
         }
+    }
+
+    pub(super) fn status_surface_preview_value_for_item(
+        &mut self,
+        item: StatusSurfacePreviewItem,
+    ) -> Option<String> {
+        let status_line_item = match item {
+            StatusSurfacePreviewItem::AppName => return Some("codex".to_string()),
+            StatusSurfacePreviewItem::ProjectName => return self.terminal_title_project_name(),
+            StatusSurfacePreviewItem::ProjectRoot => StatusLineItem::ProjectRoot,
+            StatusSurfacePreviewItem::Status => return Some(self.terminal_title_status_text()),
+            StatusSurfacePreviewItem::TaskProgress => return self.terminal_title_task_progress(),
+            StatusSurfacePreviewItem::CurrentDir => StatusLineItem::CurrentDir,
+            StatusSurfacePreviewItem::ThreadTitle => StatusLineItem::ThreadTitle,
+            StatusSurfacePreviewItem::GitBranch => StatusLineItem::GitBranch,
+            StatusSurfacePreviewItem::ContextRemaining => StatusLineItem::ContextRemaining,
+            StatusSurfacePreviewItem::ContextUsed => StatusLineItem::ContextUsed,
+            StatusSurfacePreviewItem::FiveHourLimit => StatusLineItem::FiveHourLimit,
+            StatusSurfacePreviewItem::WeeklyLimit => StatusLineItem::WeeklyLimit,
+            StatusSurfacePreviewItem::CodexVersion => StatusLineItem::CodexVersion,
+            StatusSurfacePreviewItem::ContextWindowSize => StatusLineItem::ContextWindowSize,
+            StatusSurfacePreviewItem::UsedTokens => StatusLineItem::UsedTokens,
+            StatusSurfacePreviewItem::TotalInputTokens => StatusLineItem::TotalInputTokens,
+            StatusSurfacePreviewItem::TotalOutputTokens => StatusLineItem::TotalOutputTokens,
+            StatusSurfacePreviewItem::SessionId => StatusLineItem::SessionId,
+            StatusSurfacePreviewItem::FastMode => StatusLineItem::FastMode,
+            StatusSurfacePreviewItem::ExecutionLoop => StatusLineItem::ExecutionLoop,
+            StatusSurfacePreviewItem::Model => StatusLineItem::ModelName,
+            StatusSurfacePreviewItem::ModelWithReasoning => StatusLineItem::ModelWithReasoning,
+        };
+        self.status_line_value_for_item(&status_line_item)
     }
 
     /// Resolves one configured terminal-title item into a displayable segment.
     ///
     /// Returning `None` means "omit this segment for now" so callers can keep
     /// the configured order while hiding values that are not yet available.
-    fn terminal_title_value_for_item(
+    pub(super) fn terminal_title_value_for_item(
         &mut self,
         item: TerminalTitleItem,
         now: Instant,
@@ -665,6 +618,10 @@ impl ChatWidget {
         match item {
             TerminalTitleItem::AppName => Some("codex".to_string()),
             TerminalTitleItem::Project => self.terminal_title_project_name(),
+            TerminalTitleItem::CurrentDir => Some(Self::truncate_terminal_title_part(
+                format_directory_display(self.status_line_cwd(), /*max_width*/ None),
+                /*max_chars*/ 32,
+            )),
             TerminalTitleItem::Spinner => self.terminal_title_spinner_text_at(now),
             TerminalTitleItem::Status => Some(self.terminal_title_status_text()),
             TerminalTitleItem::Thread => self.thread_name.as_ref().and_then(|name| {
@@ -681,12 +638,57 @@ impl ChatWidget {
             TerminalTitleItem::GitBranch => self.status_line_branch.as_ref().map(|branch| {
                 Self::truncate_terminal_title_part(branch.clone(), /*max_chars*/ 32)
             }),
+            TerminalTitleItem::ContextRemaining => self
+                .status_line_value_for_item(&StatusLineItem::ContextRemaining)
+                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::ContextUsed => self
+                .status_line_value_for_item(&StatusLineItem::ContextUsed)
+                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::FiveHourLimit => self
+                .status_line_value_for_item(&StatusLineItem::FiveHourLimit)
+                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::WeeklyLimit => self
+                .status_line_value_for_item(&StatusLineItem::WeeklyLimit)
+                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::CodexVersion => self
+                .status_line_value_for_item(&StatusLineItem::CodexVersion)
+                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::UsedTokens => self
+                .status_line_value_for_item(&StatusLineItem::UsedTokens)
+                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::TotalInputTokens => self
+                .status_line_value_for_item(&StatusLineItem::TotalInputTokens)
+                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::TotalOutputTokens => self
+                .status_line_value_for_item(&StatusLineItem::TotalOutputTokens)
+                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::SessionId => self
+                .status_line_value_for_item(&StatusLineItem::SessionId)
+                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::FastMode => self
+                .status_line_value_for_item(&StatusLineItem::FastMode)
+                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
             TerminalTitleItem::Model => Some(Self::truncate_terminal_title_part(
                 self.model_display_name().to_string(),
                 /*max_chars*/ 32,
             )),
+            TerminalTitleItem::ModelWithReasoning => Some(Self::truncate_terminal_title_part(
+                self.model_with_reasoning_display_name(),
+                /*max_chars*/ 32,
+            )),
             TerminalTitleItem::TaskProgress => self.terminal_title_task_progress(),
         }
+    }
+
+    fn model_with_reasoning_display_name(&self) -> String {
+        let label = Self::status_line_reasoning_effort_label(self.effective_reasoning_effort());
+        let fast_label =
+            if self.should_show_fast_status(self.current_model(), self.config.service_tier) {
+                " fast"
+            } else {
+                ""
+            };
+        format!("{} {label}{fast_label}", self.model_display_name())
     }
 
     /// Computes the compact runtime status label used by the terminal title.

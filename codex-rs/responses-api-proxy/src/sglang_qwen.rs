@@ -6,6 +6,8 @@ use serde_json::Map;
 use serde_json::Value;
 use serde_json::json;
 
+const ILHAE_NATIVE_THINKING_MODE_ENV: &str = "ILHAE_NATIVE_THINKING_MODE";
+
 pub(crate) fn derive_chat_completions_url(upstream_url: &Url) -> Result<Url> {
     replace_terminal_path(upstream_url, "chat/completions")
 }
@@ -25,6 +27,13 @@ fn replace_terminal_path(upstream_url: &Url, terminal: &str) -> Result<Url> {
 }
 
 pub(crate) fn responses_to_chat_completions_request(body: &Value) -> Result<Value> {
+    responses_to_chat_completions_request_with_thinking(body, native_thinking_enabled_from_env())
+}
+
+pub(crate) fn responses_to_chat_completions_request_with_thinking(
+    body: &Value,
+    enable_thinking: bool,
+) -> Result<Value> {
     let model = body
         .get("model")
         .and_then(Value::as_str)
@@ -79,10 +88,20 @@ pub(crate) fn responses_to_chat_completions_request(body: &Value) -> Result<Valu
         "tool_choice": body.get("tool_choice").cloned().unwrap_or(json!("auto")),
         "parallel_tool_calls": body.get("parallel_tool_calls").cloned().unwrap_or(json!(true)),
         "chat_template_kwargs": {
-            "enable_thinking": false
+            "enable_thinking": enable_thinking
         },
         "stream": false
     }))
+}
+
+fn native_thinking_enabled_from_env() -> bool {
+    match std::env::var(ILHAE_NATIVE_THINKING_MODE_ENV) {
+        Ok(value) => !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "disabled"
+        ),
+        Err(_) => false,
+    }
 }
 
 fn extract_system_message_content(item: &Value) -> Result<Option<String>> {
@@ -552,4 +571,27 @@ fn strip_think_blocks(content: &str) -> String {
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::responses_to_chat_completions_request_with_thinking;
+    use serde_json::json;
+
+    #[test]
+    fn responses_request_can_force_thinking_on() {
+        let request = json!({
+            "model": "ilhae",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hi"}]
+            }]
+        });
+
+        let chat = responses_to_chat_completions_request_with_thinking(&request, true)
+            .expect("chat request");
+
+        assert_eq!(chat["chat_template_kwargs"]["enable_thinking"], json!(true));
+    }
 }

@@ -137,6 +137,7 @@ view_image = false
                 context_size: Some(WebSearchContextSize::Low),
                 allowed_domains: Some(vec!["example.com".to_string()]),
                 location: None,
+                ..Default::default()
             }),
             view_image: Some(false),
         }
@@ -214,6 +215,7 @@ location = { country = "US", city = "New York", timezone = "America/New_York" }
                 city: Some("New York".to_string()),
                 timezone: Some("America/New_York".to_string()),
             }),
+            ..Default::default()
         }),
     );
 

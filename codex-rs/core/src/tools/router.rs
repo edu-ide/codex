@@ -1,17 +1,14 @@
-use crate::codex::Session;
-use crate::codex::TurnContext;
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::AnyToolResult;
-use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::build_specs_with_discoverable_tools;
-use codex_tools::ToolsConfig;
-use codex_protocol::CommandMeta;
 use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::LocalShellAction;
@@ -23,9 +20,11 @@ use codex_tools::DiscoverableTool;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+use codex_tools::ToolsConfig;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
 pub use crate::tools::context::ToolCallSource;
@@ -72,15 +71,6 @@ impl ToolRouter {
             dynamic_tools,
         );
         let (specs, registry) = builder.build();
-        Self::from_config_with_specs(config, specs, registry, parallel_mcp_server_names)
-    }
-
-    pub(crate) fn from_config_with_specs(
-        config: &ToolsConfig,
-        specs: Vec<ConfiguredToolSpec>,
-        registry: ToolRegistry,
-        parallel_mcp_server_names: HashSet<String>,
-    ) -> Self {
         let model_visible_specs = if config.code_mode_only_enabled {
             specs
                 .iter()
@@ -105,46 +95,6 @@ impl ToolRouter {
             model_visible_specs,
             parallel_mcp_server_names,
         }
-    }
-
-    pub fn register_tool<H>(&mut self, name: impl Into<String>, handler: Arc<H>, meta: CommandMeta)
-    where
-        H: ToolHandler + 'static,
-    {
-        self.register_tool_with_namespace(name, handler, meta, None);
-    }
-
-    pub fn register_tool_with_namespace<H>(
-        &mut self,
-        name: impl Into<String>,
-        handler: Arc<H>,
-        meta: CommandMeta,
-        namespace: Option<&str>,
-    ) where
-        H: ToolHandler + 'static,
-    {
-        self.registry
-            .register_with_namespace(codex_tools::ToolName::plain(name), handler, meta, namespace);
-    }
-
-    pub fn deregister_tool(&mut self, name: impl Into<String>, namespace: Option<&str>) -> bool {
-        self.registry.deregister(name, namespace)
-    }
-
-    pub fn tool_metadata(&self, name: &str) -> Option<&CommandMeta> {
-        self.registry.get_metadata_with_namespace(name, None)
-    }
-
-    pub fn tool_metadata_with_namespace(
-        &self,
-        name: &str,
-        namespace: Option<&str>,
-    ) -> Option<&CommandMeta> {
-        self.registry.get_metadata_with_namespace(name, namespace)
-    }
-
-    pub fn list_tool_metadata(&self) -> Vec<CommandMeta> {
-        self.registry.list_metadata()
     }
 
     pub fn specs(&self) -> Vec<ToolSpec> {
@@ -318,6 +268,7 @@ impl ToolRouter {
         &self,
         session: Arc<Session>,
         turn: Arc<TurnContext>,
+        cancellation_token: CancellationToken,
         tracker: SharedTurnDiffTracker,
         call: ToolCall,
         source: ToolCallSource,
@@ -343,6 +294,7 @@ impl ToolRouter {
         let invocation = ToolInvocation {
             session,
             turn,
+            cancellation_token,
             tracker,
             call_id,
             tool_name,

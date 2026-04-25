@@ -3,15 +3,27 @@ use std::sync::Arc;
 use codex_app_server_protocol::Model;
 use codex_app_server_protocol::ModelUpgradeInfo;
 use codex_app_server_protocol::ReasoningEffortOption;
+use codex_core::OPENAI_PROVIDER_ID;
 use codex_core::ThreadManager;
 use codex_models_manager::manager::RefreshStrategy;
+use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::ReasoningEffortPreset;
 
 pub async fn supported_models(
     thread_manager: Arc<ThreadManager>,
     include_hidden: bool,
 ) -> Vec<Model> {
+    if thread_manager.configured_model_provider_id() != OPENAI_PROVIDER_ID
+        && let Some(model) = thread_manager.configured_model()
+    {
+        return vec![local_model(
+            model,
+            thread_manager.configured_model_provider_id(),
+        )];
+    }
+
     thread_manager
         .list_models(RefreshStrategy::OnlineIfUncached)
         .await
@@ -19,6 +31,25 @@ pub async fn supported_models(
         .filter(|preset| include_hidden || preset.show_in_picker)
         .map(model_from_preset)
         .collect()
+}
+
+fn local_model(model: String, provider_id: &str) -> Model {
+    Model {
+        id: model.clone(),
+        model: model.clone(),
+        upgrade: None,
+        upgrade_info: None,
+        availability_nux: None,
+        display_name: model,
+        description: format!("{provider_id} local model"),
+        hidden: false,
+        supported_reasoning_efforts: Vec::new(),
+        default_reasoning_effort: ReasoningEffort::Medium,
+        input_modalities: vec![InputModality::Text],
+        supports_personality: false,
+        additional_speed_tiers: Vec::new(),
+        is_default: true,
+    }
 }
 
 fn model_from_preset(preset: ModelPreset) -> Model {

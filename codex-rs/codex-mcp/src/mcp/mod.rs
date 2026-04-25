@@ -25,6 +25,7 @@ use codex_config::McpServerTransportConfig;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_login::CodexAuth;
 use codex_plugin::PluginCapabilitySummary;
+use codex_protocol::mcp::Prompt;
 use codex_protocol::mcp::Resource;
 use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::mcp::Tool;
@@ -32,9 +33,16 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_protocol::protocol::McpListToolsResponseEvent;
 use codex_protocol::protocol::SandboxPolicy;
+use rmcp::model::CompleteRequestParams;
+use rmcp::model::CompleteResult;
+use rmcp::model::GetPromptRequestParams;
+use rmcp::model::GetPromptResult;
+use rmcp::model::ReadResourceRequestParams;
+use rmcp::model::ReadResourceResult;
 use serde_json::Value;
 
 use crate::mcp_connection_manager::McpConnectionManager;
+use crate::mcp_connection_manager::McpRuntimeEnvironment;
 use crate::mcp_connection_manager::codex_apps_tools_cache_key;
 pub type McpManager = McpConnectionManager;
 
@@ -52,6 +60,10 @@ pub enum McpSnapshotDetail {
 
 impl McpSnapshotDetail {
     fn include_resources(self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    fn include_prompts(self) -> bool {
         matches!(self, Self::Full)
     }
 }
@@ -317,18 +329,131 @@ pub fn tool_plugin_provenance(config: &McpConfig) -> ToolPluginProvenance {
     ToolPluginProvenance::from_capability_summaries(&config.plugin_capability_summaries)
 }
 
+pub async fn read_mcp_resource(
+    config: &McpConfig,
+    auth: Option<&CodexAuth>,
+    runtime_environment: McpRuntimeEnvironment,
+    server: &str,
+    uri: &str,
+) -> anyhow::Result<ReadResourceResult> {
+    let mut mcp_servers = effective_mcp_servers(config, auth);
+    mcp_servers.retain(|name, _| name == server);
+    let auth_statuses =
+        compute_auth_statuses(mcp_servers.iter(), config.mcp_oauth_credentials_store_mode).await;
+    let (tx_event, rx_event) = unbounded();
+    drop(rx_event);
+    let (manager, cancel_token) = McpConnectionManager::new(
+        &mcp_servers,
+        config.mcp_oauth_credentials_store_mode,
+        auth_statuses,
+        &config.approval_policy,
+        String::new(),
+        tx_event,
+        SandboxPolicy::new_read_only_policy(),
+        runtime_environment,
+        config.codex_home.clone(),
+        codex_apps_tools_cache_key(auth),
+        tool_plugin_provenance(config),
+    )
+    .await;
+
+    let result = manager
+        .read_resource(
+            server,
+            ReadResourceRequestParams::new(uri.to_string()),
+        )
+        .await;
+    cancel_token.cancel();
+    result
+}
+
+pub async fn get_mcp_prompt(
+    config: &McpConfig,
+    auth: Option<&CodexAuth>,
+    runtime_environment: McpRuntimeEnvironment,
+    server: &str,
+    params: GetPromptRequestParams,
+) -> anyhow::Result<GetPromptResult> {
+    let mut mcp_servers = effective_mcp_servers(config, auth);
+    mcp_servers.retain(|name, _| name == server);
+    let auth_statuses =
+        compute_auth_statuses(mcp_servers.iter(), config.mcp_oauth_credentials_store_mode).await;
+    let (tx_event, rx_event) = unbounded();
+    drop(rx_event);
+    let (manager, cancel_token) = McpConnectionManager::new(
+        &mcp_servers,
+        config.mcp_oauth_credentials_store_mode,
+        auth_statuses,
+        &config.approval_policy,
+        String::new(),
+        tx_event,
+        SandboxPolicy::new_read_only_policy(),
+        runtime_environment,
+        config.codex_home.clone(),
+        codex_apps_tools_cache_key(auth),
+        tool_plugin_provenance(config),
+    )
+    .await;
+
+    let result = manager.get_prompt(server, params).await;
+    cancel_token.cancel();
+    result
+}
+
+pub async fn complete_mcp(
+    config: &McpConfig,
+    auth: Option<&CodexAuth>,
+    runtime_environment: McpRuntimeEnvironment,
+    server: &str,
+    params: CompleteRequestParams,
+) -> anyhow::Result<CompleteResult> {
+    let mut mcp_servers = effective_mcp_servers(config, auth);
+    mcp_servers.retain(|name, _| name == server);
+    let auth_statuses =
+        compute_auth_statuses(mcp_servers.iter(), config.mcp_oauth_credentials_store_mode).await;
+    let (tx_event, rx_event) = unbounded();
+    drop(rx_event);
+    let (manager, cancel_token) = McpConnectionManager::new(
+        &mcp_servers,
+        config.mcp_oauth_credentials_store_mode,
+        auth_statuses,
+        &config.approval_policy,
+        String::new(),
+        tx_event,
+        SandboxPolicy::new_read_only_policy(),
+        runtime_environment,
+        config.codex_home.clone(),
+        codex_apps_tools_cache_key(auth),
+        tool_plugin_provenance(config),
+    )
+    .await;
+
+    let result = manager.complete(server, params).await;
+    cancel_token.cancel();
+    result
+}
+
 pub async fn collect_mcp_snapshot(
     config: &McpConfig,
     auth: Option<&CodexAuth>,
     submit_id: String,
+    runtime_environment: McpRuntimeEnvironment,
 ) -> McpListToolsResponseEvent {
-    collect_mcp_snapshot_with_detail(config, auth, submit_id, McpSnapshotDetail::Full).await
+    collect_mcp_snapshot_with_detail(
+        config,
+        auth,
+        submit_id,
+        runtime_environment,
+        McpSnapshotDetail::Full,
+    )
+    .await
 }
 
 pub async fn collect_mcp_snapshot_with_detail(
     config: &McpConfig,
     auth: Option<&CodexAuth>,
     submit_id: String,
+    runtime_environment: McpRuntimeEnvironment,
     detail: McpSnapshotDetail,
 ) -> McpListToolsResponseEvent {
     let mcp_servers = effective_mcp_servers(config, auth);
@@ -356,6 +481,7 @@ pub async fn collect_mcp_snapshot_with_detail(
         submit_id,
         tx_event,
         SandboxPolicy::new_read_only_policy(),
+        runtime_environment,
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
         tool_plugin_provenance,
@@ -379,6 +505,7 @@ pub struct McpServerStatusSnapshot {
     pub tools_by_server: HashMap<String, HashMap<String, Tool>>,
     pub resources: HashMap<String, Vec<Resource>>,
     pub resource_templates: HashMap<String, Vec<ResourceTemplate>>,
+    pub prompts: HashMap<String, Vec<Prompt>>,
     pub auth_statuses: HashMap<String, McpAuthStatus>,
 }
 
@@ -386,15 +513,23 @@ pub async fn collect_mcp_server_status_snapshot(
     config: &McpConfig,
     auth: Option<&CodexAuth>,
     submit_id: String,
+    runtime_environment: McpRuntimeEnvironment,
 ) -> McpServerStatusSnapshot {
-    collect_mcp_server_status_snapshot_with_detail(config, auth, submit_id, McpSnapshotDetail::Full)
-        .await
+    collect_mcp_server_status_snapshot_with_detail(
+        config,
+        auth,
+        submit_id,
+        runtime_environment,
+        McpSnapshotDetail::Full,
+    )
+    .await
 }
 
 pub async fn collect_mcp_server_status_snapshot_with_detail(
     config: &McpConfig,
     auth: Option<&CodexAuth>,
     submit_id: String,
+    runtime_environment: McpRuntimeEnvironment,
     detail: McpSnapshotDetail,
 ) -> McpServerStatusSnapshot {
     let mcp_servers = effective_mcp_servers(config, auth);
@@ -404,6 +539,7 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
             tools_by_server: HashMap::new(),
             resources: HashMap::new(),
             resource_templates: HashMap::new(),
+            prompts: HashMap::new(),
             auth_statuses: HashMap::new(),
         };
     }
@@ -422,6 +558,7 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
         submit_id,
         tx_event,
         SandboxPolicy::new_read_only_policy(),
+        runtime_environment,
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
         tool_plugin_provenance,
@@ -573,12 +710,48 @@ fn convert_mcp_resource_templates(
         .collect::<HashMap<_, _>>()
 }
 
+fn convert_mcp_prompts(
+    prompts: HashMap<String, Vec<rmcp::model::Prompt>>,
+) -> HashMap<String, Vec<Prompt>> {
+    prompts
+        .into_iter()
+        .map(|(name, prompts)| {
+            let prompts = prompts
+                .into_iter()
+                .filter_map(|prompt| match serde_json::to_value(prompt) {
+                    Ok(value) => match Prompt::from_mcp_value(value.clone()) {
+                        Ok(prompt) => Some(prompt),
+                        Err(err) => {
+                            let prompt_name = match value {
+                                Value::Object(obj) => obj
+                                    .get("name")
+                                    .and_then(|v| v.as_str().map(ToString::to_string)),
+                                _ => None,
+                            };
+
+                            tracing::warn!(
+                                "Failed to convert MCP prompt (name={prompt_name:?}): {err}"
+                            );
+                            None
+                        }
+                    },
+                    Err(err) => {
+                        tracing::warn!("Failed to serialize MCP prompt: {err}");
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            (name, prompts)
+        })
+        .collect::<HashMap<_, _>>()
+}
+
 async fn collect_mcp_server_status_snapshot_from_manager(
     mcp_connection_manager: &McpConnectionManager,
     auth_status_entries: HashMap<String, crate::mcp::auth::McpAuthStatusEntry>,
     detail: McpSnapshotDetail,
 ) -> McpServerStatusSnapshot {
-    let (tools, resources, resource_templates) = tokio::join!(
+    let (tools, resources, resource_templates, prompts) = tokio::join!(
         mcp_connection_manager.list_all_tools(),
         async {
             if detail.include_resources() {
@@ -590,6 +763,13 @@ async fn collect_mcp_server_status_snapshot_from_manager(
         async {
             if detail.include_resources() {
                 mcp_connection_manager.list_all_resource_templates().await
+            } else {
+                HashMap::new()
+            }
+        },
+        async {
+            if detail.include_prompts() {
+                mcp_connection_manager.list_all_prompts().await
             } else {
                 HashMap::new()
             }
@@ -613,6 +793,7 @@ async fn collect_mcp_server_status_snapshot_from_manager(
         tools_by_server,
         resources: convert_mcp_resources(resources),
         resource_templates: convert_mcp_resource_templates(resource_templates),
+        prompts: convert_mcp_prompts(prompts),
         auth_statuses: auth_statuses_from_entries(&auth_status_entries),
     }
 }

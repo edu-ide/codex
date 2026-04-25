@@ -1,7 +1,7 @@
 //! OSS provider utilities shared between TUI and exec.
 
-use codex_core::config::Config;
 use codex_core::LLAMA_SERVER_OSS_PROVIDER_ID;
+use codex_core::config::Config;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use serde::Deserialize;
@@ -100,7 +100,7 @@ async fn ensure_llama_server_ready(config: &Config) -> io::Result<()> {
     }
 
     Err(io::Error::other(format!(
-        "No running llama-server detected. Start llama.cpp with an OpenAI-compatible server on {host_root} (default port 8080)."
+        "No running llama-server detected. Start llama.cpp with an OpenAI-compatible server on {host_root} (default port 8082)."
     )))
 }
 

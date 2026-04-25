@@ -5,12 +5,14 @@ use codex_features::Feature;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::ToolInfo as McpToolInfo;
 use codex_mcp::filter_non_codex_apps_mcp_tools_only;
+use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_tools::ToolsConfig;
 
 use crate::config::Config;
 use crate::connectors;
 
 pub(crate) const DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD: usize = 100;
+const ALWAYS_DIRECT_MCP_SERVERS: &[&str] = &["browser", "brain", "computer"];
 
 pub(crate) struct McpToolExposure {
     pub(crate) direct_tools: HashMap<String, McpToolInfo>,
@@ -34,6 +36,7 @@ pub(crate) fn build_mcp_tool_exposure(
     }
 
     let should_defer = tools_config.search_tool
+        && !provider_uses_json_function_tools(&config.model_provider_id)
         && (config
             .features
             .enabled(Feature::ToolSearchAlwaysDeferMcpTools)
@@ -48,8 +51,16 @@ pub(crate) fn build_mcp_tool_exposure(
 
     let direct_tools =
         filter_codex_apps_mcp_tools(all_mcp_tools, explicitly_enabled_connectors, config);
-    for direct_tool_name in direct_tools.keys() {
-        deferred_tools.remove(direct_tool_name);
+    let mut direct_tools = direct_tools;
+    let always_direct_tool_names = deferred_tools
+        .iter()
+        .filter(|(_, tool)| always_expose_mcp_tool_directly(tool))
+        .map(|(tool_name, _)| tool_name.clone())
+        .collect::<Vec<_>>();
+    for tool_name in always_direct_tool_names {
+        if let Some(tool) = deferred_tools.remove(&tool_name) {
+            direct_tools.insert(tool_name, tool);
+        }
     }
 
     McpToolExposure {
@@ -81,6 +92,10 @@ fn filter_codex_apps_mcp_tools(
         })
         .map(|(name, tool)| (name.clone(), tool.clone()))
         .collect()
+}
+
+fn always_expose_mcp_tool_directly(tool: &McpToolInfo) -> bool {
+    ALWAYS_DIRECT_MCP_SERVERS.contains(&tool.server_name.as_str())
 }
 
 #[cfg(test)]

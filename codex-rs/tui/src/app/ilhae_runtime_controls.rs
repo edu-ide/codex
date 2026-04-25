@@ -1,4 +1,4 @@
-use crate::app_server_session::SelectedConversationRuntime as AppServerSession;
+use crate::app_server_session::AppServerSession;
 use codex_ilhae::BootstrappedIlhaeRuntime;
 use codex_ilhae::native_runtime_context;
 use codex_ilhae::notify_engine_state;
@@ -8,6 +8,8 @@ use color_eyre::eyre::Result;
 use super::App;
 
 impl App {
+    pub(super) fn sync_backend_capabilities(&mut self) {}
+
     fn report_ilhae_runtime_control_unsupported(&mut self, command: &str) {
         let backend = if self.remote_app_server_url.is_some() {
             "remote runtime"
@@ -169,8 +171,7 @@ impl App {
 
     pub(super) async fn set_ilhae_improve_mode(&mut self, enabled: Option<bool>) {
         self.mutate_native_ilhae_active_profile("improve", move |profile| {
-            profile.agent.self_improvement =
-                enabled.unwrap_or(!profile.agent.self_improvement);
+            profile.agent.self_improvement = enabled.unwrap_or(!profile.agent.self_improvement);
             Ok(())
         })
         .await;

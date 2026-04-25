@@ -1,4 +1,5 @@
 use super::*;
+use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use core_test_support::assert_regex_match;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -173,7 +174,7 @@ fn mcp_tool_output_response_item_preserves_content_items() {
                         },
                         FunctionCallOutputContentItem::InputImage {
                             image_url: image_url.to_string(),
-                            detail: None,
+                            detail: Some(DEFAULT_IMAGE_DETAIL),
                         },
                     ]
                     .as_slice()
@@ -239,7 +240,7 @@ fn custom_tool_calls_can_derive_text_from_content_items() {
             },
             FunctionCallOutputContentItem::InputImage {
                 image_url: "data:image/png;base64,AAA".to_string(),
-                detail: None,
+                detail: Some(DEFAULT_IMAGE_DETAIL),
             },
             FunctionCallOutputContentItem::InputText {
                 text: "line 2".to_string(),
@@ -259,7 +260,7 @@ fn custom_tool_calls_can_derive_text_from_content_items() {
                 },
                 FunctionCallOutputContentItem::InputImage {
                     image_url: "data:image/png;base64,AAA".to_string(),
-                    detail: None,
+                    detail: Some(DEFAULT_IMAGE_DETAIL),
                 },
                 FunctionCallOutputContentItem::InputText {
                     text: "line 2".to_string(),
@@ -283,20 +284,18 @@ fn tool_search_payloads_roundtrip_as_tool_search_outputs() {
         },
     };
     let response = ToolSearchOutput {
-        tools: vec![ToolSearchOutputTool::Function(
-            codex_tools::ResponsesApiTool {
-                name: "create_event".to_string(),
-                description: String::new(),
-                strict: false,
-                defer_loading: Some(true),
-                parameters: codex_tools::JsonSchema::object(
-                    /*properties*/ Default::default(),
-                    /*required*/ None,
-                    /*additional_properties*/ None,
-                ),
-                output_schema: None,
-            },
-        )],
+        tools: vec![LoadableToolSpec::Function(codex_tools::ResponsesApiTool {
+            name: "create_event".to_string(),
+            description: String::new(),
+            strict: false,
+            defer_loading: Some(true),
+            parameters: codex_tools::JsonSchema::object(
+                /*properties*/ Default::default(),
+                /*required*/ None,
+                /*additional_properties*/ None,
+            ),
+            output_schema: None,
+        })],
     }
     .to_response_item("search-1", &payload);
 
@@ -326,6 +325,53 @@ fn tool_search_payloads_roundtrip_as_tool_search_outputs() {
             );
         }
         other => panic!("expected ToolSearchOutput, got {other:?}"),
+    }
+}
+
+#[test]
+fn tool_search_function_payloads_roundtrip_as_function_outputs() {
+    let payload = ToolPayload::Function {
+        arguments: json!({"query": "calendar"}).to_string(),
+    };
+    let response = ToolSearchOutput {
+        tools: vec![LoadableToolSpec::Function(codex_tools::ResponsesApiTool {
+            name: "create_event".to_string(),
+            description: String::new(),
+            strict: false,
+            defer_loading: Some(true),
+            parameters: codex_tools::JsonSchema::object(
+                /*properties*/ Default::default(),
+                /*required*/ None,
+                /*additional_properties*/ None,
+            ),
+            output_schema: None,
+        })],
+    }
+    .to_response_item("search-1", &payload);
+
+    match response {
+        ResponseInputItem::FunctionCallOutput { call_id, output } => {
+            assert_eq!(call_id, "search-1");
+            let tools: serde_json::Value =
+                serde_json::from_str(&output.body.to_text().expect("tool output text"))
+                    .expect("tool_search function output should be JSON");
+            assert_eq!(
+                tools,
+                json!([{
+                    "type": "function",
+                    "name": "create_event",
+                    "description": "",
+                    "strict": false,
+                    "defer_loading": true,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }])
+            );
+            assert_eq!(output.success, Some(true));
+        }
+        other => panic!("expected FunctionCallOutput, got {other:?}"),
     }
 }
 
@@ -391,7 +437,7 @@ fn exec_command_tool_output_formats_truncated_response() {
         process_id: None,
         exit_code: Some(0),
         original_token_count: Some(10),
-        session_command: None,
+        hook_command: None,
     }
     .to_response_item("call-42", &payload);
 

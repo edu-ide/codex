@@ -7,11 +7,15 @@ pub fn create_lsp_tool() -> ToolSpec {
     let position_properties = BTreeMap::from([
         (
             "line".to_string(),
-            JsonSchema::number(Some("Line number (1-based, matching editor UI).".to_string())),
+            JsonSchema::number(Some(
+                "Line number (1-based, matching editor UI).".to_string(),
+            )),
         ),
         (
             "column".to_string(),
-            JsonSchema::number(Some("Column number (1-based, matching editor UI).".to_string())),
+            JsonSchema::number(Some(
+                "Column number (1-based, matching editor UI).".to_string(),
+            )),
         ),
     ]);
 

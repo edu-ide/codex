@@ -178,6 +178,9 @@ pub struct AgentSettings {
     /// Active ilhae product profile projected from ~/.ilhae/config.toml
     #[serde(default)]
     pub active_profile: Option<String>,
+    /// Local native-runtime thinking mode. One of: on|off.
+    #[serde(default = "default_thinking_mode")]
+    pub thinking_mode: String,
     /// Optional A2A endpoint URL. When non-empty, uses A2A transport instead of stdio.
     #[serde(default)]
     pub a2a_endpoint: String,
@@ -252,7 +255,7 @@ pub struct AgentSettings {
     #[serde(default)]
     pub hygiene_runtime: HygieneRuntimeStatus,
     /// Self-improvement loop enablement projected from profile.
-    #[serde(default)]
+    #[serde(default = "default_self_improvement_enabled")]
     pub self_improvement_enabled: bool,
     /// Self-improvement execution preset projected from profile.
     #[serde(default = "default_self_improvement_preset")]
@@ -284,6 +287,22 @@ pub struct AgentSettings {
 
 pub fn default_enabled_engines() -> Vec<String> {
     vec!["gemini".to_string()]
+}
+
+pub fn default_thinking_mode() -> String {
+    "on".to_string()
+}
+
+pub fn normalize_thinking_mode(mode: &str) -> String {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "off" | "false" | "0" | "disabled" => "off".to_string(),
+        "on" | "true" | "1" | "enabled" | "" => default_thinking_mode(),
+        _ => default_thinking_mode(),
+    }
+}
+
+pub fn thinking_mode_enabled(mode: &str) -> bool {
+    normalize_thinking_mode(mode) == "on"
 }
 
 pub fn default_advisor_preset() -> String {
@@ -339,7 +358,11 @@ pub fn default_team_pause_on_error() -> bool {
 }
 
 pub fn default_self_improvement_preset() -> String {
-    "safe_summarize".to_string()
+    "foreground".to_string()
+}
+
+pub fn default_self_improvement_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -543,6 +566,7 @@ impl Default for AgentSettings {
         Self {
             command: "ilhae".to_string(),
             active_profile: None,
+            thinking_mode: default_thinking_mode(),
             a2a_endpoint: String::new(),
             team_mode: false,
             dream_mode: false,
@@ -567,7 +591,7 @@ impl Default for AgentSettings {
             knowledge_runtime: KnowledgeRuntimeStatus::default(),
             hygiene_mode: default_hygiene_mode(),
             hygiene_runtime: HygieneRuntimeStatus::default(),
-            self_improvement_enabled: false,
+            self_improvement_enabled: default_self_improvement_enabled(),
             self_improvement_preset: default_self_improvement_preset(),
             self_improvement_runtime: SelfImprovementRuntimeStatus::default(),
             memory_scope: None,
@@ -687,7 +711,8 @@ impl Default for McpSettings {
                     "id": "fortune-v3",
                     "name": "fortune",
                     "transport_type": "streamable-http",
-                    "sse_url": "https://fortune.ugot.uk/mcp/sse",
+                    "sse_url": "https://fortune.ugot.uk/mcp",
+                    "connection_type": "direct",
                 }),
             ],
         }
@@ -709,4 +734,19 @@ impl Default for DashboardSettings {
 pub struct SettingsEvent {
     pub key: String,
     pub value: serde_json::Value,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_self_improvement_preset_is_foreground() {
+        assert_eq!(default_self_improvement_preset(), "foreground");
+        assert_eq!(
+            AgentSettings::default().self_improvement_preset,
+            "foreground"
+        );
+        assert!(AgentSettings::default().self_improvement_enabled);
+    }
 }

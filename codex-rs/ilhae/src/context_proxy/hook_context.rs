@@ -1,9 +1,38 @@
 use anyhow::Context;
-use codex_hooks::schema::{
-    HookEventNameWire, HookUniversalOutputWire, SessionStartCommandInput,
-    SessionStartCommandOutputWire, SessionStartHookSpecificOutputWire,
-};
+use serde::Deserialize;
+use serde::Serialize;
 use std::io::Read;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionStartCommandInput {
+    session_id: String,
+    cwd: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HookUniversalOutputWire {
+    r#continue: bool,
+    stop_reason: Option<String>,
+    suppress_output: bool,
+    system_message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionStartCommandOutputWire {
+    #[serde(flatten)]
+    universal: HookUniversalOutputWire,
+    hook_specific_output: Option<SessionStartHookSpecificOutputWire>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionStartHookSpecificOutputWire {
+    hook_event_name: &'static str,
+    additional_context: Option<String>,
+}
 
 pub fn run_get_session_context() -> anyhow::Result<()> {
     // Read input from stdin (Codex hook protocol)
@@ -101,7 +130,7 @@ pub fn run_get_session_context() -> anyhow::Result<()> {
                 system_message: None,
             },
             hook_specific_output: Some(SessionStartHookSpecificOutputWire {
-                hook_event_name: HookEventNameWire::SessionStart,
+                hook_event_name: "SessionStart",
                 additional_context: combined_context,
             }),
         };

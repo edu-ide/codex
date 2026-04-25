@@ -21,12 +21,12 @@ use anyhow::Error;
 use anyhow::Result;
 use codex_config::types::OAuthCredentialsStoreMode;
 use oauth2::AccessToken;
-use oauth2::EmptyExtraTokenFields;
 use oauth2::RefreshToken;
 use oauth2::Scope;
 use oauth2::TokenResponse;
 use oauth2::basic::BasicTokenType;
 use rmcp::transport::auth::OAuthTokenResponse;
+use rmcp::transport::auth::VendorExtraTokenFields;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -283,6 +283,10 @@ impl OAuthPersistor {
 
     /// Persists the latest stored credentials if they have changed.
     /// Deletes the credentials if they are no longer present.
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "AuthorizationManager async access must be serialized through its mutex"
+    )]
     pub(crate) async fn persist_if_needed(&self) -> Result<()> {
         let (client_id, maybe_credentials) = {
             let manager = self.inner.authorization_manager.clone();
@@ -335,6 +339,10 @@ impl OAuthPersistor {
         Ok(())
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "AuthorizationManager async access must be serialized through its mutex"
+    )]
     pub(crate) async fn refresh_if_needed(&self) -> Result<()> {
         let expires_at = {
             let guard = self.inner.last_credentials.lock().await;
@@ -395,7 +403,7 @@ fn load_oauth_tokens_from_file(server_name: &str, url: &str) -> Result<Option<St
         let mut token_response = OAuthTokenResponse::new(
             AccessToken::new(entry.access_token.clone()),
             BasicTokenType::Bearer,
-            Default::default(),
+            VendorExtraTokenFields::default(),
         );
 
         if let Some(refresh) = entry.refresh_token.clone() {
@@ -883,7 +891,7 @@ mod tests {
         let mut response = OAuthTokenResponse::new(
             AccessToken::new("access-token".to_string()),
             BasicTokenType::Bearer,
-            EmptyExtraTokenFields {},
+            VendorExtraTokenFields::default(),
         );
         response.set_refresh_token(Some(RefreshToken::new("refresh-token".to_string())));
         response.set_scopes(Some(vec![

@@ -36,6 +36,7 @@ use codex_async_utils::CancelErr;
 use codex_async_utils::OrCancelExt;
 use codex_config::Constrained;
 use codex_config::types::OAuthCredentialsStoreMode;
+use codex_exec_server::Environment;
 use codex_protocol::ToolName;
 use codex_protocol::approvals::ElicitationRequest;
 use codex_protocol::approvals::ElicitationRequestEvent;
@@ -50,21 +51,30 @@ use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_rmcp_client::ElicitationResponse;
+use codex_rmcp_client::ExecutorStdioServerLauncher;
+use codex_rmcp_client::LocalStdioServerLauncher;
 use codex_rmcp_client::RmcpClient;
 use codex_rmcp_client::SendElicitation;
+use codex_rmcp_client::StdioServerLauncher;
 use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use futures::future::Shared;
 use rmcp::model::ClientCapabilities;
+use rmcp::model::CompleteRequestParams;
+use rmcp::model::CompleteResult;
 use rmcp::model::CreateElicitationRequestParams;
 use rmcp::model::ElicitationAction;
 use rmcp::model::ElicitationCapability;
 use rmcp::model::FormElicitationCapability;
+use rmcp::model::GetPromptRequestParams;
+use rmcp::model::GetPromptResult;
 use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
+use rmcp::model::ListPromptsResult;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
 use rmcp::model::PaginatedRequestParams;
+use rmcp::model::Prompt;
 use rmcp::model::ProtocolVersion;
 use rmcp::model::ReadResourceRequestParams;
 use rmcp::model::ReadResourceResult;
@@ -491,6 +501,7 @@ impl AsyncManagedClient {
         elicitation_requests: ElicitationRequestManager,
         codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
         tool_plugin_provenance: Arc<ToolPluginProvenance>,
+        runtime_environment: McpRuntimeEnvironment,
     ) -> Self {
         let tool_filter = ToolFilter::from_config(&config);
         let startup_snapshot = load_startup_cached_codex_apps_tools_snapshot(
@@ -507,8 +518,15 @@ impl AsyncManagedClient {
                     return Err(error.into());
                 }
 
-                let client =
-                    Arc::new(make_rmcp_client(&server_name, config.transport, store_mode).await?);
+                let client = Arc::new(
+                    make_rmcp_client(
+                        &server_name,
+                        config.clone(),
+                        store_mode,
+                        runtime_environment,
+                    )
+                    .await?,
+                );
                 match start_server_task(
                     server_name,
                     client,
@@ -648,6 +666,37 @@ pub struct McpConnectionManager {
     elicitation_requests: ElicitationRequestManager,
 }
 
+/// Runtime placement information used when starting MCP server transports.
+///
+/// `McpConfig` describes what servers exist. This value describes where those
+/// servers should run for the current caller. Keep it explicit at manager
+/// construction time so status/snapshot paths and real sessions make the same
+/// local-vs-remote decision. `fallback_cwd` is not a per-server override; it is
+/// used when a stdio server omits `cwd` and the launcher needs a concrete
+/// process working directory.
+#[derive(Clone)]
+pub struct McpRuntimeEnvironment {
+    environment: Arc<Environment>,
+    fallback_cwd: PathBuf,
+}
+
+impl McpRuntimeEnvironment {
+    pub fn new(environment: Arc<Environment>, fallback_cwd: PathBuf) -> Self {
+        Self {
+            environment,
+            fallback_cwd,
+        }
+    }
+
+    fn environment(&self) -> Arc<Environment> {
+        Arc::clone(&self.environment)
+    }
+
+    fn fallback_cwd(&self) -> PathBuf {
+        self.fallback_cwd.clone()
+    }
+}
+
 impl McpConnectionManager {
     pub fn configured_servers(&self, config: &McpConfig) -> HashMap<String, McpServerConfig> {
         configured_mcp_servers(config)
@@ -708,6 +757,7 @@ impl McpConnectionManager {
         submit_id: String,
         tx_event: Sender<Event>,
         initial_sandbox_policy: SandboxPolicy,
+        runtime_environment: McpRuntimeEnvironment,
         codex_home: PathBuf,
         codex_apps_tools_cache_key: CodexAppsToolsCacheKey,
         tool_plugin_provenance: ToolPluginProvenance,
@@ -752,6 +802,7 @@ impl McpConnectionManager {
                 elicitation_requests.clone(),
                 codex_apps_tools_cache_context,
                 Arc::clone(&tool_plugin_provenance),
+                runtime_environment.clone(),
             );
             clients.insert(server_name.clone(), async_managed_client.clone());
             let tx_event = tx_event.clone();
@@ -959,7 +1010,11 @@ impl McpConnectionManager {
                 let mut cursor: Option<String> = None;
 
                 loop {
-                    let params = cursor.as_ref().map(|next| { let mut p = rmcp::model::PaginatedRequestParams::default(); p.cursor = Some(next.clone()); p });
+                    let params = cursor.as_ref().map(|next| {
+                        let mut p = rmcp::model::PaginatedRequestParams::default();
+                        p.cursor = Some(next.clone());
+                        p
+                    });
                     let response = match client.list_resources(params, timeout).await {
                         Ok(result) => result,
                         Err(err) => return (server_name, Err(err)),
@@ -1022,7 +1077,11 @@ impl McpConnectionManager {
                 let mut cursor: Option<String> = None;
 
                 loop {
-                    let params = cursor.as_ref().map(|next| { let mut p = rmcp::model::PaginatedRequestParams::default(); p.cursor = Some(next.clone()); p });
+                    let params = cursor.as_ref().map(|next| {
+                        let mut p = rmcp::model::PaginatedRequestParams::default();
+                        p.cursor = Some(next.clone());
+                        p
+                    });
                     let response = match client.list_resource_templates(params, timeout).await {
                         Ok(result) => result,
                         Err(err) => return (server_name_cloned, Err(err)),
@@ -1062,6 +1121,73 @@ impl McpConnectionManager {
                 }
                 Err(err) => {
                     warn!("Task panic when listing resource templates for MCP server: {err:#}");
+                }
+            }
+        }
+
+        aggregated
+    }
+
+    /// Returns a single map that contains all prompts. Each key is the
+    /// server name and the value is a vector of prompts.
+    pub async fn list_all_prompts(&self) -> HashMap<String, Vec<Prompt>> {
+        let mut join_set = JoinSet::new();
+
+        let clients_snapshot = &self.clients;
+
+        for (server_name, async_managed_client) in clients_snapshot {
+            let server_name_cloned = server_name.clone();
+            let Ok(managed_client) = async_managed_client.client().await else {
+                continue;
+            };
+            let client = managed_client.client.clone();
+            let timeout = managed_client.tool_timeout;
+
+            join_set.spawn(async move {
+                let mut collected: Vec<Prompt> = Vec::new();
+                let mut cursor: Option<String> = None;
+
+                loop {
+                    let params = cursor.as_ref().map(|next| {
+                        let mut p = rmcp::model::PaginatedRequestParams::default();
+                        p.cursor = Some(next.clone());
+                        p
+                    });
+                    let response = match client.list_prompts(params, timeout).await {
+                        Ok(result) => result,
+                        Err(err) => return (server_name_cloned, Err(err)),
+                    };
+
+                    collected.extend(response.prompts);
+
+                    match response.next_cursor {
+                        Some(next) => {
+                            if cursor.as_ref() == Some(&next) {
+                                return (
+                                    server_name_cloned,
+                                    Err(anyhow!("prompts/list returned duplicate cursor")),
+                                );
+                            }
+                            cursor = Some(next);
+                        }
+                        None => return (server_name_cloned, Ok(collected)),
+                    }
+                }
+            });
+        }
+
+        let mut aggregated: HashMap<String, Vec<Prompt>> = HashMap::new();
+
+        while let Some(join_res) = join_set.join_next().await {
+            match join_res {
+                Ok((server_name, Ok(prompts))) => {
+                    aggregated.insert(server_name, prompts);
+                }
+                Ok((server_name, Err(err))) => {
+                    warn!("Failed to list prompts for MCP server '{server_name}': {err:#}");
+                }
+                Err(err) => {
+                    warn!("Task panic when listing prompts for MCP server: {err:#}");
                 }
             }
         }
@@ -1149,6 +1275,55 @@ impl McpConnectionManager {
             .with_context(|| format!("resources/templates/list failed for `{server}`"))
     }
 
+    /// List prompts from the specified server.
+    pub async fn list_prompts(
+        &self,
+        server: &str,
+        params: Option<PaginatedRequestParams>,
+    ) -> Result<ListPromptsResult> {
+        let managed = self.client_by_name(server).await?;
+        let client = managed.client.clone();
+        let timeout = managed.tool_timeout;
+
+        client
+            .list_prompts(params, timeout)
+            .await
+            .with_context(|| format!("prompts/list failed for `{server}`"))
+    }
+
+    /// Get a prompt from the specified server.
+    pub async fn get_prompt(
+        &self,
+        server: &str,
+        params: GetPromptRequestParams,
+    ) -> Result<GetPromptResult> {
+        let managed = self.client_by_name(server).await?;
+        let client = managed.client.clone();
+        let timeout = managed.tool_timeout;
+        let name = params.name.clone();
+
+        client
+            .get_prompt(params, timeout)
+            .await
+            .with_context(|| format!("prompts/get failed for `{server}` ({name})"))
+    }
+
+    /// Complete a prompt or resource argument on the specified server.
+    pub async fn complete(
+        &self,
+        server: &str,
+        params: CompleteRequestParams,
+    ) -> Result<CompleteResult> {
+        let managed = self.client_by_name(server).await?;
+        let client = managed.client.clone();
+        let timeout = managed.tool_timeout;
+
+        client
+            .complete(params, timeout)
+            .await
+            .with_context(|| format!("completion/complete failed for `{server}`"))
+    }
+
     /// Read a resource from the specified server.
     pub async fn read_resource(
         &self,
@@ -1167,10 +1342,12 @@ impl McpConnectionManager {
     }
 
     pub async fn resolve_tool_info(&self, tool_name: &ToolName) -> Option<ToolInfo> {
+        let requested_display = tool_name.display();
         let all_tools = self.list_all_tools().await;
-        all_tools
-            .into_values()
-            .find(|tool| tool.canonical_tool_name() == *tool_name)
+        all_tools.into_values().find(|tool| {
+            let canonical = tool.canonical_tool_name();
+            canonical == *tool_name || canonical.display() == requested_display
+        })
     }
 }
 
@@ -1389,17 +1566,14 @@ async fn start_server_task(
         codex_apps_tools_cache_context,
     } = params;
     let elicitation = elicitation_capability_for_server(&server_name);
-    let mut elicitation_opts = rmcp::model::ElicitationCapability::default();
-    let mut caps = rmcp::model::ClientCapabilities::default();
-    caps.elicitation = Some(elicitation_opts);
-    
-    let mut info = rmcp::model::Implementation::new("codex-mcp-client".to_owned(), env!("CARGO_PKG_VERSION").to_owned());
-    info.title = Some("Codex".into());
-    
-    let mut params = rmcp::model::InitializeRequestParams::new(
-        caps,
-        info,
-    );
+    let mut caps = ClientCapabilities::default();
+    caps.elicitation = elicitation;
+
+    let info = Implementation::new("codex-mcp-client", env!("CARGO_PKG_VERSION"))
+        .with_title("Codex");
+
+    let params = InitializeRequestParams::new(caps, info)
+        .with_protocol_version(ProtocolVersion::default());
 
     let send_elicitation = elicitation_requests.make_sender(server_name.clone(), tx_event);
 
@@ -1467,9 +1641,25 @@ struct StartServerTaskParams {
 
 async fn make_rmcp_client(
     server_name: &str,
-    transport: McpServerTransportConfig,
+    config: McpServerConfig,
     store_mode: OAuthCredentialsStoreMode,
+    runtime_environment: McpRuntimeEnvironment,
 ) -> Result<RmcpClient, StartupOutcomeError> {
+    let McpServerConfig {
+        transport,
+        experimental_environment,
+        ..
+    } = config;
+    let remote_environment = match experimental_environment.as_deref() {
+        None | Some("local") => false,
+        Some("remote") => true,
+        Some(environment) => {
+            return Err(StartupOutcomeError::from(anyhow!(
+                "unsupported experimental_environment `{environment}` for MCP server `{server_name}`"
+            )));
+        }
+    };
+
     match transport {
         McpServerTransportConfig::Stdio {
             command,
@@ -1485,7 +1675,27 @@ async fn make_rmcp_client(
                     .map(|(key, value)| (key.into(), value.into()))
                     .collect::<HashMap<_, _>>()
             });
-            RmcpClient::new_stdio_client(command_os, args_os, env_os, &env_vars, cwd)
+            let launcher = if remote_environment {
+                let exec_environment = runtime_environment.environment();
+                if !exec_environment.is_remote() {
+                    return Err(StartupOutcomeError::from(anyhow!(
+                        "remote MCP server `{server_name}` requires a remote executor environment"
+                    )));
+                }
+                Arc::new(ExecutorStdioServerLauncher::new(
+                    exec_environment.get_exec_backend(),
+                    runtime_environment.fallback_cwd(),
+                ))
+            } else {
+                Arc::new(LocalStdioServerLauncher::new(
+                    runtime_environment.fallback_cwd(),
+                )) as Arc<dyn StdioServerLauncher>
+            };
+
+            // `RmcpClient` always sees a launched MCP stdio server. The
+            // launcher hides whether that means a local child process or an
+            // executor process whose stdin/stdout bytes cross the process API.
+            RmcpClient::new_stdio_client(command_os, args_os, env_os, &env_vars, cwd, launcher)
                 .await
                 .map_err(|err| StartupOutcomeError::from(anyhow!(err)))
         }
@@ -1495,6 +1705,11 @@ async fn make_rmcp_client(
             env_http_headers,
             bearer_token_env_var,
         } => {
+            if remote_environment && !runtime_environment.environment().is_remote() {
+                return Err(StartupOutcomeError::from(anyhow!(
+                    "remote MCP server `{server_name}` requires a remote environment"
+                )));
+            }
             let resolved_bearer_token =
                 match resolve_bearer_token(server_name, bearer_token_env_var.as_deref()) {
                     Ok(token) => token,
@@ -1507,6 +1722,7 @@ async fn make_rmcp_client(
                 http_headers,
                 env_http_headers,
                 store_mode,
+                runtime_environment.environment().get_http_client(),
             )
             .await
             .map_err(StartupOutcomeError::from)

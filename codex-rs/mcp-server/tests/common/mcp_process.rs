@@ -124,10 +124,7 @@ impl McpProcess {
         let mut capabilities = ClientCapabilities::default();
         capabilities.elicitation = Some(elicitation);
 
-        let mut params = InitializeRequestParams::new(
-            capabilities,
-            client_info,
-        );
+        let mut params = InitializeRequestParams::new(capabilities, client_info);
         params.protocol_version = ProtocolVersion::V_2025_03_26;
         let params_value = serde_json::to_value(params)?;
 

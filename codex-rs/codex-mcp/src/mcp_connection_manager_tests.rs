@@ -684,6 +684,35 @@ async fn resolve_tool_info_accepts_canonical_namespaced_tool_names() {
 }
 
 #[tokio::test]
+async fn resolve_tool_info_accepts_flat_display_tool_names() {
+    let startup_tools = vec![create_test_tool("browser", "browser_navigate")];
+    let pending_client = futures::future::pending::<Result<ManagedClient, StartupOutcomeError>>()
+        .boxed()
+        .shared();
+    let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
+    let sandbox_policy = Constrained::allow_any(SandboxPolicy::new_read_only_policy());
+    let mut manager = McpConnectionManager::new_uninitialized(&approval_policy, &sandbox_policy);
+    manager.clients.insert(
+        "browser".to_string(),
+        AsyncManagedClient {
+            client: pending_client,
+            startup_snapshot: Some(startup_tools),
+            startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
+        },
+    );
+
+    let tool = manager
+        .resolve_tool_info(&ToolName::plain("mcp__browser__browser_navigate"))
+        .await
+        .expect("flat display MCP tool name should resolve");
+
+    assert_eq!(tool.server_name, "browser");
+    assert_eq!(tool.callable_namespace, "mcp__browser__");
+    assert_eq!(tool.callable_name, "browser_navigate");
+}
+
+#[tokio::test]
 async fn list_all_tools_blocks_while_client_is_pending_without_startup_snapshot() {
     let pending_client = futures::future::pending::<Result<ManagedClient, StartupOutcomeError>>()
         .boxed()

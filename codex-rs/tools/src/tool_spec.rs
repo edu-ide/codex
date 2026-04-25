@@ -1,5 +1,6 @@
 use crate::FreeformTool;
 use crate::JsonSchema;
+use crate::LoadableToolSpec;
 use crate::ResponsesApiNamespace;
 use crate::ResponsesApiTool;
 use codex_protocol::config_types::WebSearchConfig;
@@ -70,6 +71,15 @@ impl ToolSpec {
     }
 }
 
+impl From<LoadableToolSpec> for ToolSpec {
+    fn from(value: LoadableToolSpec) -> Self {
+        match value {
+            LoadableToolSpec::Function(tool) => ToolSpec::Function(tool),
+            LoadableToolSpec::Namespace(namespace) => ToolSpec::Namespace(namespace),
+        }
+    }
+}
+
 pub fn create_local_shell_tool() -> ToolSpec {
     ToolSpec::LocalShell {}
 }
@@ -95,14 +105,12 @@ pub fn create_web_search_tool(_options: WebSearchToolOptions<'_>) -> Option<Tool
 
     Some(ToolSpec::Function(ResponsesApiTool {
         name: "web_search".to_string(),
-        description: "Perform a web search using DuckDuckGo or SearXNG and read the content using Jina.ai.".to_string(),
+        description:
+            "Perform a web search using DuckDuckGo or SearXNG and read the content using Jina.ai."
+                .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: crate::JsonSchema::object(
-            properties,
-            Some(vec!["query".to_string()]),
-            None,
-        ),
+        parameters: crate::JsonSchema::object(properties, Some(vec!["query".to_string()]), None),
         output_schema: None,
     }))
 }

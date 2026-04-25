@@ -1,5 +1,8 @@
 [package]
+edition.workspace = true
+license.workspace = true
 name = "codex-protocol"
+version.workspace = true
 
 [lib]
 name = "codex_protocol"
@@ -8,120 +11,52 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[package.edition]
-workspace = true
+[dependencies]
+chardetng = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+codex-async-utils = { workspace = true }
+codex-execpolicy = { workspace = true }
+codex-network-proxy = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-image = { workspace = true }
+codex-utils-string = { workspace = true }
+codex-utils-template = { workspace = true }
+encoding_rs = { workspace = true }
+globset = { workspace = true }
+icu_decimal = { workspace = true }
+icu_locale_core = { workspace = true }
+icu_provider = { workspace = true, features = ["sync"] }
+quick-xml = { workspace = true, features = ["serialize"] }
+reqwest = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_with = { workspace = true, features = ["macros", "base64"] }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+sys-locale = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+ts-rs = { workspace = true, features = [
+    "uuid-impl",
+    "serde-json-impl",
+    "no-serde-warnings",
+] }
+uuid = { workspace = true, features = ["serde", "v7", "v4"] }
 
-[package.license]
-workspace = true
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = { workspace = true }
+seccompiler = { workspace = true }
 
-[package.version]
-workspace = true
-
-[dependencies.codex-execpolicy]
-workspace = true
-
-[dependencies.codex-utils-absolute-path]
-workspace = true
-
-[dependencies.codex-utils-image]
-workspace = true
-
-[dependencies.codex-utils-string]
-workspace = true
-
-[dependencies.codex-utils-template]
-workspace = true
-
-[dependencies.icu_decimal]
-workspace = true
-
-[dependencies.icu_locale_core]
-workspace = true
-
-[dependencies.icu_provider]
-workspace = true
-features = [ "sync",]
-
-[dependencies.quick-xml]
-workspace = true
-features = [ "serialize",]
-
-[dependencies.schemars]
-version = "0.8.22"
-
-[dependencies.serde]
-version = "1"
-features = [ "derive",]
-
-[dependencies.serde_json]
-workspace = true
-
-[dependencies.serde_with]
-workspace = true
-features = [ "macros", "base64",]
-
-[dependencies.strum]
-workspace = true
-
-[dependencies.strum_macros]
-workspace = true
-
-[dependencies.sys-locale]
-workspace = true
-
-[dependencies.tracing]
-version = "0.1.44"
-
-[dependencies.ts-rs]
-workspace = true
-features = [ "uuid-impl", "serde-json-impl", "no-serde-warnings",]
-
-[dependencies.uuid]
-version = "1"
-features = [ "serde", "v7", "v4",]
-
-[dev-dependencies.anyhow]
-workspace = true
-
-[dev-dependencies.pretty_assertions]
-workspace = true
-
-[dev-dependencies.tempfile]
-workspace = true
+[dev-dependencies]
+anyhow = { workspace = true }
+http = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
 
 [package.metadata.cargo-shear]
-ignored = [ "icu_provider", "strum",]
-
-[dependencies.chardetng]
-workspace = true
-
-[dependencies.encoding_rs]
-workspace = true
-
-[dependencies.globset]
-workspace = true
-
-[dependencies.thiserror]
-workspace = true
-
-[dependencies.chrono]
-workspace = true
-features = ["serde"]
-
-[dependencies.reqwest]
-workspace = true
-
-[dependencies.tokio]
-workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies.seccompiler]
-workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies.landlock]
-workspace = true
-
-[dependencies.codex-network-proxy]
-workspace = true
-
-[dependencies.codex-async-utils]
-workspace = true
+# Required because:
+# `icu_provider`: contains a required `sync` feature for `icu_decimal`
+# `strum`: as strum_macros in non-nightly builds
+ignored = ["icu_provider", "strum"]

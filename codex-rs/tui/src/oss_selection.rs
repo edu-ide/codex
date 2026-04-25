@@ -78,7 +78,7 @@ static OSS_SELECT_OPTIONS: LazyLock<Vec<SelectOption>> = LazyLock::new(|| {
         },
         SelectOption {
             label: Line::from(vec!["S".underlined(), "erver".into()]),
-            description: "Local llama.cpp llama-server (Responses API, default port 8080)",
+            description: "Local llama.cpp llama-server (Responses API, default port 8082)",
             key: KeyCode::Char('s'),
             provider_id: LLAMA_SERVER_OSS_PROVIDER_ID,
         },

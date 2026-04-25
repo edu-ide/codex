@@ -6,8 +6,7 @@ use crate::version::CODEX_CLI_VERSION;
 use chrono::DateTime;
 use chrono::Local;
 use codex_core::config::Config;
-use codex_exec_server::LOCAL_FS;
-use codex_git_utils::{get_git_repo_root, resolve_root_git_project_for_trust};
+use codex_git_utils::get_git_repo_root;
 use codex_ilhae::native_runtime_context;
 use codex_model_provider_info::WireApi;
 use codex_protocol::ThreadId;
@@ -18,7 +17,6 @@ use codex_protocol::protocol::NetworkAccess;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_sandbox_summary::summarize_sandbox_policy;
 use ratatui::prelude::*;
 use ratatui::style::Stylize;
@@ -417,23 +415,7 @@ impl StatusHistoryCell {
         let Some(repo_root) = get_git_repo_root(cwd) else {
             return "none";
         };
-        let Ok(cwd_absolute) = AbsolutePathBuf::from_absolute_path(cwd) else {
-            return "repo";
-        };
-        let Some(trust_root) = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(resolve_root_git_project_for_trust(
-                LOCAL_FS.as_ref(),
-                &cwd_absolute,
-            ))
-        }) else {
-            return "repo";
-        };
-
-        if repo_root.as_path() == trust_root.as_path() {
-            "repo"
-        } else {
-            "linked"
-        }
+        if repo_root == cwd { "repo" } else { "linked" }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -469,7 +451,7 @@ impl StatusHistoryCell {
         ];
         if config.model_provider.wire_api == WireApi::Responses {
             let effort_value = reasoning_effort_override
-                .unwrap_or(None)
+                .unwrap_or(config.model_reasoning_effort)
                 .map(|effort| effort.to_string())
                 .unwrap_or_else(|| "none".to_string());
             config_entries.push(("reasoning effort", effort_value));

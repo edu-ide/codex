@@ -44,10 +44,9 @@ pub(crate) fn create_call_tool_result_with_thread_id(
         "threadId": thread_id,
         "content": content_text,
     });
-    let mut result = CallToolResult::default();
-    result.content = content;
-    result.is_error = is_error;
+    let mut result = CallToolResult::success(content);
     result.structured_content = Some(structured_content);
+    result.is_error = is_error;
     result
 }
 
@@ -70,9 +69,9 @@ pub async fn run_codex_tool_session(
     } = match thread_manager.start_thread(config).await {
         Ok(res) => res,
         Err(e) => {
-            let mut result = CallToolResult::default();
-            result.content = vec![Content::text(format!("Failed to start Codex session: {e}"))];
-            result.is_error = Some(true);
+            let result = CallToolResult::error(vec![Content::text(format!(
+                "Failed to start Codex session: {e}"
+            ))]);
             outgoing.send_response(id.clone(), result).await;
             return;
         }
@@ -104,6 +103,7 @@ pub async fn run_codex_tool_session(
     let submission = Submission {
         id: sub_id.clone(),
         op: Op::UserInput {
+            environments: None,
             items: vec![UserInput::Text {
                 text: initial_prompt.clone(),
                 // MCP tool prompts are plain text with no UI element ranges.
@@ -152,6 +152,7 @@ pub async fn run_codex_tool_session_reply(
         .insert(request_id.clone(), thread_id);
     if let Err(e) = thread
         .submit(Op::UserInput {
+            environments: None,
             items: vec![UserInput::Text {
                 text: prompt,
                 // MCP tool prompts are plain text with no UI element ranges.
@@ -257,7 +258,7 @@ async fn run_codex_tool_session_inner(
                         outgoing.send_response(request_id.clone(), result).await;
                         break;
                     }
-                    EventMsg::Warning(_) => {
+                    EventMsg::Warning(_) | EventMsg::GuardianWarning(_) => {
                         continue;
                     }
                     EventMsg::GuardianAssessment(_) => {

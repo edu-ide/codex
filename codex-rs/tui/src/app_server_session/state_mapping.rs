@@ -1,7 +1,7 @@
 use crate::legacy_core::config::Config;
 use crate::legacy_core::message_history_metadata;
-use crate::status::plan_type_display_name;
 use crate::status::StatusAccountDisplay;
+use crate::status::plan_type_display_name;
 use codex_app_server_protocol::AuthMode;
 use codex_app_server_protocol::CreditsSnapshot as AppServerCreditsSnapshot;
 use codex_app_server_protocol::GetAccountRateLimitsResponse;
@@ -317,9 +317,7 @@ pub(crate) fn review_target_to_app_server(target: CoreReviewTarget) -> AppServer
         CoreReviewTarget::UncommittedChanges => AppServerReviewTarget::UncommittedChanges,
         CoreReviewTarget::BaseBranch { branch } => AppServerReviewTarget::BaseBranch { branch },
         CoreReviewTarget::Commit { sha, title } => AppServerReviewTarget::Commit { sha, title },
-        CoreReviewTarget::Custom { instructions } => {
-            AppServerReviewTarget::Custom { instructions }
-        }
+        CoreReviewTarget::Custom { instructions } => AppServerReviewTarget::Custom { instructions },
     }
 }
 

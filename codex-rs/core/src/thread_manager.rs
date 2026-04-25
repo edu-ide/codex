@@ -1,9 +1,5 @@
 use crate::SkillsManager;
 use crate::agent::AgentControl;
-use crate::codex::Codex;
-use crate::codex::CodexSpawnArgs;
-use crate::codex::CodexSpawnOk;
-use crate::codex::INITIAL_SUBMIT_ID;
 use crate::codex_thread::CodexThread;
 use crate::config::Config;
 use crate::file_watcher::FileWatcher;
@@ -11,6 +7,10 @@ use crate::mcp::McpManager;
 use crate::plugins::PluginsManager;
 use crate::rollout::RolloutRecorder;
 use crate::rollout::truncation;
+use crate::session::Codex;
+use crate::session::CodexSpawnArgs;
+use crate::session::CodexSpawnOk;
+use crate::session::INITIAL_SUBMIT_ID;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::skills_watcher::SkillsWatcher;
 use crate::skills_watcher::SkillsWatcherEvent;
@@ -206,6 +206,8 @@ pub(crate) struct ThreadManagerState {
     thread_created_tx: broadcast::Sender<ThreadId>,
     auth_manager: Arc<AuthManager>,
     models_manager: Arc<ModelsManager>,
+    configured_model: Option<String>,
+    configured_model_provider_id: String,
     environment_manager: Arc<EnvironmentManager>,
     skills_manager: Arc<SkillsManager>,
     plugins_manager: Arc<PluginsManager>,
@@ -215,6 +217,26 @@ pub(crate) struct ThreadManagerState {
     analytics_events_client: Option<AnalyticsEventsClient>,
     // Captures submitted ops for testing purpose when test mode is enabled.
     ops_log: Option<SharedCapturedOps>,
+}
+
+pub fn build_models_manager(
+    config: &Config,
+    auth_manager: Arc<AuthManager>,
+    collaboration_modes_config: CollaborationModesConfig,
+) -> Arc<ModelsManager> {
+    let openai_models_provider = config
+        .model_providers
+        .get(OPENAI_PROVIDER_ID)
+        .cloned()
+        .unwrap_or_else(|| ModelProviderInfo::create_openai_provider(/*base_url*/ None));
+
+    Arc::new(ModelsManager::new_with_provider(
+        config.codex_home.to_path_buf(),
+        auth_manager,
+        config.model_catalog.clone(),
+        collaboration_modes_config,
+        openai_models_provider,
+    ))
 }
 
 impl ThreadManager {
@@ -228,11 +250,6 @@ impl ThreadManager {
     ) -> Self {
         let codex_home = config.codex_home.clone();
         let restriction_product = session_source.restriction_product();
-        let openai_models_provider = config
-            .model_providers
-            .get(OPENAI_PROVIDER_ID)
-            .cloned()
-            .unwrap_or_else(|| ModelProviderInfo::create_openai_provider(/*base_url*/ None));
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
         let plugins_manager = Arc::new(PluginsManager::new_with_restriction_product(
             codex_home.to_path_buf(),
@@ -240,7 +257,7 @@ impl ThreadManager {
         ));
         let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
         let skills_manager = Arc::new(SkillsManager::new_with_restriction_product(
-            codex_home.clone(),
+            codex_home,
             config.bundled_skills_enabled(),
             restriction_product,
         ));
@@ -249,13 +266,13 @@ impl ThreadManager {
             state: Arc::new(ThreadManagerState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
-                models_manager: Arc::new(ModelsManager::new_with_provider(
-                    codex_home.to_path_buf(),
+                models_manager: build_models_manager(
+                    config,
                     auth_manager.clone(),
-                    config.model_catalog.clone(),
                     collaboration_modes_config,
-                    openai_models_provider,
-                )),
+                ),
+                configured_model: config.model.clone(),
+                configured_model_provider_id: config.model_provider_id.clone(),
                 environment_manager,
                 skills_manager,
                 plugins_manager,
@@ -288,7 +305,7 @@ impl ThreadManager {
             auth,
             provider,
             codex_home.clone(),
-            Arc::new(EnvironmentManager::new(/*exec_server_url*/ None)),
+            Arc::new(EnvironmentManager::default_for_tests()),
         );
         manager._test_codex_home_guard = Some(TempCodexHomeGuard { path: codex_home });
         manager
@@ -330,6 +347,8 @@ impl ThreadManager {
                     auth_manager.clone(),
                     provider,
                 )),
+                configured_model: None,
+                configured_model_provider_id: OPENAI_PROVIDER_ID.to_string(),
                 environment_manager,
                 skills_manager,
                 plugins_manager,
@@ -380,6 +399,14 @@ impl ThreadManager {
             .await
     }
 
+    pub fn configured_model(&self) -> Option<String> {
+        self.state.configured_model.clone()
+    }
+
+    pub fn configured_model_provider_id(&self) -> &str {
+        &self.state.configured_model_provider_id
+    }
+
     pub fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
         self.state.models_manager.list_collaboration_modes()
     }
@@ -398,14 +425,9 @@ impl ThreadManager {
             .cloned()
             .collect::<Vec<_>>();
         for thread in threads {
-            if let Err(err) = thread
-                .submit(Op::RefreshMcpServers {
-                    config: refresh_config.clone(),
-                })
-                .await
-            {
-                warn!("failed to request MCP server refresh: {err}");
-            }
+            thread
+                .queue_mcp_server_refresh_for_out_of_band_call(refresh_config.clone())
+                .await;
         }
     }
 
@@ -907,11 +929,7 @@ impl ThreadManagerState {
         parent_trace: Option<W3cTraceContext>,
         user_shell_override: Option<crate::shell::Shell>,
     ) -> CodexResult<NewThread> {
-        let environment = self
-            .environment_manager
-            .current()
-            .await
-            .map_err(|err| CodexErr::Fatal(format!("failed to create environment: {err}")))?;
+        let environment = self.environment_manager.default_environment();
         let watch_registration = match environment.as_ref() {
             Some(environment) if !environment.is_remote() => {
                 self.skills_watcher
@@ -944,6 +962,7 @@ impl ThreadManagerState {
             metrics_service_name,
             inherited_shell_snapshot,
             inherited_exec_policy,
+            inherited_rollout_trace: codex_rollout_trace::RolloutTraceRecorder::disabled(),
             user_shell_override,
             parent_trace,
             analytics_events_client: self.analytics_events_client.clone(),
