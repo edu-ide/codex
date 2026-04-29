@@ -1,5 +1,6 @@
 use serde_json::json;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 use super::resolve_user_agent_endpoint;
 

@@ -7,20 +7,29 @@ use codex_protocol::user_input::UserInput;
 use sacp::DynConnectTo;
 
 use moka::sync::Cache;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::os::fd::AsRawFd;
-use std::sync::{Arc, OnceLock, atomic::AtomicU64};
-use std::{process::Stdio, time::Duration};
+use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicU64;
+use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 /// Signal from pre-spawn to build_agent_transport: leader has been spawned.
 static LEADER_READY: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 use crate::browser_manager::BrowserManager;
-use crate::relay_server::{RelayEvent, RelayState, broadcast_event, start_relay_server};
+use crate::relay_server::RelayEvent;
+use crate::relay_server::RelayState;
+use crate::relay_server::broadcast_event;
+use crate::relay_server::start_relay_server;
 use crate::settings_store::SettingsStore;
-use crate::startup::{build_agent_transport, cleanup_redundant_sessions};
+use crate::startup::build_agent_transport;
+use crate::startup::cleanup_redundant_sessions;
 use tokio::sync::broadcast;
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -121,7 +130,7 @@ pub fn current_native_backend_capability_profile()
         .map(|engine| crate::capabilities::engine_capability_profile(&engine))
 }
 
-async fn native_runtime_healthcheck(url: &str) -> bool {
+pub async fn native_runtime_healthcheck(url: &str) -> bool {
     if url.trim().is_empty() {
         return false;
     }
@@ -270,9 +279,9 @@ fn acquire_native_runtime_start_lock(
     Ok(NativeRuntimeStartLock { file })
 }
 
-fn spawn_native_runtime_server(
+pub fn spawn_native_runtime_server(
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<u32> {
     if config.server_bin.trim().is_empty() {
         anyhow::bail!("native runtime server_bin is required");
     }
@@ -315,13 +324,32 @@ fn spawn_native_runtime_server(
         command.stderr(Stdio::from(stderr));
     }
 
-    let child = command.spawn()?;
+    let mut child = command.spawn()?;
+    let pid = child.id();
+
+    // Spawn a background reaper thread to prevent zombie processes.
+    // This thread will wait for the child to exit and clean up the process table entry.
+    std::thread::spawn(move || {
+        match child.wait() {
+            Ok(status) => {
+                if status.success() {
+                    info!(pid = pid, "[NativeRuntime] local model server exited normally");
+                } else {
+                    warn!(pid = pid, status = %status, "[NativeRuntime] local model server exited with error");
+                }
+            }
+            Err(e) => {
+                warn!(pid = pid, error = %e, "[NativeRuntime] error waiting for local model server");
+            }
+        }
+    });
+
     info!(
-        pid = child.id(),
+        pid = pid,
         server_bin = %config.server_bin,
         "[NativeRuntime] spawned local model server"
     );
-    Ok(())
+    Ok(pid)
 }
 
 fn native_runtime_supports_reasoning_flag(
@@ -391,6 +419,89 @@ fn read_proc_cmdline(pid: u32) -> Option<Vec<String>> {
     )
 }
 
+fn extract_port_from_config(config: &crate::config::IlhaeProfileNativeRuntimeConfig) -> Option<u16> {
+    // 1. Try to extract from args (e.g. --port 8082)
+    for i in 0..config.args.len() {
+        if (config.args[i] == "--port" || config.args[i] == "-p") && i + 1 < config.args.len() {
+            if let Ok(port) = config.args[i + 1].parse::<u16>() {
+                return Some(port);
+            }
+        }
+    }
+
+    // 2. Try to extract from health_url or base_url using regex or simple parsing
+    for url_str in &[&config.health_url, &config.base_url] {
+        // Look for :PORT/ or :PORT at the end
+        if let Some(pos) = url_str.find("://") {
+            let after_scheme = &url_str[pos + 3..];
+            if let Some(colon_pos) = after_scheme.find(':') {
+                let after_colon = &after_scheme[colon_pos + 1..];
+                let end_pos = after_colon.find('/').unwrap_or(after_colon.len());
+                if let Ok(port) = after_colon[..end_pos].parse::<u16>() {
+                    return Some(port);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn find_pid_by_port(port: u16) -> Option<u32> {
+    // 1. Try fuser (common on Linux)
+    if let Ok(output) = std::process::Command::new("fuser")
+        .arg(format!("{}/tcp", port))
+        .output()
+    {
+        // fuser often outputs the PID to stderr instead of stdout
+        let out = String::from_utf8_lossy(&output.stdout);
+        let err = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{} {}", out, err);
+
+        if let Some(pid_str) = combined.trim().split_whitespace().last() {
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                return Some(pid);
+            }
+        }
+    }
+
+    // 2. Try lsof as fallback
+    if let Ok(output) = std::process::Command::new("lsof")
+        .args(["-t", "-i", &format!("tcp:{}", port)])
+        .output()
+    {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout);
+            if let Some(pid_str) = s.trim().lines().next() {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    return Some(pid);
+                }
+            }
+        }
+    }
+
+    // 3. Try ss as last resort
+    if let Ok(output) = std::process::Command::new("ss")
+        .args(["-lptn", &format!("sport = :{}", port)])
+        .output()
+    {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout);
+            // Example: LISTEN 0 128 *:8082 *:* users:(("llama-server",pid=701443,fd=16))
+            if let Some(pos) = s.find("pid=") {
+                let rest = &s[pos + 4..];
+                if let Some(end) = rest.find(',') {
+                    if let Ok(pid) = rest[..end].parse::<u32>() {
+                        return Some(pid);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 fn native_runtime_cmdline_matches(
     cmdline: &[String],
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
@@ -404,6 +515,7 @@ fn native_runtime_cmdline_matches(
         return false;
     }
 
+    // Server binary name match
     let server_matches = cmdline.iter().any(|arg| {
         std::path::Path::new(arg)
             .file_name()
@@ -416,10 +528,17 @@ fn native_runtime_cmdline_matches(
     }
 
     let model_path = config.model_path.trim();
-    model_path.is_empty() || cmdline.iter().any(|arg| arg == model_path)
+    if model_path.is_empty() {
+        return true;
+    }
+
+    // Model path match (either exact or as part of an argument like --model /path/to/model)
+    cmdline.iter().any(|arg| {
+        arg == model_path || arg.contains(model_path)
+    })
 }
 
-fn find_native_runtime_pids(config: &crate::config::IlhaeProfileNativeRuntimeConfig) -> Vec<u32> {
+pub fn find_native_runtime_pids(config: &crate::config::IlhaeProfileNativeRuntimeConfig) -> Vec<u32> {
     let current_pid = std::process::id();
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return Vec::new();
@@ -442,11 +561,48 @@ fn find_native_runtime_pids(config: &crate::config::IlhaeProfileNativeRuntimeCon
         .collect()
 }
 
-async fn stop_native_runtime_server_for_config(
+pub async fn stop_native_runtime_server_for_config(
     profile_id: &str,
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> anyhow::Result<()> {
-    let pids = find_native_runtime_pids(config);
+    let mut pids = find_native_runtime_pids(config);
+
+    // Try to find PID by port if config has a port in health_url or args
+    if let Some(port) = extract_port_from_config(config) {
+        if let Some(pid) = find_pid_by_port(port) {
+            if !pids.contains(&pid) {
+                info!(profile = %profile_id, port = port, pid = pid, "[NativeRuntime] found process by port fallback");
+                pids.push(pid);
+            }
+        }
+    }
+
+    // Fallback: search for llama-server processes if no specific PIDs found yet
+    if pids.is_empty() {
+            let server_name = std::path::Path::new(&config.server_bin)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("llama-server")
+                .to_string();
+
+        info!(profile = %profile_id, server_name = %server_name, "[NativeRuntime] no PIDs found by strict match, searching by name fallback");
+
+        let current_pid = std::process::id();
+        if let Ok(entries) = std::fs::read_dir("/proc") {
+            for entry in entries.flatten() {
+                if let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) {
+                    if pid == current_pid { continue; }
+                    if let Some(cmdline) = read_proc_cmdline(pid) {
+                        if cmdline.iter().any(|arg| arg.contains(&server_name)) {
+                            info!(profile = %profile_id, pid = pid, "[NativeRuntime] found process by name substring match: {:?}", cmdline);
+                            pids.push(pid);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if pids.is_empty() {
         info!(
             profile = %profile_id,
@@ -454,6 +610,8 @@ async fn stop_native_runtime_server_for_config(
         );
         return Ok(());
     }
+
+    info!(profile = %profile_id, pids = ?pids, "[NativeRuntime] terminating local model server processes");
 
     for pid in &pids {
         match std::process::Command::new("kill")
@@ -516,6 +674,10 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
     let Some((profile_id, config)) = crate::config::get_native_runtime_config(profile_id) else {
         return Ok(());
     };
+
+    if !config.enabled {
+        return Ok(());
+    }
 
     if native_runtime_healthcheck(&config.health_url).await {
         if !config.base_url.trim().is_empty() {
@@ -1039,11 +1201,13 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
             );
         } else {
             // Team mode: pre-spawn + register with supervisor
-            use context_proxy::{
-                ensure_user_agent_server, extract_port_from_endpoint,
-                generate_peer_registration_files, load_team_runtime_config, spawn_team_a2a_servers,
-                trigger_agent_reload, wait_for_all_team_health,
-            };
+            use context_proxy::ensure_user_agent_server;
+            use context_proxy::extract_port_from_endpoint;
+            use context_proxy::generate_peer_registration_files;
+            use context_proxy::load_team_runtime_config;
+            use context_proxy::spawn_team_a2a_servers;
+            use context_proxy::trigger_agent_reload;
+            use context_proxy::wait_for_all_team_health;
             let dir = ilhae_dir.clone();
 
             // Auto-generate team.json from default preset if missing

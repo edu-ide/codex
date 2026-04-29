@@ -7,8 +7,10 @@ use crate::browser_manager::BrowserManager;
 use crate::settings_store::SettingsStore;
 use action_browser_rs::BrowserSession;
 use action_browser_rs::dom::DomTree;
-use action_browser_rs::tools::{Tool, ToolContext};
-use std::sync::{Arc, Mutex};
+use action_browser_rs::tools::Tool;
+use action_browser_rs::tools::ToolContext;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 /// Shared handle to the browser session, managed by BrowserManager.
 pub type BrowserSessionHandle = Arc<Mutex<Option<BrowserSession>>>;

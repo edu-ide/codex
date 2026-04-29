@@ -1757,11 +1757,11 @@ pub(crate) fn new_active_mcp_tool_call(
 }
 
 fn web_search_header(completed: bool) -> &'static str {
-    if completed {
-        "Searched"
-    } else {
-        "Searching the web"
-    }
+   if completed {
+        "Searched the web"
+   } else {
+       "Searching the web"
+   }
 }
 
 #[derive(Debug)]

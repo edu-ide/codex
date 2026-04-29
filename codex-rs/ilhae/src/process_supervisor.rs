@@ -15,12 +15,15 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
-use crate::helpers::{infer_agent_id_from_command, is_ilhae_native_agent_id};
+use crate::helpers::infer_agent_id_from_command;
+use crate::helpers::is_ilhae_native_agent_id;
 use crate::ports::AgentSpawner;
 use crate::settings_store::SettingsStore;
 
@@ -441,6 +444,27 @@ pub fn create_supervisor_with_spawner(
             restart_count: 0,
             last_healthy: None,
             enabled: !is_team && is_codex,
+            workspace_path: None,
+            role: None,
+            is_leader: false,
+            original_leader: false,
+            cached_agent_card: None,
+            card_last_fetched: None,
+        },
+    );
+
+    // Local Model Server (Native Runtime)
+    processes.insert(
+        "local-server".to_string(),
+        ManagedProcess {
+            name: "local-server".to_string(),
+            port: 0, // Not used for traditional TCP probe
+            engine: "ilhae-native-runtime".to_string(),
+            card_name: Some("Local Model Server".to_string()),
+            pid: None,
+            restart_count: 0,
+            last_healthy: None,
+            enabled: settings.agent.native_runtime_enabled,
             workspace_path: None,
             role: None,
             is_leader: false,
@@ -1145,11 +1169,48 @@ impl ProcessSupervisor {
                 None => continue,
             };
 
+            // ── Local Server Dynamic Toggle ──
+            if key == "local-server" {
+                let settings = self.settings_store.get();
+                let should_be_enabled = settings.agent.native_runtime_enabled;
+
+                if proc.enabled != should_be_enabled {
+                    info!(
+                        "[Supervisor] local-server state changed: enabled={} -> {}",
+                        proc.enabled, should_be_enabled
+                    );
+                    proc.enabled = should_be_enabled;
+
+                    if !should_be_enabled {
+                        // Stop server if disabled
+                        if let Some((profile_id, config)) = crate::config::get_native_runtime_config(None) {
+                            info!("[Supervisor] Stopping local-server (profile: {})", profile_id);
+                            let _ = crate::startup_main::stop_native_runtime_server_for_config(
+                                &profile_id,
+                                &config,
+                            )
+                            .await;
+                        }
+                        proc.pid = None;
+                        proc.last_healthy = None;
+                        continue;
+                    }
+                }
+            }
+
             if !proc.enabled {
                 continue;
             }
 
-            let is_alive = self.spawner.health_check(proc.port).await;
+            let is_alive = if key == "local-server" {
+                if let Some((_, config)) = crate::config::get_native_runtime_config(None) {
+                    crate::startup_main::native_runtime_healthcheck(&config.health_url).await
+                } else {
+                    false
+                }
+            } else {
+                self.spawner.health_check(proc.port).await
+            };
 
             if is_alive {
                 // Reset restart counter on healthy check
@@ -1163,70 +1224,74 @@ impl ProcessSupervisor {
                 proc.last_healthy = Some(Instant::now());
 
                 // OOM Detection & Proactive Migration
-                if let Some(pid) = proc.pid {
-                    if let Some(sys_proc) = self.sys.process(sysinfo::Pid::from_u32(pid)) {
-                        let memory_usage = sys_proc.memory(); // in bytes
-                        // OOM Threshold: 1.5GB
-                        if memory_usage > 1_536 * 1024 * 1024 {
-                            warn!(
-                                "[Supervisor] ⚠️ OOM WARNING: {} (PID {}) memory usage {} bytes exceeds threshold! Initiating proactive migration...",
-                                proc.name, pid, memory_usage
-                            );
-
-                            let mut new_port = 0;
-                            for p in 50000..60000 {
-                                if !assigned_ports.contains(&p) {
-                                    if std::net::TcpListener::bind(("127.0.0.1", p)).is_ok() {
-                                        new_port = p;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if new_port > 0 {
-                                info!(
-                                    "[Supervisor] Spawning replacement for {} on new port {}...",
-                                    proc.name, new_port
+                if key != "local-server" {
+                    if let Some(pid) = proc.pid {
+                        if let Some(sys_proc) = self.sys.process(sysinfo::Pid::from_u32(pid)) {
+                            let memory_usage = sys_proc.memory(); // in bytes
+                                                                  // OOM Threshold: 1.5GB
+                            if memory_usage > 1_536 * 1024 * 1024 {
+                                warn!(
+                                    "[Supervisor] ⚠️ OOM WARNING: {} (PID {}) memory usage {} bytes exceeds threshold! Initiating proactive migration...",
+                                    proc.name, pid, memory_usage
                                 );
-                                let team_env =
-                                    proc.workspace_path.as_ref().map(|ws| crate::TeamSpawnEnv {
-                                        workspace_path: ws.clone(),
-                                        role: proc.role.clone().unwrap_or_default(),
-                                    });
 
-                                match self
-                                    .spawner
-                                    .spawn_agent(
-                                        new_port,
-                                        &proc.engine,
-                                        proc.card_name.as_deref(),
-                                        team_env,
-                                    )
-                                    .await
-                                {
-                                    Ok(agent) => {
-                                        tokio::time::sleep(Duration::from_millis(1500)).await;
-                                        if self.spawner.health_check(new_port).await {
-                                            info!(
-                                                "[Supervisor] 🔄 OOM Migration SUCCESS: {} swapped from port {} (PID {}) to port {} (PID {:?})",
-                                                proc.name, proc.port, pid, new_port, agent.pid
-                                            );
-                                            self.draining_processes.push((pid, Instant::now()));
-                                            assigned_ports.insert(new_port);
-                                            proc.port = new_port;
-                                            proc.pid = agent.pid;
-                                        } else {
-                                            warn!(
-                                                "[Supervisor] New process on port {} failed health check. Migration aborted.",
-                                                new_port
-                                            );
-                                            if let Some(new_pid) = agent.pid {
-                                                kill_pid(new_pid);
-                                            }
+                                let mut new_port = 0;
+                                for p in 50000..60000 {
+                                    if !assigned_ports.contains(&p) {
+                                        if std::net::TcpListener::bind(("127.0.0.1", p)).is_ok() {
+                                            new_port = p;
+                                            break;
                                         }
                                     }
-                                    Err(e) => {
-                                        warn!("[Supervisor] Failed to spawn OOM replacement: {}", e)
+                                }
+
+                                if new_port > 0 {
+                                    info!(
+                                        "[Supervisor] Spawning replacement for {} on new port {}...",
+                                        proc.name, new_port
+                                    );
+                                    let team_env = proc
+                                        .workspace_path
+                                        .as_ref()
+                                        .map(|ws| crate::TeamSpawnEnv {
+                                            workspace_path: ws.clone(),
+                                            role: proc.role.clone().unwrap_or_default(),
+                                        });
+
+                                    match self
+                                        .spawner
+                                        .spawn_agent(
+                                            new_port,
+                                            &proc.engine,
+                                            proc.card_name.as_deref(),
+                                            team_env,
+                                        )
+                                        .await
+                                    {
+                                        Ok(agent) => {
+                                            tokio::time::sleep(Duration::from_millis(1500)).await;
+                                            if self.spawner.health_check(new_port).await {
+                                                info!(
+                                                    "[Supervisor] 🔄 OOM Migration SUCCESS: {} swapped from port {} (PID {}) to port {} (PID {:?})",
+                                                    proc.name, proc.port, pid, new_port, agent.pid
+                                                );
+                                                self.draining_processes.push((pid, Instant::now()));
+                                                assigned_ports.insert(new_port);
+                                                proc.port = new_port;
+                                                proc.pid = agent.pid;
+                                            } else {
+                                                warn!(
+                                                    "[Supervisor] New process on port {} failed health check. Migration aborted.",
+                                                    new_port
+                                                );
+                                                if let Some(new_pid) = agent.pid {
+                                                    kill_pid(new_pid);
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("[Supervisor] Failed to spawn OOM replacement: {}", e)
+                                        }
                                     }
                                 }
                             }
@@ -1284,6 +1349,26 @@ impl ProcessSupervisor {
                 proc.port,
                 proc.restart_count + 1
             );
+
+            if key == "local-server" {
+                if let Some((_, config)) = crate::config::get_native_runtime_config(None) {
+                    match crate::startup_main::spawn_native_runtime_server(&config) {
+                        Ok(_) => {
+                            info!("[Supervisor] local-server spawned successfully");
+                            proc.restart_count += 1;
+                            let pids = crate::startup_main::find_native_runtime_pids(&config);
+                            if let Some(&pid) = pids.first() {
+                                proc.pid = Some(pid);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("[Supervisor] Failed to restart local-server: {}", e);
+                            proc.restart_count += 1;
+                        }
+                    }
+                }
+                continue;
+            }
 
             // Build team spawn env if this is a team process with a workspace
             let team_env = proc.workspace_path.as_ref().map(|ws| crate::TeamSpawnEnv {

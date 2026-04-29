@@ -335,7 +335,8 @@ fn test_a2a_all_methods_comprehensive() {
     let handle = std::thread::spawn(move || {
         listener.set_nonblocking(false).unwrap();
         if let Ok((mut stream, _)) = listener.accept() {
-            use std::io::{Read, Write};
+            use std::io::Read;
+            use std::io::Write;
             let mut buf = [0u8; 4096];
             let n = stream.read(&mut buf).unwrap_or(0);
             let request = String::from_utf8_lossy(&buf[..n]).to_string();

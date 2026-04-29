@@ -1,15 +1,22 @@
-use crate::context_proxy::{TeamRoleTarget, load_team_runtime_config};
-use crate::team_timeline::{
-    agent_response_event, delegation_completed_event, delegation_started_event, persist_events,
-    task_status_event, task_submitted_event,
-};
+use crate::context_proxy::TeamRoleTarget;
+use crate::context_proxy::load_team_runtime_config;
+use crate::team_timeline::agent_response_event;
+use crate::team_timeline::delegation_completed_event;
+use crate::team_timeline::delegation_started_event;
+use crate::team_timeline::persist_events;
+use crate::team_timeline::task_status_event;
+use crate::team_timeline::task_submitted_event;
 use a2a_rs::proxy::A2aProxy;
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectionTo;
+use sacp::UntypedMessage;
 use sacp::mcp_server::McpConnectionTo;
-use sacp::{Client, Conductor, ConnectionTo, UntypedMessage};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 use uuid::Uuid;
 
 pub const A2A_MAX_RETRY: u32 = 3;

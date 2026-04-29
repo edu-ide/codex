@@ -1,13 +1,16 @@
 //! MCP Manager for ilhae-proxy.
 //! Manages multiple MCP server connections (stdio, SSE) and aggregates their tools.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::process::{Child, Command};
+use tokio::process::Child;
+use tokio::process::Command;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::error;
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpPreset {

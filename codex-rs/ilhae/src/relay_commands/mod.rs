@@ -7,8 +7,10 @@ pub mod sessions;
 pub mod settings;
 pub mod system;
 
-use crate::relay_server::{RelayCommandWithClient, RelayEvent};
-use tracing::{info, warn};
+use crate::relay_server::RelayCommandWithClient;
+use crate::relay_server::RelayEvent;
+use tracing::info;
+use tracing::warn;
 
 pub async fn dispatch(ctx: &crate::SharedState, relay_cmd: RelayCommandWithClient) {
     let cmd = &relay_cmd.cmd;

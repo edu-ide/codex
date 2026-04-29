@@ -21,7 +21,8 @@
 use super::common::proxy_harness::ProxyProcess;
 use super::common::team_helpers::*;
 use super::common::test_gate::require_team_headless_e2e;
-use serde_json::{Value, json};
+use serde_json::Value;
+use serde_json::json;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;

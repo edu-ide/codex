@@ -177,6 +177,79 @@ impl App {
         .await;
     }
 
+    pub(super) async fn set_ilhae_local_server_mode(&mut self, enabled: Option<bool>) {
+        let is_disabling = match enabled {
+            Some(false) => true,
+            Some(true) => false,
+            None => {
+                let (_, profile) = codex_ilhae::config::get_ilhae_profile(None);
+                profile
+                    .map(|p| p.agent.native_runtime_enabled)
+                    .unwrap_or(false)
+            }
+        };
+        // Perform the actual server start/stop before updating the profile
+        if let Some((profile_id, config)) = codex_ilhae::config::get_native_runtime_config(None) {
+            if is_disabling {
+                let health_url = config.health_url.clone();
+                let result =
+                    codex_ilhae::stop_native_runtime_server_for_config(&profile_id, &config).await;
+                if result.is_ok() {
+                    let still_alive =
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(3),
+                            codex_ilhae::native_runtime_healthcheck(&health_url),
+                        )
+                        .await;
+                    match still_alive {
+                        Ok(false) | Err(_) => {
+                            // timeout = server likely gone
+                        }
+                        Ok(true) => {
+                            self.chat_widget
+                                .add_error_message(
+                                    "⚠ Local server disabled in config but still running. Restart Codex to fully stop."
+                                        .to_string()
+                                );
+                        }
+                    }
+                } else {
+                    self.chat_widget
+                        .add_error_message(
+                            format!("⚠ Failed to stop local server: {}", result.unwrap_err())
+                        );
+                }
+            } else {
+                let result = codex_ilhae::spawn_native_runtime_server(&config);
+                match result {
+                    Ok(_) => {
+                        // Verify the server actually started
+                        let health_url = config.health_url.clone();
+                        let startup_secs = config.startup_timeout_secs;
+                        let mut last = std::time::Instant::now();
+                        let timeout = std::time::Duration::from_secs(startup_secs.max(5));
+                        while last.elapsed() < timeout {
+                            if codex_ilhae::native_runtime_healthcheck(&health_url).await {
+                                break;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        }
+                    }
+                    Err(e) => {
+                        self.chat_widget
+                            .add_error_message(format!("❌ Failed to start local server: {e}"));
+                    }
+                }
+            }
+        }
+        self.mutate_native_ilhae_active_profile("local-server", move |profile| {
+            profile.agent.native_runtime_enabled =
+                enabled.unwrap_or(!profile.agent.native_runtime_enabled);
+            Ok(())
+        })
+        .await;
+    }
+
     pub(super) async fn flush_ilhae_runtime_events(&mut self, app_server: &mut AppServerSession) {
         let Some(runtime) = native_runtime_context() else {
             return;

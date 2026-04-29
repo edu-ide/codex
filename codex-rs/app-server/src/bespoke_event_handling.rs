@@ -104,6 +104,7 @@ use codex_app_server_protocol::TurnPlanUpdatedNotification;
 use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::WarningNotification;
+use codex_app_server_protocol::WebSearchAction;
 use codex_app_server_protocol::build_command_execution_end_item;
 use codex_app_server_protocol::build_file_change_approval_request_item;
 use codex_app_server_protocol::build_file_change_begin_item;
@@ -1093,6 +1094,34 @@ pub(crate) async fn apply_bespoke_event_handling(
                 event_turn_id.clone(),
             )
             .await;
+            outgoing
+                .send_server_notification(ServerNotification::ItemCompleted(notification))
+                .await;
+        }
+        EventMsg::WebSearchBegin(begin_event) => {
+            let notification = ItemStartedNotification {
+                thread_id: conversation_id.to_string(),
+                turn_id: event_turn_id.clone(),
+                item: ThreadItem::WebSearch {
+                    id: begin_event.call_id,
+                    query: begin_event.query,
+                    action: None,
+                },
+            };
+            outgoing
+                .send_server_notification(ServerNotification::ItemStarted(notification))
+                .await;
+        }
+        EventMsg::WebSearchEnd(end_event) => {
+            let notification = ItemCompletedNotification {
+                thread_id: conversation_id.to_string(),
+                turn_id: event_turn_id.clone(),
+                item: ThreadItem::WebSearch {
+                    id: end_event.call_id,
+                    query: end_event.query,
+                    action: Some(WebSearchAction::from(end_event.action)),
+                },
+            };
             outgoing
                 .send_server_notification(ServerNotification::ItemCompleted(notification))
                 .await;

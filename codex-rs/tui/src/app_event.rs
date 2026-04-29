@@ -429,6 +429,11 @@ pub(crate) enum AppEvent {
         enabled: Option<bool>,
     },
 
+    /// Toggle or explicitly set local server mode in the native embedded runtime.
+    SetIlhaeLocalServerMode {
+        enabled: Option<bool>,
+    },
+
     /// Update the active collaboration mask in the running app and widget.
     UpdateCollaborationMode(CollaborationModeMask),
 

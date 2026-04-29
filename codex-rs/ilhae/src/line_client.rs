@@ -3,7 +3,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use crate::approval_manager::{ApprovalEvent, ApprovalManager};
+use crate::approval_manager::ApprovalEvent;
+use crate::approval_manager::ApprovalManager;
 use crate::relay_server::RelayEvent;
 use crate::settings_store::GenericChannelSettings;
 

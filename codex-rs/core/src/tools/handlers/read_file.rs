@@ -1,12 +1,17 @@
 use async_trait::async_trait;
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncBufReadExt;
+use tokio::io::BufReader;
 
 use crate::function_tool::FunctionCallError;
-use crate::tools::context::{FunctionToolOutput, ToolInvocation, ToolPayload};
-use crate::tools::registry::{ToolHandler, ToolKind};
+use crate::tools::context::FunctionToolOutput;
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolHandler;
+use crate::tools::registry::ToolKind;
 
 pub struct ReadFileHandler;
 

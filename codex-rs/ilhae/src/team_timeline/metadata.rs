@@ -1,4 +1,5 @@
-use crate::session_store::{SessionInfo, SessionMessage};
+use crate::session_store::SessionInfo;
+use crate::session_store::SessionMessage;
 
 use super::events::TeamTimelineKind;
 

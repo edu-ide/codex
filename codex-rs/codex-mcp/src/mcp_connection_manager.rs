@@ -1569,11 +1569,11 @@ async fn start_server_task(
     let mut caps = ClientCapabilities::default();
     caps.elicitation = elicitation;
 
-    let info = Implementation::new("codex-mcp-client", env!("CARGO_PKG_VERSION"))
-        .with_title("Codex");
+    let info =
+        Implementation::new("codex-mcp-client", env!("CARGO_PKG_VERSION")).with_title("Codex");
 
-    let params = InitializeRequestParams::new(caps, info)
-        .with_protocol_version(ProtocolVersion::default());
+    let params =
+        InitializeRequestParams::new(caps, info).with_protocol_version(ProtocolVersion::default());
 
     let send_elicitation = elicitation_requests.make_sender(server_name.clone(), tx_event);
 

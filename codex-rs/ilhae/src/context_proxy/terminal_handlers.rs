@@ -1,17 +1,25 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agent_client_protocol_schema::{
-    CreateTerminalRequest, CreateTerminalResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
-    TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse,
-};
-use sacp::{Agent, Conductor, ConnectionTo, Responder};
+use agent_client_protocol_schema::CreateTerminalRequest;
+use agent_client_protocol_schema::CreateTerminalResponse;
+use agent_client_protocol_schema::ReleaseTerminalRequest;
+use agent_client_protocol_schema::ReleaseTerminalResponse;
+use agent_client_protocol_schema::TerminalOutputRequest;
+use agent_client_protocol_schema::TerminalOutputResponse;
+use agent_client_protocol_schema::WaitForTerminalExitRequest;
+use agent_client_protocol_schema::WaitForTerminalExitResponse;
+use sacp::Agent;
+use sacp::Conductor;
+use sacp::ConnectionTo;
+use sacp::Responder;
 use serde_json::json;
 use tokio::io::AsyncReadExt;
 use tokio::process::Child;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use crate::SharedState;
 

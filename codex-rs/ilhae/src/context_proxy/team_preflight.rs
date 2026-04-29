@@ -2,20 +2,32 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2a_acp_adapter::{AcpEventMapper, AcpMappedEvent, a2a_metadata_to_acp_tool_call};
+use a2a_acp_adapter::AcpEventMapper;
+use a2a_acp_adapter::AcpMappedEvent;
+use a2a_acp_adapter::a2a_metadata_to_acp_tool_call;
+use a2a_rs::A2aProxy;
+use a2a_rs::StreamEvent;
 use a2a_rs::proxy::SessionContext;
-use a2a_rs::{A2aProxy, StreamEvent};
-use agent_client_protocol_schema::{
-    ContentBlock, Meta, PromptRequest, PromptResponse, StopReason, TextContent,
-};
-use sacp::{Client, Conductor, ConnectionTo, UntypedMessage};
+use agent_client_protocol_schema::ContentBlock;
+use agent_client_protocol_schema::Meta;
+use agent_client_protocol_schema::PromptRequest;
+use agent_client_protocol_schema::PromptResponse;
+use agent_client_protocol_schema::StopReason;
+use agent_client_protocol_schema::TextContent;
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectionTo;
+use sacp::UntypedMessage;
 use serde_json::json;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::SharedState;
 use crate::agent_router::extract_mention;
-use crate::context_proxy::{load_team_runtime_config, normalize_team_role, prompt_blocks_to_text};
+use crate::context_proxy::load_team_runtime_config;
+use crate::context_proxy::normalize_team_role;
+use crate::context_proxy::prompt_blocks_to_text;
 
 use super::execution_mode::ExecutionMode;
 

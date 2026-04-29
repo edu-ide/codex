@@ -5,7 +5,10 @@
 //! This module only contains ilhae-specific Desktop UI forwarding.
 
 use futures::StreamExt;
-use sacp::{Client, Conductor, ConnectionTo, UntypedMessage};
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectionTo;
+use sacp::UntypedMessage;
 use tracing::info;
 use uuid::Uuid;
 

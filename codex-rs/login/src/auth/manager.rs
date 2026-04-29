@@ -1125,6 +1125,15 @@ impl UnauthorizedRecovery {
             )));
         }
 
+        // Skip recovery for OSS providers (sglang, llama-server) that don't need ChatGPT auth
+        if let Some(ref auth) = self.manager.auth_cached() {
+            if !auth.is_chatgpt_auth() {
+                return Ok(UnauthorizedRecoveryStepResult {
+                    auth_state_changed: None,
+                });
+            }
+        }
+
         match self.step {
             UnauthorizedRecoveryStep::Reload => {
                 match self

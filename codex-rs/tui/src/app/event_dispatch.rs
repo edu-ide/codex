@@ -608,6 +608,9 @@ impl App {
             AppEvent::SetIlhaeImproveMode { enabled } => {
                 self.set_ilhae_improve_mode(enabled).await;
             }
+            AppEvent::SetIlhaeLocalServerMode { enabled } => {
+                self.set_ilhae_local_server_mode(enabled).await;
+            }
             AppEvent::UpdateCollaborationMode(mask) => {
                 self.chat_widget.set_collaboration_mask(mask);
             }

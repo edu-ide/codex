@@ -225,7 +225,8 @@ async fn test_artifact_dir_injection_e2e() {
 #[tokio::test]
 async fn test_real_agent_versioning_e2e() {
     use a2a_rs::event::EventBus;
-    use a2a_rs::executor::{AgentExecutor, RequestContext};
+    use a2a_rs::executor::AgentExecutor;
+    use a2a_rs::executor::RequestContext;
     use a2a_rs::types::*;
     use ilhae_proxy::a2a_persistence::ForwardingExecutor;
 

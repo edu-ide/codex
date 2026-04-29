@@ -4,20 +4,34 @@
 //! browser tool detection, and other shared utilities.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::types::{IlhaeEngineStateNotification, NOTIF_ENGINE_STATE};
-use agent_client_protocol_schema::{
-    InitializeRequest, NewSessionRequest, NewSessionResponse, ProtocolVersion, SessionNotification,
-    SessionUpdate, ToolCall as AcpToolCall, ToolCallUpdate,
-};
+use crate::types::IlhaeEngineStateNotification;
+use crate::types::NOTIF_ENGINE_STATE;
+use agent_client_protocol_schema::InitializeRequest;
+use agent_client_protocol_schema::NewSessionRequest;
+use agent_client_protocol_schema::NewSessionResponse;
+use agent_client_protocol_schema::ProtocolVersion;
+use agent_client_protocol_schema::SessionNotification;
+use agent_client_protocol_schema::SessionUpdate;
+use agent_client_protocol_schema::ToolCall as AcpToolCall;
+use agent_client_protocol_schema::ToolCallUpdate;
 use base64::Engine;
-use sacp::{Agent, Client, Conductor, ConnectionTo, UntypedMessage};
+use sacp::Agent;
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectionTo;
+use sacp::UntypedMessage;
 use serde_json::json;
 use tokio::sync::RwLock;
-use tokio::time::{Duration, Instant, sleep};
-use tracing::{debug, info, warn};
+use tokio::time::Duration;
+use tokio::time::Instant;
+use tokio::time::sleep;
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 use uuid::Uuid;
 
 const CX_CACHE_MAX_ENTRIES: usize = 16;
@@ -535,11 +549,13 @@ pub async fn send_new_session_with_bootstrap(
 
 // ─── Config builders (re-exported from config_builder.rs) ────────────────
 
-pub use crate::config_builder::{
-    apply_codex_profile_to_config, build_codex_config_options, build_dynamic_instructions,
-    build_gemini_config_options, enrich_response_with_config_options, read_codex_runtime_options,
-    write_codex_runtime_option,
-};
+pub use crate::config_builder::apply_codex_profile_to_config;
+pub use crate::config_builder::build_codex_config_options;
+pub use crate::config_builder::build_dynamic_instructions;
+pub use crate::config_builder::build_gemini_config_options;
+pub use crate::config_builder::enrich_response_with_config_options;
+pub use crate::config_builder::read_codex_runtime_options;
+pub use crate::config_builder::write_codex_runtime_option;
 
 // ─── Browser Tool Detection ─────────────────────────────────────────────
 

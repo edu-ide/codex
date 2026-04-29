@@ -5,12 +5,17 @@
 //! and `async-trait` for the async channel handler trait.
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::sync::Arc;
-use strum_macros::{Display, EnumIter, EnumString, IntoStaticStr};
+use strum_macros::Display;
+use strum_macros::EnumIter;
+use strum_macros::EnumString;
+use strum_macros::IntoStaticStr;
 use tokio::sync::mpsc;
 
-use crate::relay_server::{RelayCommandWithClient, RelayEvent};
+use crate::relay_server::RelayCommandWithClient;
+use crate::relay_server::RelayEvent;
 
 // ─── Channel ID ──────────────────────────────────────────────────────────────
 

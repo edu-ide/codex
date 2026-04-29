@@ -15,7 +15,8 @@ use super::common::team_helpers::*;
 #[tokio::test]
 async fn test_a2a_acp_tool_call_e2e() {
     use a2a_rs::event::EventBus;
-    use a2a_rs::executor::{AgentExecutor, RequestContext};
+    use a2a_rs::executor::AgentExecutor;
+    use a2a_rs::executor::RequestContext;
     use a2a_rs::types::*;
     use ilhae_proxy::a2a_persistence::ForwardingExecutor;
 

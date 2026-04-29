@@ -114,7 +114,8 @@ async fn test_full_delegation_pipeline() {
     use a2a_rs::client::StreamEvent;
     use a2a_rs::proxy::extract_text_from_stream_event;
     use ilhae_proxy::CxCache;
-    use ilhae_proxy::a2a_persistence::{ForwardingExecutor, build_routing_table};
+    use ilhae_proxy::a2a_persistence::ForwardingExecutor;
+    use ilhae_proxy::a2a_persistence::build_routing_table;
     use std::sync::Arc;
 
     let dir = ilhae_dir();
@@ -463,7 +464,8 @@ async fn test_full_conversation_e2e() {
     }
 
     use a2a_rs::client::StreamEvent;
-    use a2a_rs::proxy::{extract_text_from_stream_event, is_terminal_state};
+    use a2a_rs::proxy::extract_text_from_stream_event;
+    use a2a_rs::proxy::is_terminal_state;
 
     let dir = ilhae_dir();
     let team = load_team_runtime_config(&dir).expect("team.json required");
@@ -831,7 +833,8 @@ async fn test_a2a_proxy_tri_mode_full_mesh() {
     }
 
     use a2a_rs::client::StreamEvent;
-    use a2a_rs::proxy::{extract_text_from_stream_event, is_terminal_state};
+    use a2a_rs::proxy::extract_text_from_stream_event;
+    use a2a_rs::proxy::is_terminal_state;
 
     let dir = ilhae_dir();
     let team = load_team_runtime_config(&dir).expect("team.json required");

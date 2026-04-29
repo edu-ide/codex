@@ -1,5 +1,7 @@
 use serenity::async_trait;
-use serenity::builder::{CreateActionRow, CreateButton, CreateMessage};
+use serenity::builder::CreateActionRow;
+use serenity::builder::CreateButton;
+use serenity::builder::CreateMessage;
 use serenity::model::application::ButtonStyle;
 use serenity::model::application::Interaction;
 use serenity::model::channel::Message;
@@ -7,11 +9,13 @@ use serenity::model::gateway::Ready;
 use serenity::prelude::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::error;
+use tracing::info;
 
 use crate::approval_manager::ApprovalManager;
 use crate::relay_server::RelayEvent;
-use crate::settings_store::{DiscordSettings, SettingsStore};
+use crate::settings_store::DiscordSettings;
+use crate::settings_store::SettingsStore;
 
 pub struct Handler {
     pub settings_store: Arc<SettingsStore>,

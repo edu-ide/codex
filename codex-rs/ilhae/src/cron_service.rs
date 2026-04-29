@@ -1,6 +1,7 @@
 use brain_rs::schedule::ScheduleStore;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::sync::Arc;
 
 /// Proxy wrapper for Codex's proactive scheduling.

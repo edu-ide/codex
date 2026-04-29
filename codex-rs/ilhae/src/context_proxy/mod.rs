@@ -8,19 +8,32 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use agent_client_protocol_schema::{
-    CancelNotification, ContentBlock, PromptRequest, SessionId, SetSessionModeRequest,
-    SetSessionModeResponse, StopReason, TextContent,
-};
-use sacp::{Agent, Client, Conductor, ConnectTo, ConnectionTo, Proxy, Responder};
+use agent_client_protocol_schema::CancelNotification;
+use agent_client_protocol_schema::ContentBlock;
+use agent_client_protocol_schema::PromptRequest;
+use agent_client_protocol_schema::SessionId;
+use agent_client_protocol_schema::SetSessionModeRequest;
+use agent_client_protocol_schema::SetSessionModeResponse;
+use agent_client_protocol_schema::StopReason;
+use agent_client_protocol_schema::TextContent;
+use sacp::Agent;
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectTo;
+use sacp::ConnectionTo;
+use sacp::Proxy;
+use sacp::Responder;
 use tracing::debug;
 
+use crate::IlhaeAppTimelineSubscribeRequest;
+use crate::IlhaeAppTimelineSubscribeResponse;
+use crate::IlhaeAppTurnInterruptRequest;
+use crate::IlhaeAppTurnInterruptResponse;
+use crate::IlhaeAppTurnStartRequest;
+use crate::IlhaeAppTurnStartResponse;
+use crate::SetSessionConfigOptionRequest;
+use crate::SetSessionConfigOptionResponse;
 use crate::approval_manager::ApprovalEvent;
-use crate::{
-    IlhaeAppTimelineSubscribeRequest, IlhaeAppTimelineSubscribeResponse,
-    IlhaeAppTurnInterruptRequest, IlhaeAppTurnInterruptResponse, IlhaeAppTurnStartRequest,
-    IlhaeAppTurnStartResponse, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
-};
 
 pub mod autonomy;
 pub mod capabilities;

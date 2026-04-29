@@ -83,6 +83,7 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::WebSearchAction;
 use codex_protocol::protocol::AgentMessageContentDeltaEvent;
 use codex_protocol::protocol::AgentReasoningSectionBreakEvent;
 use codex_protocol::protocol::AskForApproval;
@@ -94,6 +95,8 @@ use codex_protocol::protocol::ReasoningContentDeltaEvent;
 use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_protocol::protocol::WarningEvent;
+use codex_protocol::protocol::WebSearchBeginEvent;
+use codex_protocol::protocol::WebSearchEndEvent;
 use codex_protocol::user_input::UserInput;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ToolName;
@@ -2034,6 +2037,19 @@ async fn try_run_sampling_request(
                     };
                 if let Some(tool_future) = output_result.tool_future {
                     in_flight.push_back(tool_future);
+                }
+                // Emit WebSearchEnd for function-call-based web_search
+                if let Some(call_id) = output_result.web_search_call_id {
+                    let query = output_result.web_search_query.clone().unwrap_or_default();
+                    sess.send_event(
+                        &turn_context,
+                        EventMsg::WebSearchEnd(WebSearchEndEvent {
+                            call_id,
+                            query,
+                            action: WebSearchAction::Other,
+                        }),
+                    )
+                    .await;
                 }
                 if let Some(agent_message) = output_result.last_agent_message {
                     last_agent_message = Some(agent_message);

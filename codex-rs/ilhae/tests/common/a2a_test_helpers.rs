@@ -25,7 +25,8 @@ pub async fn start_test_proxy(
     store: std::sync::Arc<ilhae_proxy::session_store::SessionStore>,
 ) -> (String, tokio::task::JoinHandle<()>) {
     use ilhae_proxy::CxCache;
-    use ilhae_proxy::a2a_persistence::{ForwardingExecutor, PersistenceScheduleStore};
+    use ilhae_proxy::a2a_persistence::ForwardingExecutor;
+    use ilhae_proxy::a2a_persistence::PersistenceScheduleStore;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

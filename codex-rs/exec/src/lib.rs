@@ -131,12 +131,14 @@ pub use exec_events::WebSearchItem;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::IsTerminal;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 use supports_color::Stream;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -952,14 +954,8 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         }
     });
 
-    let autonomy_settings = autonomy_settings.filter(|_| {
-        matches!(
-            &initial_operation,
-            InitialOperation::UserTurn {
-                ..
-            }
-        )
-    });
+    let autonomy_settings = autonomy_settings
+        .filter(|_| matches!(&initial_operation, InitialOperation::UserTurn { .. }));
     let turn_cwd = default_cwd.clone();
     let mut task_id = match initial_operation {
         InitialOperation::UserTurn {
@@ -1124,8 +1120,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                     && matches!(
                         payload.turn.status,
                         codex_app_server_protocol::TurnStatus::Completed
-                    )
-                {
+                    ) {
                     match decide_exec_autonomy_followup(
                         settings,
                         autonomy_started_at.elapsed(),
@@ -1173,11 +1168,13 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                                 request_id: request_ids.next(),
                                 params: TurnStartParams {
                                     thread_id: primary_thread_id_for_requests.clone(),
-                                    input: vec![UserInput::Text {
-                                        text: followup_prompt,
-                                        text_elements: Vec::new(),
-                                    }
-                                    .into()],
+                                    input: vec![
+                                        UserInput::Text {
+                                            text: followup_prompt,
+                                            text_elements: Vec::new(),
+                                        }
+                                        .into(),
+                                    ],
                                     responsesapi_client_metadata: None,
                                     environments: None,
                                     cwd: Some(turn_cwd.clone()),
@@ -1457,18 +1454,14 @@ fn should_process_notification(
                 && notification
                     .turn_id
                     .as_deref()
-                    .is_none_or(|candidate| {
-                        candidate == turn_id || process_same_thread_followups
-                    })
+                    .is_none_or(|candidate| candidate == turn_id || process_same_thread_followups)
         }
         ServerNotification::HookStarted(notification) => {
             notification.thread_id == thread_id
                 && notification
                     .turn_id
                     .as_deref()
-                    .is_none_or(|candidate| {
-                        candidate == turn_id || process_same_thread_followups
-                    })
+                    .is_none_or(|candidate| candidate == turn_id || process_same_thread_followups)
         }
         ServerNotification::ItemCompleted(notification) => {
             notification.thread_id == thread_id
@@ -1573,10 +1566,16 @@ fn turn_items_need_backfill(items: &[AppServerThreadItem]) -> bool {
                 )
             }
             AppServerThreadItem::FileChange { status, .. } => {
-                matches!(status, codex_app_server_protocol::PatchApplyStatus::InProgress)
+                matches!(
+                    status,
+                    codex_app_server_protocol::PatchApplyStatus::InProgress
+                )
             }
             AppServerThreadItem::McpToolCall { status, .. } => {
-                matches!(status, codex_app_server_protocol::McpToolCallStatus::InProgress)
+                matches!(
+                    status,
+                    codex_app_server_protocol::McpToolCallStatus::InProgress
+                )
             }
             AppServerThreadItem::DynamicToolCall { status, .. } => {
                 matches!(

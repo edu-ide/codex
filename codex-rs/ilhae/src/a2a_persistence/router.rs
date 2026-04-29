@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 use serde_json::Value;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use super::forwarding_executor::DelegationResponseCache;
 use crate::CxCache;

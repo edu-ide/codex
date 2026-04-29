@@ -1,5 +1,6 @@
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 pub const PID_FILE_NAME: &str = "proxy.pid";
 pub const CHILDREN_PID_FILE_NAME: &str = "children.pids";

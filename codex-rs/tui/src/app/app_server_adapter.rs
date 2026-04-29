@@ -88,10 +88,6 @@ use codex_protocol::protocol::LoopLifecycleProgressEvent;
 #[cfg(test)]
 use codex_protocol::protocol::PlanDeltaEvent;
 #[cfg(test)]
-use codex_protocol::protocol::LoopLifecycleCompletedEvent;
-#[cfg(test)]
-use codex_protocol::protocol::LoopLifecycleProgressEvent;
-#[cfg(test)]
 use codex_protocol::protocol::RealtimeConversationClosedEvent;
 #[cfg(test)]
 use codex_protocol::protocol::RealtimeConversationRealtimeEvent;

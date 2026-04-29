@@ -5,8 +5,10 @@
 
 use super::common::team_helpers::*;
 use super::common::test_gate::require_team_local_a2a_spawn;
-use a2a_rs::event::{EventBus, ExecutionEvent};
-use a2a_rs::executor::{AgentExecutor, RequestContext};
+use a2a_rs::event::EventBus;
+use a2a_rs::event::ExecutionEvent;
+use a2a_rs::executor::AgentExecutor;
+use a2a_rs::executor::RequestContext;
 use a2a_rs::types::*;
 
 /// Send prompt through ForwardingExecutor (same path as production). Returns (text, events).

@@ -2,16 +2,20 @@
 
 use crate::helpers::is_ilhae_native_engine_name;
 use crate::helpers::spawn_local_a2a_server;
-use crate::ports::{
-    AgentSpawner, AgentTransportFactory, AgentTransportPreference, AgentTransportRequest,
-    BuiltAgentTransport, SpawnedAgent, TeamSpawnEnv,
-};
+use crate::ports::AgentSpawner;
+use crate::ports::AgentTransportFactory;
+use crate::ports::AgentTransportPreference;
+use crate::ports::AgentTransportRequest;
+use crate::ports::BuiltAgentTransport;
+use crate::ports::SpawnedAgent;
+use crate::ports::TeamSpawnEnv;
 use codex_app_server::in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 use codex_app_server_client::AppServerEvent;
 use codex_app_server_protocol::ClientRequest;
 use sacp::DynConnectTo;
 use sacp_tokio::AcpHttpAgent;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
 use tracing::info;
 use tracing::warn;
 
@@ -95,7 +99,8 @@ impl AgentTransportFactory for AcpTransportFactory {
                 });
             });
 
-            use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+            use tokio_util::compat::TokioAsyncReadCompatExt;
+            use tokio_util::compat::TokioAsyncWriteCompatExt;
             let compat_write = write_a.compat_write();
             let compat_read = read_a.compat();
             let agent = sacp::ByteStreams::new(compat_write, compat_read);

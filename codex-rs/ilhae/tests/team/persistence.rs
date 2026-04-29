@@ -16,7 +16,8 @@ async fn test_parallel_execution_with_sessions() {
     }
 
     use ilhae_proxy::CxCache;
-    use ilhae_proxy::a2a_persistence::{ForwardingExecutor, build_routing_table};
+    use ilhae_proxy::a2a_persistence::ForwardingExecutor;
+    use ilhae_proxy::a2a_persistence::build_routing_table;
     use std::sync::Arc;
 
     let dir = ilhae_dir();
@@ -138,7 +139,8 @@ async fn test_claim_indirect_delegation() {
     }
 
     use ilhae_proxy::CxCache;
-    use ilhae_proxy::a2a_persistence::{ForwardingExecutor, build_routing_table};
+    use ilhae_proxy::a2a_persistence::ForwardingExecutor;
+    use ilhae_proxy::a2a_persistence::build_routing_table;
     use std::sync::Arc;
 
     let dir = ilhae_dir();
@@ -287,9 +289,11 @@ async fn test_routing_is_main_and_no_duplication() {
     }
 
     use a2a_rs::client::StreamEvent;
-    use a2a_rs::proxy::{extract_text_from_parts, extract_text_from_stream_event};
+    use a2a_rs::proxy::extract_text_from_parts;
+    use a2a_rs::proxy::extract_text_from_stream_event;
     use ilhae_proxy::CxCache;
-    use ilhae_proxy::a2a_persistence::{ForwardingExecutor, build_routing_table};
+    use ilhae_proxy::a2a_persistence::ForwardingExecutor;
+    use ilhae_proxy::a2a_persistence::build_routing_table;
     use std::sync::Arc;
 
     let dir = ilhae_dir();
@@ -550,7 +554,8 @@ async fn test_session_history_persistence() {
     }
 
     use ilhae_proxy::CxCache;
-    use ilhae_proxy::a2a_persistence::{ForwardingExecutor, build_routing_table};
+    use ilhae_proxy::a2a_persistence::ForwardingExecutor;
+    use ilhae_proxy::a2a_persistence::build_routing_table;
     use std::sync::Arc;
 
     let dir = ilhae_dir();

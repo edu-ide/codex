@@ -6,12 +6,19 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use sacp::{Client, Conductor, ConnectTo, ConnectionTo, Proxy, Responder};
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectTo;
+use sacp::ConnectionTo;
+use sacp::Proxy;
+use sacp::Responder;
 use serde_json::json;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 use crate::notification_store;
-use crate::relay_server::{RelayEvent, broadcast_event};
+use crate::relay_server::RelayEvent;
+use crate::relay_server::broadcast_event;
 use brain_knowledge_rs::memory_store;
 
 // Re-use stores from crate root
@@ -19,35 +26,101 @@ use brain_knowledge_rs::memory_store;
 // ─── RPC type imports from main.rs ──────────────────────────────────────
 // These will remain defined in main.rs (pub) for now and be
 // gradually moved here in future phases.
-use crate::{
-    A2ACardRequest, A2ACardResponse, AgentTasksDto, BUILTIN_PLUGINS, ClaimSharedTaskRequest,
-    ClaimSharedTaskResponse, CreateSharedTaskRequest, CreateSharedTaskResponse, CreateTaskRequest,
-    CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetA2ATimelineRequest,
-    GetA2ATimelineResponse, GetArtifactVersionRequest, GetArtifactVersionResponse,
-    GetConfigOptionsRequest, GetConfigOptionsResponse, GetEngineCapabilitiesRequest,
-    GetEngineCapabilitiesResponse, IlhaeAppArtifactGetRequest, IlhaeAppArtifactGetResponse,
-    IlhaeAppArtifactListRequest, IlhaeAppArtifactListResponse, IlhaeAppArtifactVersionsRequest,
-    IlhaeAppArtifactVersionsResponse, IlhaeAppWorkflowGetRequest, IlhaeAppWorkflowGetResponse,
-    IlhaeAppWorkflowListRequest, IlhaeAppWorkflowListResponse, ListA2ATasksRequest,
-    ListA2ATasksResponse, ListArtifactVersionsRequest, ListArtifactVersionsResponse,
-    ListPluginsRequest, ListPluginsResponse, ListProjectsRequest, ListProjectsResponse,
-    ListSessionArtifactsRequest, ListSessionArtifactsResponse, ListSharedTasksRequest,
-    ListSharedTasksResponse, ListTasksRequest, ListTasksResponse, ListWorkflowArtifactsRequest,
-    ListWorkflowArtifactsResponse, MemoryForgetRequest, MemoryForgetResponse, MemoryListRequest,
-    MemoryListResponse, MemoryPinRequest, MemoryPinResponse, MemorySearchRequest,
-    MemorySearchResponse, MemoryStatsRequest, MemoryStatsResponse, MemoryStoreRequest,
-    MemoryStoreResponse, NotificationListRequest, NotificationListResponse,
-    NotificationMarkAllReadRequest, NotificationMarkAllReadResponse, NotificationMarkReadRequest,
-    NotificationMarkReadResponse, NotificationStatsRequest, NotificationStatsResponse, PluginInfo,
-    ReadContextRequest, ReadContextResponse, ReadMcpJsonRequest, ReadMcpJsonResponse,
-    ReadSettingsRequest, ReadSettingsResponse, ReadWorkflowArtifactRequest,
-    ReadWorkflowArtifactResponse, SharedTaskDto, TeamListRequest, TeamListResponse,
-    TeamPresetsRequest, TeamPresetsResponse, TeamSaveRequest, TeamSaveResponse,
-    TogglePluginRequest, TogglePluginResponse, UpdateTaskRequest, UpdateTaskResponse,
-    WorkflowArtifactDto, WriteContextRequest, WriteContextResponse, WriteMcpJsonRequest,
-    WriteMcpJsonResponse, WriteSettingRequest, WriteSettingResponse, builtin_plugin_list,
-    mcp_preset_description,
-};
+use crate::A2ACardRequest;
+use crate::A2ACardResponse;
+use crate::AgentTasksDto;
+use crate::BUILTIN_PLUGINS;
+use crate::ClaimSharedTaskRequest;
+use crate::ClaimSharedTaskResponse;
+use crate::CreateSharedTaskRequest;
+use crate::CreateSharedTaskResponse;
+use crate::CreateTaskRequest;
+use crate::CreateTaskResponse;
+use crate::DeleteTaskRequest;
+use crate::DeleteTaskResponse;
+use crate::GetA2ATimelineRequest;
+use crate::GetA2ATimelineResponse;
+use crate::GetArtifactVersionRequest;
+use crate::GetArtifactVersionResponse;
+use crate::GetConfigOptionsRequest;
+use crate::GetConfigOptionsResponse;
+use crate::GetEngineCapabilitiesRequest;
+use crate::GetEngineCapabilitiesResponse;
+use crate::IlhaeAppArtifactGetRequest;
+use crate::IlhaeAppArtifactGetResponse;
+use crate::IlhaeAppArtifactListRequest;
+use crate::IlhaeAppArtifactListResponse;
+use crate::IlhaeAppArtifactVersionsRequest;
+use crate::IlhaeAppArtifactVersionsResponse;
+use crate::IlhaeAppWorkflowGetRequest;
+use crate::IlhaeAppWorkflowGetResponse;
+use crate::IlhaeAppWorkflowListRequest;
+use crate::IlhaeAppWorkflowListResponse;
+use crate::ListA2ATasksRequest;
+use crate::ListA2ATasksResponse;
+use crate::ListArtifactVersionsRequest;
+use crate::ListArtifactVersionsResponse;
+use crate::ListPluginsRequest;
+use crate::ListPluginsResponse;
+use crate::ListProjectsRequest;
+use crate::ListProjectsResponse;
+use crate::ListSessionArtifactsRequest;
+use crate::ListSessionArtifactsResponse;
+use crate::ListSharedTasksRequest;
+use crate::ListSharedTasksResponse;
+use crate::ListTasksRequest;
+use crate::ListTasksResponse;
+use crate::ListWorkflowArtifactsRequest;
+use crate::ListWorkflowArtifactsResponse;
+use crate::MemoryForgetRequest;
+use crate::MemoryForgetResponse;
+use crate::MemoryListRequest;
+use crate::MemoryListResponse;
+use crate::MemoryPinRequest;
+use crate::MemoryPinResponse;
+use crate::MemorySearchRequest;
+use crate::MemorySearchResponse;
+use crate::MemoryStatsRequest;
+use crate::MemoryStatsResponse;
+use crate::MemoryStoreRequest;
+use crate::MemoryStoreResponse;
+use crate::NotificationListRequest;
+use crate::NotificationListResponse;
+use crate::NotificationMarkAllReadRequest;
+use crate::NotificationMarkAllReadResponse;
+use crate::NotificationMarkReadRequest;
+use crate::NotificationMarkReadResponse;
+use crate::NotificationStatsRequest;
+use crate::NotificationStatsResponse;
+use crate::PluginInfo;
+use crate::ReadContextRequest;
+use crate::ReadContextResponse;
+use crate::ReadMcpJsonRequest;
+use crate::ReadMcpJsonResponse;
+use crate::ReadSettingsRequest;
+use crate::ReadSettingsResponse;
+use crate::ReadWorkflowArtifactRequest;
+use crate::ReadWorkflowArtifactResponse;
+use crate::SharedTaskDto;
+use crate::TeamListRequest;
+use crate::TeamListResponse;
+use crate::TeamPresetsRequest;
+use crate::TeamPresetsResponse;
+use crate::TeamSaveRequest;
+use crate::TeamSaveResponse;
+use crate::TogglePluginRequest;
+use crate::TogglePluginResponse;
+use crate::UpdateTaskRequest;
+use crate::UpdateTaskResponse;
+use crate::WorkflowArtifactDto;
+use crate::WriteContextRequest;
+use crate::WriteContextResponse;
+use crate::WriteMcpJsonRequest;
+use crate::WriteMcpJsonResponse;
+use crate::WriteSettingRequest;
+use crate::WriteSettingResponse;
+use crate::builtin_plugin_list;
+use crate::mcp_preset_description;
 
 // ─── Team presets ────────────────────────────────────────────────────────
 

@@ -1,21 +1,31 @@
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
-use agent_client_protocol_schema::{
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome,
-};
-use sacp::{Agent, Client, Conductor, ConnectionTo, Responder, UntypedMessage};
+use agent_client_protocol_schema::RequestPermissionOutcome;
+use agent_client_protocol_schema::RequestPermissionRequest;
+use agent_client_protocol_schema::RequestPermissionResponse;
+use agent_client_protocol_schema::SelectedPermissionOutcome;
+use sacp::Agent;
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectionTo;
+use sacp::Responder;
+use sacp::UntypedMessage;
 use serde_json::json;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use crate::SharedState;
-use crate::approval_manager::{ApprovalOption, ApprovalRequest};
-use crate::context_proxy::autonomy::state::{
-    AutonomousPhase, current_autonomous_iteration, set_autonomous_phase,
-    transition_autonomous_phase,
-};
-use crate::relay_server::{self, RelayEvent};
+use crate::approval_manager::ApprovalOption;
+use crate::approval_manager::ApprovalRequest;
+use crate::context_proxy::autonomy::state::AutonomousPhase;
+use crate::context_proxy::autonomy::state::current_autonomous_iteration;
+use crate::context_proxy::autonomy::state::set_autonomous_phase;
+use crate::context_proxy::autonomy::state::transition_autonomous_phase;
+use crate::relay_server::RelayEvent;
+use crate::relay_server::{self};
 use crate::send_synthetic_tool_call;
 
 const DESKTOP_CANCEL_SENTINEL_OPTION_ID: &str = "__ilhae_cancelled_by_desktop__";

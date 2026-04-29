@@ -7,7 +7,8 @@
 //! Based on <https://github.com/obra/superpowers> (MIT License).
 
 use std::fs;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 /// (skill_dir_name, SKILL.md content)
 const SUPERPOWERS_SKILLS: &[(&str, &str)] = &[

@@ -326,10 +326,7 @@ impl CodexThread {
         let result = self
             .codex
             .session
-            .read_resource(
-                server,
-                ReadResourceRequestParams::new(uri.to_string()),
-            )
+            .read_resource(server, ReadResourceRequestParams::new(uri.to_string()))
             .await?;
 
         Ok(serde_json::to_value(result)?)
@@ -354,11 +351,7 @@ impl CodexThread {
         };
         let mut prompt_params = rmcp::model::GetPromptRequestParams::new(name.to_string());
         prompt_params.arguments = arguments;
-        let result = self
-            .codex
-            .session
-            .get_prompt(server, prompt_params)
-            .await?;
+        let result = self.codex.session.get_prompt(server, prompt_params).await?;
 
         Ok(serde_json::to_value(result)?)
     }

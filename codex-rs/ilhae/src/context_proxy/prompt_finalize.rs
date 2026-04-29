@@ -1,7 +1,12 @@
 use std::sync::Arc;
 
-use agent_client_protocol_schema::{PromptResponse, StopReason};
-use sacp::{Client, Conductor, ConnectionTo, Responder, UntypedMessage};
+use agent_client_protocol_schema::PromptResponse;
+use agent_client_protocol_schema::StopReason;
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectionTo;
+use sacp::Responder;
+use sacp::UntypedMessage;
 use serde_json::json;
 use tracing::info;
 
@@ -10,15 +15,17 @@ use brain_knowledge_rs::memory_store;
 use crate::SharedState;
 use crate::context_proxy::autonomy::runner::spawn_autonomous_loop;
 use crate::context_proxy::autonomy::should_continue_autonomous_on_stop_reason;
-use crate::context_proxy::autonomy::state::{
-    AutonomousPhase, clear_autonomous_state, current_autonomous_iteration, set_autonomous_phase,
-};
-use crate::context_proxy::{
-    emit_a2a_role_event_notifications, extract_a2a_structured_from_prompt_response,
-    extract_a2a_text_from_prompt_response, persist_team_split_messages,
-    preferred_assistant_content_from_tool_calls, should_suppress_prompt_error_after_cancel,
-    synthesize_assistant_from_a2a_structured,
-};
+use crate::context_proxy::autonomy::state::AutonomousPhase;
+use crate::context_proxy::autonomy::state::clear_autonomous_state;
+use crate::context_proxy::autonomy::state::current_autonomous_iteration;
+use crate::context_proxy::autonomy::state::set_autonomous_phase;
+use crate::context_proxy::emit_a2a_role_event_notifications;
+use crate::context_proxy::extract_a2a_structured_from_prompt_response;
+use crate::context_proxy::extract_a2a_text_from_prompt_response;
+use crate::context_proxy::persist_team_split_messages;
+use crate::context_proxy::preferred_assistant_content_from_tool_calls;
+use crate::context_proxy::should_suppress_prompt_error_after_cancel;
+use crate::context_proxy::synthesize_assistant_from_a2a_structured;
 
 pub struct PromptFinalizeInput {
     pub session_id: String,

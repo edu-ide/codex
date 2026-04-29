@@ -6,15 +6,18 @@
 //! Run: `cargo test --test proxy_integration -- --nocapture`
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
-use serde_json::{Value, json};
+use serde_json::Value;
+use serde_json::json;
 
 // ── Direct lib crate imports ─────────────────────────────────────────
 use ilhae_proxy::helpers::probe_tcp;
-use ilhae_proxy::process_supervisor::{
-    create_supervisor, get_status, register_team_processes, spawn_supervisor_loop,
-};
+use ilhae_proxy::process_supervisor::create_supervisor;
+use ilhae_proxy::process_supervisor::get_status;
+use ilhae_proxy::process_supervisor::register_team_processes;
+use ilhae_proxy::process_supervisor::spawn_supervisor_loop;
 use ilhae_proxy::settings_store::SettingsStore;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -113,7 +116,8 @@ struct ProxyProcess {
 
 impl ProxyProcess {
     fn spawn() -> Self {
-        use std::process::{Command, Stdio};
+        use std::process::Command;
+        use std::process::Stdio;
         let workspace = std::env::current_dir().expect("cwd");
         let proxy_bin = workspace.join("target/debug/ilhae-proxy");
         assert!(proxy_bin.exists(), "Build the proxy first: cargo build");
@@ -459,14 +463,22 @@ fn scenario_4_raw_input_pipeline_lib_crate() {
 
 #[tokio::test]
 async fn scenario_5_solo_e2e_mock_server() {
-    use agent_client_protocol_schema::{SessionNotification, SessionUpdate, ToolCall};
-    use axum::{
-        Json, Router,
-        extract::State,
-        response::sse::{Event, Sse},
-        routing::{get, post},
-    };
-    use sacp::{Agent, Client, ConnectTo, ConnectionTo, Proxy, UntypedMessage};
+    use agent_client_protocol_schema::SessionNotification;
+    use agent_client_protocol_schema::SessionUpdate;
+    use agent_client_protocol_schema::ToolCall;
+    use axum::Json;
+    use axum::Router;
+    use axum::extract::State;
+    use axum::response::sse::Event;
+    use axum::response::sse::Sse;
+    use axum::routing::get;
+    use axum::routing::post;
+    use sacp::Agent;
+    use sacp::Client;
+    use sacp::ConnectTo;
+    use sacp::ConnectionTo;
+    use sacp::Proxy;
+    use sacp::UntypedMessage;
     use sacp_tokio::AcpHttpAgent;
     use std::time::Duration;
     use tokio::sync::broadcast;
@@ -621,7 +633,8 @@ async fn scenario_5_solo_e2e_mock_server() {
 
 #[test]
 fn scenario_6_acp_initialization() {
-    use std::process::{Command, Stdio};
+    use std::process::Command;
+    use std::process::Stdio;
     let workspace = std::env::current_dir().expect("cwd");
     let proxy_bin = workspace.join("target/debug/ilhae-proxy");
     assert!(proxy_bin.exists(), "Build the proxy first: cargo build");

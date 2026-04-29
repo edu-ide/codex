@@ -24,6 +24,8 @@ pub enum SlashCommand {
     Dream,
     Embed,
     Improve,
+    #[strum(serialize = "local-server", serialize = "local")]
+    LocalServer,
     Tmux,
     Worktree,
     Remote,
@@ -123,6 +125,7 @@ impl SlashCommand {
             SlashCommand::Dream => "toggle background dream mode",
             SlashCommand::Embed => "toggle semantic embedding indexing",
             SlashCommand::Improve => "toggle self-improvement mode",
+            SlashCommand::LocalServer => "manage local model runtime server (on|off|start|stop)",
             SlashCommand::Tmux => "show tmux workflow guidance",
             SlashCommand::Worktree => "show git worktree workflow guidance",
             SlashCommand::Remote => "show remote-control workflow guidance",
@@ -151,6 +154,25 @@ impl SlashCommand {
         }
     }
 
+    /// User-visible guidance for command arguments.
+    pub fn args_hint(self) -> Option<&'static str> {
+        match self {
+            SlashCommand::Review => Some("diff|commit|staged|unstaged"),
+            SlashCommand::LocalServer => Some("on|off|start|stop|help"),
+            SlashCommand::Plan
+            | SlashCommand::Fast
+            | SlashCommand::Dream
+            | SlashCommand::Embed
+            | SlashCommand::Auto
+            | SlashCommand::Team
+            | SlashCommand::Kairos
+            | SlashCommand::Improve
+            | SlashCommand::Experimental => Some("on|off"),
+            SlashCommand::Mcp => Some("list|config|verbose"),
+            _ => None,
+        }
+    }
+
     /// Command string without the leading '/'. Provided for compatibility with
     /// existing code that expects a method named `command()`.
     pub fn command(self) -> &'static str {
@@ -167,6 +189,7 @@ impl SlashCommand {
                 | SlashCommand::Fast
                 | SlashCommand::Dream
                 | SlashCommand::Embed
+                | SlashCommand::LocalServer
                 | SlashCommand::Mcp
                 | SlashCommand::Side
                 | SlashCommand::Resume
@@ -201,6 +224,7 @@ impl SlashCommand {
             | SlashCommand::Dream
             | SlashCommand::Embed
             | SlashCommand::Improve
+            | SlashCommand::LocalServer
             | SlashCommand::Tmux
             | SlashCommand::Worktree
             | SlashCommand::Remote

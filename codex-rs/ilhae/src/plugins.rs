@@ -2,7 +2,8 @@
 //!
 //! Built-in plugin definitions, plugin list builder, MCP preset normalization.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
 
 // ─── Built-in plugin definitions ─────────────────────────────────────────

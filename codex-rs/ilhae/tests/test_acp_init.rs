@@ -1,5 +1,7 @@
-use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::io::Read;
+use std::io::Write;
+use std::process::Command;
+use std::process::Stdio;
 use std::time::Duration;
 
 #[test]

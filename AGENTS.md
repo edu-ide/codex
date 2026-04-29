@@ -48,6 +48,14 @@ In the codex-rs folder where the rust code lives:
     trivial; prefer new modules/files and keep `chatwidget.rs` focused on orchestration.
 - When running Rust commands (e.g. `just fix` or `cargo test`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
 
+
+## 빌드
+
+- 코드 변경 후 빌드할 때는 **항상 debug 빌드**를 사용하세요: `cargo build -p codex-cli`
+- `--release` 빌드는 LTO(fat) + codegen-units=1로 인해 10-20분 이상 소요됩니다.
+
+  release 빌드가 명시적으로 요청된 경우에만 사용하세요.
+
 Run `just fmt` (in `codex-rs` directory) automatically after you have finished making Rust code changes; do not ask for approval to run it. Additionally, run the tests:
 
 1. Run the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, run `cargo test -p codex-tui`.

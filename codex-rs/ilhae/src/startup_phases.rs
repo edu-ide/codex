@@ -5,25 +5,31 @@
 //! - `run_conductor`: ACP conductor chain + stdio/daemon run loop
 
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 use crate::a2a_persistence;
 use crate::admin_proxy;
 use crate::agent_router;
 use crate::channel_bots;
 use crate::context_proxy;
-use crate::helpers::{infer_agent_id_from_command, parse_host_port, probe_tcp};
+use crate::helpers::infer_agent_id_from_command;
+use crate::helpers::parse_host_port;
+use crate::helpers::probe_tcp;
 use crate::persistence_proxy;
 use crate::process_supervisor;
 use crate::relay_commands;
 use crate::relay_proxy;
 use crate::relay_server;
 use crate::shared_state::SharedState;
-use crate::startup::{build_agent_transport, resolve_team_main_target};
+use crate::startup::build_agent_transport;
+use crate::startup::resolve_team_main_target;
 use crate::tools_proxy;
 
+use sacp_conductor::ConductorImpl;
+use sacp_conductor::McpBridgeMode;
+use sacp_conductor::ProxiesAndAgent;
 use sacp_conductor::snoop::SnooperComponent;
-use sacp_conductor::{ConductorImpl, McpBridgeMode, ProxiesAndAgent};
 
 /// Static handoff: pre-bound A2A persistence proxy listener + routing table.
 /// Set by pre-spawn (main.rs), consumed by `spawn_background_workers`.
@@ -234,7 +240,8 @@ pub async fn start_health_server(shared: Arc<SharedState>) -> anyhow::Result<()>
 
         // ── Persist to session store ──
         if !session_id.is_empty() {
-            use crate::team_timeline::{persist_events, task_status_event};
+            use crate::team_timeline::persist_events;
+            use crate::team_timeline::task_status_event;
             let preview_text = if preview.is_empty() {
                 "(push notification)"
             } else {
@@ -769,7 +776,8 @@ pub async fn run_conductor(
         // Split the conductor side into read/write halves for ByteStreams
         let (conductor_read, conductor_write) = tokio::io::split(conductor_side);
 
-        use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+        use tokio_util::compat::TokioAsyncReadCompatExt;
+        use tokio_util::compat::TokioAsyncWriteCompatExt;
         let transport =
             sacp::ByteStreams::new(conductor_write.compat_write(), conductor_read.compat());
 
@@ -847,7 +855,8 @@ pub async fn run_conductor(
         // Wait for shutdown signals
         #[cfg(unix)]
         {
-            use tokio::signal::unix::{SignalKind, signal};
+            use tokio::signal::unix::SignalKind;
+            use tokio::signal::unix::signal;
             let mut sighup = signal(SignalKind::hangup())?;
             tokio::spawn(async move {
                 while sighup.recv().await.is_some() {

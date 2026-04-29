@@ -1,7 +1,10 @@
-use std::io::{self, Write};
+use std::io::Write;
+use std::io::{self};
 use std::pin::Pin;
-use std::task::{Context, Poll};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use std::task::Context;
+use std::task::Poll;
+use tokio::io::AsyncWrite;
+use tokio::io::AsyncWriteExt;
 
 /// A wrapper around `std::io::Write` that swallows `BrokenPipe` errors.
 /// This prevents panics or unhandled errors when the reader (like a proxy process)

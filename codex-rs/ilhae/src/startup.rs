@@ -11,15 +11,17 @@ use sacp::DynConnectTo;
 use sacp_tokio::AcpHttpAgent;
 use tracing::info;
 
-use crate::adapters::{
-    AcpTransportFactory, CodexAppServerTransportFactory, build_transport_with_preference,
-};
+use crate::adapters::AcpTransportFactory;
+use crate::adapters::CodexAppServerTransportFactory;
+use crate::adapters::build_transport_with_preference;
 use crate::context_proxy;
-use crate::helpers::{
-    ILHAE_NATIVE_TRANSPORT_ENV, LEGACY_CODEX_TRANSPORT_ENV, infer_agent_id_from_command,
-    is_ilhae_native_command, is_ilhae_native_engine_name,
-};
-use crate::ports::{AgentTransportPreference, AgentTransportRequest};
+use crate::helpers::ILHAE_NATIVE_TRANSPORT_ENV;
+use crate::helpers::LEGACY_CODEX_TRANSPORT_ENV;
+use crate::helpers::infer_agent_id_from_command;
+use crate::helpers::is_ilhae_native_command;
+use crate::helpers::is_ilhae_native_engine_name;
+use crate::ports::AgentTransportPreference;
+use crate::ports::AgentTransportRequest;
 use crate::session_store::SessionStore;
 use crate::settings_store::SettingsStore;
 

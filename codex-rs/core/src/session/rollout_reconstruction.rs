@@ -271,9 +271,9 @@ impl Session {
                         history.replace(rebuilt);
                     }
                 }
-                RolloutItem::EventMsg(EventMsg::ThreadRolledBack(rollback)) => {
-                    history.drop_last_n_user_turns(rollback.num_turns);
-                }
+                // Skip ThreadRolledBack during forward replay to avoid double-dropping.
+                // All rollback effects were already accumulated in `pending_rollback_turns`
+                // during the reverse scan via `finalize_active_segment`.
                 RolloutItem::EventMsg(_)
                 | RolloutItem::TurnContext(_)
                 | RolloutItem::SessionMeta(_) => {}

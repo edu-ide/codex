@@ -3,11 +3,15 @@ use std::sync::Arc;
 use brain_rs::BrainService;
 use brain_session_rs::session_store::SessionInfo;
 
-use crate::{
-    DeleteSessionResponse, ListSessionsResponse, LoadSessionMessagesResponse,
-    LoadTeamTimelineResponse, SearchSessionsResponse, SessionInfoDto, SessionMessageDto,
-    TeamTimelineEventDto, UpdateSessionTitleResponse,
-};
+use crate::DeleteSessionResponse;
+use crate::ListSessionsResponse;
+use crate::LoadSessionMessagesResponse;
+use crate::LoadTeamTimelineResponse;
+use crate::SearchSessionsResponse;
+use crate::SessionInfoDto;
+use crate::SessionMessageDto;
+use crate::TeamTimelineEventDto;
+use crate::UpdateSessionTitleResponse;
 
 /// Session registry/metadata access that is safe to share with native Codex paths.
 ///

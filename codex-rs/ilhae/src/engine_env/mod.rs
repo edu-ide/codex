@@ -14,7 +14,8 @@
 pub mod codex;
 pub mod gemini;
 
-use tracing::{debug, warn};
+use tracing::debug;
+use tracing::warn;
 
 /// Trait for engine-specific environment variable configuration.
 ///

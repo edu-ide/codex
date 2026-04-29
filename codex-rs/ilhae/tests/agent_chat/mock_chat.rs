@@ -2,7 +2,8 @@
 //!
 //! Run: `cargo test --test agent_chat mock_chat -- --nocapture`
 
-use serde_json::{Value, json};
+use serde_json::Value;
+use serde_json::json;
 use std::time::Duration;
 
 use super::common::proxy_harness::ProxyProcess;

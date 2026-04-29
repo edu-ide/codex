@@ -1,9 +1,11 @@
 use slack_morphism::prelude::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
-use crate::approval_manager::{ApprovalEvent, ApprovalManager};
+use crate::approval_manager::ApprovalEvent;
+use crate::approval_manager::ApprovalManager;
 use crate::relay_server::RelayEvent;
 use crate::settings_store::GenericChannelSettings;
 

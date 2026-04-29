@@ -15,14 +15,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use a2a_rs::client::{A2AClient, StreamEvent};
-use a2a_rs::event::{EventBus, ExecutionEvent};
-use a2a_rs::executor::{AgentExecutor, RequestContext};
+use a2a_rs::client::A2AClient;
+use a2a_rs::client::StreamEvent;
+use a2a_rs::event::EventBus;
+use a2a_rs::event::ExecutionEvent;
+use a2a_rs::executor::AgentExecutor;
+use a2a_rs::executor::RequestContext;
 use a2a_rs::proxy::extract_text_from_parts;
 use a2a_rs::types::*;
 
-use serde_json::{Value, json};
-use tracing::{info, warn};
+use serde_json::Value;
+use serde_json::json;
+use tracing::info;
+use tracing::warn;
 
 use crate::CxCache;
 use crate::session_store::SessionStore;
@@ -298,7 +303,10 @@ impl ForwardingExecutor {
 
     /// Send UI patch via relay_conductor_cx.
     async fn notify_ui(&self, method: &str, params: Value) {
-        use sacp::{Client, Conductor, ConnectionTo, UntypedMessage};
+        use sacp::Client;
+        use sacp::Conductor;
+        use sacp::ConnectionTo;
+        use sacp::UntypedMessage;
         let maybe_cx: Option<ConnectionTo<Conductor>> = self.cx_cache.latest().await;
         if let Some(cx) = maybe_cx {
             if let Ok(notif) = UntypedMessage::new(method, params) {

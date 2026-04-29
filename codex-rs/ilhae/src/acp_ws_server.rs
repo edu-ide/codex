@@ -13,12 +13,16 @@
 //! WS clients connect/disconnect freely via channels — no ownership gymnastics.
 //! Multiple WS observers supported (broadcast); writes serialized via mpsc.
 
-use futures::{SinkExt, StreamExt};
+use futures::SinkExt;
+use futures::StreamExt;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 /// Default ACP WS port.
 pub const ACP_WS_PORT: u16 = 18791;
@@ -70,7 +74,8 @@ impl AcpWsBridge {
         mut to_conductor_rx: mpsc::Receiver<String>,
         from_conductor_tx: broadcast::Sender<String>,
     ) {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        use tokio::io::AsyncBufReadExt;
+        use tokio::io::AsyncWriteExt;
 
         // Two concurrent loops: read from duplex + write to duplex
         let read_task = tokio::spawn(async move {

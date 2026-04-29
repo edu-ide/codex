@@ -1,6 +1,7 @@
 use clap::Parser;
 use codex_arg0::arg0_dispatch_or_else;
-use codex_mcp_server::{TransportOptions, run_main_with_transport};
+use codex_mcp_server::TransportOptions;
+use codex_mcp_server::run_main_with_transport;
 use codex_utils_cli::CliConfigOverrides;
 
 /// Codex MCP server with optional HTTP transport.

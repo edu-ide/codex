@@ -6335,13 +6335,10 @@ impl ChatWidget {
                             })
                         }
                         (None, None) => Err("MCP tool call completed without a result".to_string()),
-                    },
-                });
-            }
-            ThreadItem::WebSearch { id, query, action } => {
-                self.on_web_search_begin(WebSearchBeginEvent {
-                    call_id: id.clone(),
-                });
+                   },
+               });
+           }
+           ThreadItem::WebSearch { id, query, action } => {
                 self.on_web_search_end(WebSearchEndEvent {
                     call_id: id,
                     query,
@@ -6907,7 +6904,10 @@ impl ChatWidget {
                 });
             }
             ThreadItem::WebSearch { id, .. } => {
-                self.on_web_search_begin(WebSearchBeginEvent { call_id: id });
+                self.on_web_search_begin(WebSearchBeginEvent {
+                    call_id: id,
+                    query: String::new(),
+                });
             }
             ThreadItem::ImageGeneration { id, .. } => {
                 self.on_image_generation_begin(ImageGenerationBeginEvent { call_id: id });

@@ -3,7 +3,8 @@
 //! Extracted from `settings_store.rs` — pure data types (structs, enums, Default impls)
 //! for all ilhae-proxy configuration. No I/O or store logic here.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
 
 /// All ilhae settings, persisted to `settings.json`.
@@ -283,6 +284,9 @@ pub struct AgentSettings {
     #[serde(default)]
     pub team_agent_disabled_capabilities:
         std::collections::HashMap<String, AgentCapabilitiesOverride>,
+    /// Whether the local native runtime (Llama/SGLang) is enabled.
+    #[serde(default)]
+    pub native_runtime_enabled: bool,
 }
 
 pub fn default_enabled_engines() -> Vec<String> {
@@ -599,6 +603,7 @@ impl Default for AgentSettings {
             mock_mode: false,
             enabled_engines: vec!["gemini".to_string()],
             team_agent_disabled_capabilities: std::collections::HashMap::new(),
+            native_runtime_enabled: false,
         }
     }
 }

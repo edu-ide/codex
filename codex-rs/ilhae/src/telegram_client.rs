@@ -7,12 +7,19 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
-use tokio::sync::{RwLock, mpsc};
-use tracing::{error, info, warn};
+use teloxide::types::InlineKeyboardButton;
+use teloxide::types::InlineKeyboardMarkup;
+use teloxide::types::ParseMode;
+use tokio::sync::RwLock;
+use tokio::sync::mpsc;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
 use crate::notification_store::NotificationStore;
-use crate::relay_server::{RelayCommand, RelayCommandWithClient, RelayEvent};
+use crate::relay_server::RelayCommand;
+use crate::relay_server::RelayCommandWithClient;
+use crate::relay_server::RelayEvent;
 use crate::session_store::SessionStore;
 use crate::settings_store::TelegramSettings;
 

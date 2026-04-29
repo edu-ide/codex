@@ -1,16 +1,22 @@
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
-use sacp::{Agent, Conductor, ConnectionTo, Responder, UntypedMessage};
+use sacp::Agent;
+use sacp::Conductor;
+use sacp::ConnectionTo;
+use sacp::Responder;
+use sacp::UntypedMessage;
 
+use crate::SetSessionConfigOptionRequest;
+use crate::SetSessionConfigOptionResponse;
 use crate::SharedState;
-use crate::{
-    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, apply_codex_profile_to_config,
-    helpers::{LEGACY_CODEX_AGENT_ID, is_ilhae_native_agent_id},
-    infer_agent_id_from_command,
-};
+use crate::apply_codex_profile_to_config;
+use crate::helpers::LEGACY_CODEX_AGENT_ID;
+use crate::helpers::is_ilhae_native_agent_id;
+use crate::infer_agent_id_from_command;
 
 fn ilhae_profile_model_name(profile_id: &str) -> Option<String> {
     let config = crate::config::load_ilhae_toml_config();

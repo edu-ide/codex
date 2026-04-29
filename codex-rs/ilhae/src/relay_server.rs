@@ -6,17 +6,25 @@
 //! Path `/acp` → raw SACP NDJSON (Desktop's AcpWebSocketTransport)
 //! All other paths → RelayCommand JSON protocol (CLI, Telegram, mobile)
 
-use futures::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use futures::SinkExt;
+use futures::StreamExt;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
 use crate::session_store::SessionStore;
-use brain_rs::schedule::{ScheduleChangeEvent, ScheduleStore};
+use brain_rs::schedule::ScheduleChangeEvent;
+use brain_rs::schedule::ScheduleStore;
 
 /// Events broadcast from proxy to mobile clients.
 #[derive(Debug, Clone, Serialize, Deserialize)]

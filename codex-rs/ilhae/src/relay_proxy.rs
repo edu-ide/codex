@@ -6,19 +6,33 @@
 
 use std::sync::Arc;
 
-use agent_client_protocol_schema::{
-    ContentBlock, InitializeRequest, InitializeResponse, SessionNotification, SessionUpdate,
-};
-use sacp::{Agent, Client, Conductor, ConnectTo, ConnectionTo, Proxy, Responder, UntypedMessage};
+use agent_client_protocol_schema::ContentBlock;
+use agent_client_protocol_schema::InitializeRequest;
+use agent_client_protocol_schema::InitializeResponse;
+use agent_client_protocol_schema::SessionNotification;
+use agent_client_protocol_schema::SessionUpdate;
+use sacp::Agent;
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectTo;
+use sacp::ConnectionTo;
+use sacp::Proxy;
+use sacp::Responder;
+use sacp::UntypedMessage;
 use serde_json::json;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use crate::detect_browser_tool_in_update;
-use crate::relay_server::{RelayEvent, broadcast_event};
-use crate::team_timeline::{
-    agent_response_event, delegation_completed_event, delegation_started_event, persist_events,
-};
-use crate::turn_accumulator::{TurnAccumulator, extract_tool_call_id};
+use crate::relay_server::RelayEvent;
+use crate::relay_server::broadcast_event;
+use crate::team_timeline::agent_response_event;
+use crate::team_timeline::delegation_completed_event;
+use crate::team_timeline::delegation_started_event;
+use crate::team_timeline::persist_events;
+use crate::turn_accumulator::TurnAccumulator;
+use crate::turn_accumulator::extract_tool_call_id;
 
 // ─── RelayProxy state ─────────────────────────────────────────────────
 
@@ -595,9 +609,10 @@ impl ConnectTo<Conductor> for RelayProxy {
 #[cfg(test)]
 mod tests {
     use crate::AssistantContentBlock;
-    use crate::turn_accumulator::{
-        append_text_block, append_thinking_block, append_tool_call_block, merge_stream_chunk,
-    };
+    use crate::turn_accumulator::append_text_block;
+    use crate::turn_accumulator::append_thinking_block;
+    use crate::turn_accumulator::append_tool_call_block;
+    use crate::turn_accumulator::merge_stream_chunk;
 
     #[test]
     fn merge_stream_chunk_handles_delta_chunks() {

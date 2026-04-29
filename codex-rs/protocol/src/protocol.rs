@@ -2064,6 +2064,7 @@ impl HasLegacyEvent for ItemStartedEvent {
         match &self.item {
             TurnItem::WebSearch(item) => vec![EventMsg::WebSearchBegin(WebSearchBeginEvent {
                 call_id: item.id.clone(),
+                query: item.query.clone(),
             })],
             TurnItem::ImageGeneration(item) => {
                 vec![EventMsg::ImageGenerationBegin(ImageGenerationBeginEvent {
@@ -2656,6 +2657,7 @@ impl McpToolCallEndEvent {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct WebSearchBeginEvent {
     pub call_id: String,
+    pub query: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]

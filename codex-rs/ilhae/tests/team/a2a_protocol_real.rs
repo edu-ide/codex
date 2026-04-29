@@ -19,7 +19,8 @@
 //!   6. Push Notifications — CRUD (set/get/list/delete) 실서버 검증
 
 use super::common::team_helpers::*;
-use super::common::test_gate::{require_team_live_a2a, require_team_local_a2a_spawn};
+use super::common::test_gate::require_team_live_a2a;
+use super::common::test_gate::require_team_local_a2a_spawn;
 use serde_json::json;
 use std::sync::Arc;
 

@@ -4,7 +4,8 @@
 //! used across the proxy modules.
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::BTreeMap;
 
 use crate::notification_store;
@@ -430,6 +431,8 @@ pub struct IlhaeAppProfileAgentDto {
     pub self_improvement: bool,
     #[serde(rename = "selfImprovementPreset", default)]
     pub self_improvement_preset: String,
+    #[serde(rename = "nativeRuntimeEnabled", default)]
+    pub native_runtime_enabled: bool,
 }
 
 impl Default for IlhaeAppProfileAgentDto {
@@ -453,6 +456,7 @@ impl Default for IlhaeAppProfileAgentDto {
             kairos: false,
             self_improvement: crate::settings_types::default_self_improvement_enabled(),
             self_improvement_preset: String::new(),
+            native_runtime_enabled: false,
         }
     }
 }

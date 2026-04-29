@@ -201,6 +201,14 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::SetIlhaeImproveMode { enabled: None });
             }
+            SlashCommand::LocalServer => {
+                self.app_event_tx
+                    .send(AppEvent::SetIlhaeLocalServerMode { enabled: None });
+                self.add_info_message(
+                    "Local server mode toggled.".to_string(),
+                    Some("Usage: /local-server [on|off|start|stop]".to_string()),
+                );
+            }
             SlashCommand::Tmux => {
                 self.show_tmux_workflow_surface();
             }
@@ -717,6 +725,31 @@ impl ChatWidget {
                 }
                 self.bottom_pane.drain_pending_submission_state();
             }
+            SlashCommand::LocalServer if !trimmed.is_empty() => {
+                match trimmed.to_ascii_lowercase().as_str() {
+                    "on" | "start" => {
+                        self.app_event_tx.send(AppEvent::SetIlhaeLocalServerMode {
+                            enabled: Some(true),
+                        });
+                        self.add_error_message("✅ Local server enabled.".to_string());
+                    }
+                    "off" | "stop" => {
+                        self.app_event_tx.send(AppEvent::SetIlhaeLocalServerMode {
+                            enabled: Some(false),
+                        });
+                        self.add_error_message("🚫 Local server disabled.".to_string());
+                    }
+                    "help" => {
+                        self.add_info_message(
+                            "Manage the native local model server (llama-server, sglang, etc.)".to_string(),
+                            Some("Usage: /local-server [on|off|start|stop]".to_string()),
+                        );
+                    }
+                    _ => {
+                        self.add_error_message("Usage: /local-server [on|off|start|stop|help]".to_string());
+                    }
+                }
+            }
             _ => self.dispatch_command(cmd),
         }
         if source == SlashCommandDispatchSource::Live {
@@ -856,6 +889,7 @@ impl ChatWidget {
             | SlashCommand::Dream
             | SlashCommand::Embed
             | SlashCommand::Improve
+            | SlashCommand::LocalServer
             | SlashCommand::Tmux
             | SlashCommand::Worktree
             | SlashCommand::Remote

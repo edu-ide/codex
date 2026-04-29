@@ -15,15 +15,30 @@
 
 use std::sync::Arc;
 
-use a2a_acp_adapter::{AcpEventMapper, AcpMappedEvent};
+use a2a_acp_adapter::AcpEventMapper;
+use a2a_acp_adapter::AcpMappedEvent;
+use a2a_rs::A2aProxy;
+use a2a_rs::StreamEvent;
 use a2a_rs::proxy::SessionContext;
-use a2a_rs::{A2aProxy, StreamEvent};
-use agent_client_protocol_schema::{ContentBlock, PromptRequest, PromptResponse, StopReason};
-use sacp::{Agent, Client, Conductor, ConnectTo, ConnectionTo, Proxy, Responder, UntypedMessage};
+use agent_client_protocol_schema::ContentBlock;
+use agent_client_protocol_schema::PromptRequest;
+use agent_client_protocol_schema::PromptResponse;
+use agent_client_protocol_schema::StopReason;
+use sacp::Agent;
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectTo;
+use sacp::ConnectionTo;
+use sacp::Proxy;
+use sacp::Responder;
+use sacp::UntypedMessage;
 use serde_json::json;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
-use crate::context_proxy::{TeamRuntimeConfig, load_team_runtime_config};
+use crate::context_proxy::TeamRuntimeConfig;
+use crate::context_proxy::load_team_runtime_config;
 
 // ─── AgentRouter state ──────────────────────────────────────────────────
 

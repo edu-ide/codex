@@ -1,7 +1,10 @@
 #[macro_export]
 macro_rules! register_session_tools {
     ($builder:expr, $brain_service:expr, $bt_settings:expr) => {{
-        use $crate::{EmptyInput, SessionIdInput, SessionRenameInput, SessionSearchInput};
+        use $crate::EmptyInput;
+        use $crate::SessionIdInput;
+        use $crate::SessionRenameInput;
+        use $crate::SessionSearchInput;
 
         $builder
             .tool_fn(

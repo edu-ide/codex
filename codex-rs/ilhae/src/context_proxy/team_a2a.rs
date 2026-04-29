@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use agent_client_protocol_schema::ContentBlock;
 use serde::Deserialize;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 // Allow unused imports since we just dump all common imports
 #[allow(unused_imports)]

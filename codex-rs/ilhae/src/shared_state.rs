@@ -1,8 +1,10 @@
 use moka::sync::Cache;
-use sacp::{ConnectionTo, role::Role};
+use sacp::ConnectionTo;
+use sacp::role::Role;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, atomic::AtomicU64};
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use tokio::sync::RwLock;
 
 use crate::AssistantBuffer;
@@ -14,7 +16,8 @@ use crate::context_proxy;
 use crate::mcp_manager::McpManager;
 use crate::notification_store;
 use crate::process_supervisor;
-use crate::relay_server::{RelayEvent, RelayState};
+use crate::relay_server::RelayEvent;
+use crate::relay_server::RelayState;
 use crate::settings_store::SettingsStore;
 use brain_rs::BrainService;
 

@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use rusqlite::Result as SqlResult;
 
-use crate::session_store::{SessionInfo, SessionMessage, SessionStore};
+use crate::session_store::SessionInfo;
+use crate::session_store::SessionMessage;
+use crate::session_store::SessionStore;
 
 pub type SessionMap = HashMap<String, SessionInfo>;
 pub type MessagesBySession = HashMap<String, Vec<SessionMessage>>;

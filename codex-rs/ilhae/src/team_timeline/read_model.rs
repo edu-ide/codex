@@ -1,9 +1,13 @@
 use rusqlite::Result as SqlResult;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
-use crate::session_store::{SessionInfo, SessionMessage, SessionStore};
+use crate::session_store::SessionInfo;
+use crate::session_store::SessionMessage;
+use crate::session_store::SessionStore;
 
-use super::classifier::{filter_visible_tool_calls, kind_from_message};
+use super::classifier::filter_visible_tool_calls;
+use super::classifier::kind_from_message;
 use super::descendant_transform::transform_descendant_message;
 use super::events::TeamTimelineKind;
 use super::loader::load_timeline_inputs;

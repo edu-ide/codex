@@ -88,13 +88,25 @@ pub mod a2a_persistence;
 
 // ── Native CLI entry point ──
 pub mod startup_main;
-pub use startup_main::{
-    BootstrappedIlhaeRuntime, bootstrap_ilhae_runtime, current_native_backend_capability_profile,
-    current_native_backend_engine, emit_native_loop_lifecycle, ensure_native_runtime_for_cli,
-    native_runtime_context, prepare_native_turn_inputs, prepare_session_turn_inputs,
-    run_active_foreground_loop_cycle, run_exec_foreground_loop_cycle, run_ilhae_proxy,
-    stop_native_runtime_for_cli, subscribe_native_loop_lifecycle, switch_native_runtime_for_cli,
-};
+pub use startup_main::BootstrappedIlhaeRuntime;
+pub use startup_main::bootstrap_ilhae_runtime;
+pub use startup_main::current_native_backend_capability_profile;
+pub use startup_main::current_native_backend_engine;
+pub use startup_main::emit_native_loop_lifecycle;
+pub use startup_main::ensure_native_runtime_for_cli;
+pub use startup_main::native_runtime_context;
+pub use startup_main::native_runtime_healthcheck;
+pub use startup_main::spawn_native_runtime_server;
+pub use startup_main::stop_native_runtime_server_for_config;
+pub use startup_main::prepare_native_turn_inputs;
+pub use startup_main::prepare_session_turn_inputs;
+pub use startup_main::run_active_foreground_loop_cycle;
+pub use startup_main::run_exec_foreground_loop_cycle;
+pub use startup_main::run_ilhae_proxy;
+pub use startup_main::find_native_runtime_pids;
+pub use startup_main::stop_native_runtime_for_cli;
+pub use startup_main::subscribe_native_loop_lifecycle;
+pub use startup_main::switch_native_runtime_for_cli;
 
 // ═══════════════════════════════════════════════════════════════
 // Crate-root re-exports: mirror main.rs's `pub use helpers::*; use types::*; use plugins::*;`

@@ -9,10 +9,14 @@
 //! Fixture files are loaded from `tests/fixtures/` directory.
 //! Each fixture is a JSON array of prompt→response pairs.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 static MOCK_ENABLED: AtomicBool = AtomicBool::new(false);
 static MOCK_TURN: AtomicUsize = AtomicUsize::new(0);

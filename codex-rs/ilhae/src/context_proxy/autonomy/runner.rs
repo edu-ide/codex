@@ -1,19 +1,28 @@
 use a2a_rs::A2aProxy;
-use agent_client_protocol_schema::{
-    ContentBlock, PromptRequest, SessionId, StopReason, TextContent,
-};
-use sacp::{Agent, Client, Conductor, ConnectionTo, UntypedMessage};
+use agent_client_protocol_schema::ContentBlock;
+use agent_client_protocol_schema::PromptRequest;
+use agent_client_protocol_schema::SessionId;
+use agent_client_protocol_schema::StopReason;
+use agent_client_protocol_schema::TextContent;
+use sacp::Agent;
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectionTo;
+use sacp::UntypedMessage;
 use serde_json::json;
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use std::hash::Hash;
+use std::hash::Hasher;
+use std::time::Duration;
+use std::time::Instant;
+use tracing::info;
+use tracing::warn;
 
 use crate::SharedState;
 use crate::context_proxy::autonomy::should_continue_autonomous_on_stop_reason;
-use crate::context_proxy::autonomy::state::{
-    AutonomousPhase, AutonomousSessionState, set_autonomous_snapshot,
-};
+use crate::context_proxy::autonomy::state::AutonomousPhase;
+use crate::context_proxy::autonomy::state::AutonomousSessionState;
+use crate::context_proxy::autonomy::state::set_autonomous_snapshot;
 
 use crate::context_proxy::load_team_runtime_config;
 

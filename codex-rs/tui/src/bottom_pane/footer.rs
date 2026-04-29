@@ -744,6 +744,10 @@ fn runtime_mode_footer_line() -> Option<Line<'static>> {
         parts.push("kx".to_string());
     }
 
+    if !agent.thinking_mode.is_empty() {
+        parts.push(format!("ls:{}", agent.thinking_mode));
+    }
+
     if agent.self_improvement_enabled {
         parts.push("im".to_string());
     }

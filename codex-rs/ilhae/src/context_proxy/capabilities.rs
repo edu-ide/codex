@@ -1,16 +1,21 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use sacp::{Conductor, ConnectionTo, Responder};
+use sacp::Conductor;
+use sacp::ConnectionTo;
+use sacp::Responder;
 use serde_json::json;
 use tracing::info;
 
 use crate::SharedState;
-use crate::types::{
-    CapabilitiesRequest, CapabilitiesResponse, SetTeamAgentEngineRequest,
-    SetTeamAgentEngineResponse, ToggleMcpRequest, ToggleMcpResponse, ToggleSkillRequest,
-    ToggleSkillResponse,
-};
+use crate::types::CapabilitiesRequest;
+use crate::types::CapabilitiesResponse;
+use crate::types::SetTeamAgentEngineRequest;
+use crate::types::SetTeamAgentEngineResponse;
+use crate::types::ToggleMcpRequest;
+use crate::types::ToggleMcpResponse;
+use crate::types::ToggleSkillRequest;
+use crate::types::ToggleSkillResponse;
 
 pub fn bind_routes<H>(
     builder: sacp::Builder<sacp::Proxy, H>,

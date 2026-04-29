@@ -139,6 +139,15 @@ enum Subcommand {
     #[cfg(feature = "ilhae")]
     Profile(ProfileCommand),
 
+    /// Manage the local model server.
+    #[cfg(feature = "ilhae")]
+    #[clap(subcommand)]
+    LocalServer(LocalServerCommand),
+
+    /// Start the local model server and the agent.
+    #[cfg(feature = "ilhae")]
+    Start,
+
     /// Launch the Codex desktop app (opens the app installer if missing).
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     App(app_cmd::AppCommand),
@@ -941,6 +950,9 @@ fn ilhae_exec_runtime_settings_from_overrides(
     let parsed = overrides.parse_overrides().ok()?;
     let ilhae_dir = codex_ilhae::config::resolve_ilhae_data_dir();
     let store = codex_ilhae::settings_store::SettingsStore::new(&ilhae_dir);
+    if let Err(err) = codex_ilhae::config::apply_active_ilhae_profile_projection(&store) {
+        tracing::warn!(?err, "failed to project active Ilhae profile for exec");
+    }
     let mut settings = store.get();
     apply_ilhae_agent_cli_overrides(&mut settings, &parsed);
     Some(settings)
@@ -989,10 +1001,9 @@ fn ilhae_profile_display_name(
     profile: &codex_ilhae::config::IlhaeProfileConfig,
 ) -> String {
     if profile.native_runtime.enabled
-        && let Some(model) = std::path::Path::new(&profile.native_runtime.model_path)
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().to_string())
-            .filter(|stem| !stem.trim().is_empty())
+        && let Some(model) = codex_ilhae::config::native_runtime_model_name_from_path(
+            &profile.native_runtime.model_path,
+        )
     {
         return model;
     }
@@ -1081,6 +1092,17 @@ async fn run_ilhae_profile_command(cmd: ProfileCommand) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, clap::Subcommand)]
+enum LocalServerCommand {
+    /// Start the local model server.
+    Start,
+    /// Stop the local model server.
+    Stop,
+    /// Get the status of the local model server.
+    Status,
 }
 
 async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
@@ -1378,6 +1400,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             remote,
             config_overrides,
         })) => {
+            #[cfg(feature = "ilhae")]
+            {
+                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
+                    .await?;
+            }
             interactive = finalize_resume_interactive(
                 interactive,
                 root_config_overrides.clone(),
@@ -1405,6 +1432,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             remote,
             config_overrides,
         })) => {
+            #[cfg(feature = "ilhae")]
+            {
+                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
+                    .await?;
+            }
             interactive = finalize_fork_interactive(
                 interactive,
                 root_config_overrides.clone(),
@@ -1419,6 +1451,51 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 remote
                     .remote_auth_token_env
                     .or(root_remote_auth_token_env.clone()),
+                arg0_paths.clone(),
+            )
+            .await?;
+            handle_app_exit(exit_info)?;
+        }
+
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::LocalServer(local_cmd)) => {
+            match local_cmd {
+                LocalServerCommand::Start => {
+                    codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
+                        .await?;
+                }
+                LocalServerCommand::Stop => {
+                    codex_ilhae::stop_native_runtime_for_cli(interactive.config_profile.as_deref())
+                        .await?;
+                }
+                LocalServerCommand::Status => {
+                    if let Some((profile_id, config)) =
+                        codex_ilhae::config::get_native_runtime_config(
+                            interactive.config_profile.as_deref(),
+                        )
+                    {
+                        let healthy =
+                            codex_ilhae::startup_main::native_runtime_healthcheck(&config.health_url)
+                                .await;
+                        println!("Profile: {}", profile_id);
+                        println!("Enabled: {}", config.enabled);
+                        println!("Health URL: {}", config.health_url);
+                        println!("Status: {}", if healthy { "HEALTHY" } else { "DOWN" });
+                    } else {
+                        println!("No active native runtime profile found.");
+                    }
+                }
+            }
+        }
+
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Start) => {
+            codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
+                .await?;
+            let exit_info = run_interactive_tui(
+                interactive,
+                root_remote.clone(),
+                root_remote_auth_token_env.clone(),
                 arg0_paths.clone(),
             )
             .await?;
@@ -1992,6 +2069,10 @@ async fn run_interactive_tui(
     #[cfg(feature = "ilhae")]
     if remote.is_none() && is_invoked_as_ilhae_cli() {
         let _ = codex_ilhae::bootstrap_ilhae_runtime()
+            .await
+            .map_err(std::io::Error::other)?;
+
+        codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
             .await
             .map_err(std::io::Error::other)?;
     }

@@ -3321,6 +3321,38 @@ impl ChatComposer {
         ) {
             self.active_popup = ActivePopup::None;
         }
+        self.sync_footer_hints();
+    }
+
+    fn sync_footer_hints(&mut self) {
+        // If a popup is active or we are in a special mode, don't show slash hints.
+        if !matches!(self.active_popup, ActivePopup::None) || self.history_search.is_some() {
+            return;
+        }
+
+        let mode = self.footer_mode();
+        if !matches!(mode, FooterMode::ComposerEmpty | FooterMode::ComposerHasDraft) {
+            return;
+        }
+
+        let text = self.textarea.text();
+        let first_line_end = text.find('\n').unwrap_or(text.len());
+        let first_line = &text[..first_line_end];
+
+        if let Some((name, _rest, _offset)) = parse_slash_name(first_line) {
+            if let Some(cmd) =
+                slash_commands::find_builtin_command(name, self.builtin_command_flags())
+            {
+                if let Some(hint) = cmd.args_hint() {
+                    self.set_footer_hint_override(Some(vec![("Args".to_string(), hint.to_string())]));
+                    return;
+                }
+            }
+        }
+
+        // Only clear if it looks like we were the one who set it (i.e. not in a special mode).
+        // This is a bit heuristic, but footer_hint_override is mostly used for transient hints.
+        self.set_footer_hint_override(None);
     }
 
     /// Keep slash command elements aligned with the current first line.

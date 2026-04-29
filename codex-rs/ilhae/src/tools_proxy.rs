@@ -3,20 +3,74 @@
 //! Contains `with_mcp_server` registrations for ilhae-tools (20 tools)
 //! and browser-tools (19 tools via browser-use-rs), and team-tools (3 tools).
 
-use sacp::{Agent, Conductor, ConnectTo, ConnectionTo, Proxy};
+use sacp::Agent;
+use sacp::Conductor;
+use sacp::ConnectTo;
+use sacp::ConnectionTo;
+use sacp::Proxy;
 use std::sync::Arc;
 
+#[allow(unused_imports)]
+use crate::ArtifactEditInput;
+#[allow(unused_imports)]
+use crate::ArtifactGetInput;
+#[allow(unused_imports)]
+use crate::ArtifactListInput;
+#[allow(unused_imports)]
+use crate::ArtifactSaveInput;
+#[allow(unused_imports)]
+use crate::EmptyInput;
+#[allow(unused_imports)]
+use crate::IdInput;
+#[allow(unused_imports)]
+use crate::MemoryReadInput;
+#[allow(unused_imports)]
+use crate::MemoryToolDreamAnalyzeInput;
+#[allow(unused_imports)]
+use crate::MemoryToolDreamApplyInput;
+#[allow(unused_imports)]
+use crate::MemoryToolDreamPreviewInput;
+#[allow(unused_imports)]
+use crate::MemoryToolDreamPromoteInput;
+#[allow(unused_imports)]
+use crate::MemoryToolExtractInput;
+#[allow(unused_imports)]
+use crate::MemoryToolForgetInput;
+#[allow(unused_imports)]
+use crate::MemoryToolListInput;
+#[allow(unused_imports)]
+use crate::MemoryToolPinInput;
+#[allow(unused_imports)]
+use crate::MemoryToolPromoteInput;
+#[allow(unused_imports)]
+use crate::MemoryToolSearchInput;
+#[allow(unused_imports)]
+use crate::MemoryToolStatsInput;
+#[allow(unused_imports)]
+use crate::MemoryToolStoreInput;
+#[allow(unused_imports)]
+use crate::MemoryWriteInput;
+#[allow(unused_imports)]
+use crate::SessionIdInput;
+#[allow(unused_imports)]
+use crate::SessionRenameInput;
+#[allow(unused_imports)]
+use crate::SkillUpsertInput;
+#[allow(unused_imports)]
+use crate::TaskAddHistoryInput;
+#[allow(unused_imports)]
+use crate::TaskCreateInput;
+#[allow(unused_imports)]
+use crate::TaskUpdateInput;
+#[allow(unused_imports)]
+use crate::TeamDelegateInput;
+#[allow(unused_imports)]
+use crate::TeamProposeInput;
+#[allow(unused_imports)]
+use crate::UiNotifyInput;
 use crate::register_browser_tools;
 #[allow(unused_imports)]
-use crate::{
-    ArtifactEditInput, ArtifactGetInput, ArtifactListInput, ArtifactSaveInput, EmptyInput, IdInput,
-    MemoryReadInput, MemoryToolDreamAnalyzeInput, MemoryToolDreamApplyInput,
-    MemoryToolDreamPreviewInput, MemoryToolDreamPromoteInput, MemoryToolExtractInput,
-    MemoryToolForgetInput, MemoryToolListInput, MemoryToolPinInput, MemoryToolPromoteInput,
-    MemoryToolSearchInput, MemoryToolStatsInput, MemoryToolStoreInput, MemoryWriteInput,
-    SessionIdInput, SessionRenameInput, SkillUpsertInput, TaskAddHistoryInput, TaskCreateInput,
-    TaskUpdateInput, TeamDelegateInput, TeamProposeInput, UiNotifyInput, tool_to_plugin_id,
-};
+use crate::tool_to_plugin_id;
 
 // ─── ToolsProxy state ──────────────────────────────────────────────────
 

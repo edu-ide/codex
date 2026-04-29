@@ -1,7 +1,8 @@
 //! BotBrowser Manager integration tests
 
 use super::common::team_helpers::*;
-use ilhae_proxy::browser_manager::{BrowserManager, BrowserStatusEvent};
+use ilhae_proxy::browser_manager::BrowserManager;
+use ilhae_proxy::browser_manager::BrowserStatusEvent;
 
 /// E2E Test: BotBrowser Lazy Download & Launch Verification
 ///

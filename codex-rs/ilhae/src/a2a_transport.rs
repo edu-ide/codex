@@ -6,13 +6,25 @@
 //!
 //! [`AcpAgent`]: crate::AcpAgent
 
-use a2a_rs::client::{A2AClient, StreamEvent};
-use a2a_rs::types::{Message, Part, Role, SendMessageRequest, SendMessageResponse, Task};
+use a2a_rs::client::A2AClient;
+use a2a_rs::client::StreamEvent;
+use a2a_rs::types::Message;
+use a2a_rs::types::Part;
+use a2a_rs::types::Role;
+use a2a_rs::types::SendMessageRequest;
+use a2a_rs::types::SendMessageResponse;
+use a2a_rs::types::Task;
 use futures::future::BoxFuture;
-use sacp::{Channel, Client, ConnectTo};
-use serde_json::{Value, json};
+use sacp::Channel;
+use sacp::Client;
+use sacp::ConnectTo;
+use serde_json::Value;
+use serde_json::json;
 use std::collections::HashMap;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
 /// A transport adapter that bridges ACP (Agent Client Protocol) messages
 /// to an A2A (Agent-to-Agent) endpoint over HTTP.

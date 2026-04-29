@@ -1,13 +1,16 @@
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use crate::SharedState;
 use crate::a2a_persistence::events::DelegationEvent;
-use crate::team_timeline::{
-    agent_response_event, delegation_completed_event, delegation_started_event, persist_events,
-};
+use crate::team_timeline::agent_response_event;
+use crate::team_timeline::delegation_completed_event;
+use crate::team_timeline::delegation_started_event;
+use crate::team_timeline::persist_events;
 
 pub async fn spawn_tracker_daemon(
     shared: Arc<SharedState>,

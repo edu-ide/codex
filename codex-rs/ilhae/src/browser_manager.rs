@@ -1,11 +1,17 @@
-use action_browser_rs::browser::{
-    BrowserSession, ConnectionOptions, PlaywrightBackend, PlaywrightBrowserKind,
-};
-use serde::{Deserialize, Serialize};
+use action_browser_rs::browser::BrowserSession;
+use action_browser_rs::browser::ConnectionOptions;
+use action_browser_rs::browser::PlaywrightBackend;
+use action_browser_rs::browser::PlaywrightBrowserKind;
+use serde::Deserialize;
+use serde::Serialize;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::RwLock;
 use tokio::sync::broadcast;
-use tracing::{error, info, warn};
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
 use crate::settings_store::BrowserSettings;
 

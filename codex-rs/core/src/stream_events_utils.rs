@@ -6,6 +6,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::items::TurnItem;
+use codex_protocol::models::WebSearchAction;
 use codex_utils_stream_parser::strip_citations;
 use tokio_util::sync::CancellationToken;
 
@@ -26,6 +27,9 @@ use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::WebSearchBeginEvent;
+use codex_protocol::protocol::WebSearchEndEvent;
 use codex_rollout::state_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_stream_parser::strip_proposed_plan_blocks;
@@ -224,6 +228,10 @@ pub(crate) struct OutputItemResult {
     pub last_agent_message: Option<String>,
     pub needs_follow_up: bool,
     pub tool_future: Option<InFlightFuture<'static>>,
+    /// When the tool call is a function-call-based web_search, this holds the
+    /// call_id so the caller can emit WebSearchEnd after the tool completes.
+    pub web_search_call_id: Option<String>,
+    pub web_search_query: Option<String>,
 }
 
 pub(crate) struct HandleOutputCtx {
@@ -245,6 +253,21 @@ pub(crate) async fn handle_output_item_done(
     match ToolRouter::build_tool_call(ctx.sess.as_ref(), item.clone()).await {
         // The model emitted a tool call; log it, persist the item immediately, and queue the tool execution.
         Ok(Some(call)) => {
+            // Emit WebSearchBegin for function-call-based web_search so the TUI
+            // can display the web search indicator (same as native WebSearchCall).
+            if is_web_search_call(&call) {
+                output.web_search_call_id = Some(call.call_id.clone());
+                output.web_search_query = extract_web_search_query(&call.payload);
+                ctx.sess
+                    .send_event(
+                        &ctx.turn_context,
+                        EventMsg::WebSearchBegin(WebSearchBeginEvent {
+                            call_id: call.call_id.clone(),
+                            query: output.web_search_query.clone().unwrap_or_default(),
+                        }),
+                    )
+                    .await;
+            }
             ctx.sess
                 .accept_mailbox_delivery_for_current_turn(&ctx.turn_context.sub_id)
                 .await;
@@ -490,6 +513,26 @@ fn completed_item_defers_mailbox_delivery_to_next_turn(
         ResponseItem::ImageGenerationCall { .. } => true,
         _ => false,
     }
+}
+
+/// Returns true if the tool call is a function-call-based web_search (not MCP).
+fn is_web_search_call(call: &crate::tools::router::ToolCall) -> bool {
+    call.tool_name.namespace.is_none()
+        && call.tool_name.name.as_str() == "web_search"
+        && matches!(
+            call.payload,
+            crate::tools::context::ToolPayload::Function { .. }
+        )
+}
+
+/// Extract the `query` field from a web_search function call's JSON arguments.
+fn extract_web_search_query(payload: &crate::tools::context::ToolPayload) -> Option<String> {
+    if let crate::tools::context::ToolPayload::Function { arguments } = payload {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) {
+            return value.get("query").and_then(|q| q.as_str().map(String::from));
+        }
+    }
+    None
 }
 
 pub(crate) fn response_input_to_response_item(input: &ResponseInputItem) -> Option<ResponseItem> {

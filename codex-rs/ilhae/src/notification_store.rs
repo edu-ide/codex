@@ -4,8 +4,11 @@
 //! and Telegram messages at `~/.ilhae/notifications.db`.
 
 use chrono::Utc;
-use rusqlite::{Connection, Result as SqlResult, params};
-use serde::{Deserialize, Serialize};
+use rusqlite::Connection;
+use rusqlite::Result as SqlResult;
+use rusqlite::params;
+use serde::Deserialize;
+use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
 use uuid::Uuid;

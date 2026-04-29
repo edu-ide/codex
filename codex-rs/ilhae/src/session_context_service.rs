@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
-use agent_client_protocol_schema::{ContentBlock, TextContent};
+use agent_client_protocol_schema::ContentBlock;
+use agent_client_protocol_schema::TextContent;
 use brain_rs::BrainService;
 use brain_session_rs::session_store::SessionInfo;
 use moka::sync::Cache;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::{
-    ARTIFACT_INSTRUCTION, infer_agent_id_from_command,
-    session_persistence_service::SessionRegistryService, settings_store::SettingsStore,
-};
+use crate::ARTIFACT_INSTRUCTION;
+use crate::infer_agent_id_from_command;
+use crate::session_persistence_service::SessionRegistryService;
+use crate::settings_store::SettingsStore;
 
 const ADVISOR_MODE_REVIEW_FIRST_INSTRUCTION: &str = r#"
 <system_directive priority="high">

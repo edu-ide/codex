@@ -1,19 +1,26 @@
 use crate::admin_builtins::kb;
 use crate::config;
 use crate::settings_store::SettingsStore;
-use crate::settings_types::{
-    KnowledgeRuntimeStatus, default_knowledge_report_relative_path, default_knowledge_report_target,
-};
+use crate::settings_types::KnowledgeRuntimeStatus;
+use crate::settings_types::default_knowledge_report_relative_path;
+use crate::settings_types::default_knowledge_report_target;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
-use std::fs::{self, OpenOptions};
-use std::hash::{Hash, Hasher};
+use std::fs::OpenOptions;
+use std::fs::{self};
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{info, warn};
+use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+use tracing::info;
+use tracing::warn;
 
 const DEFAULT_FAILURE_COOLDOWN_SECS: u64 = 300;
 const LOCK_STALE_AFTER_SECS: u64 = 7200;

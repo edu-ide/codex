@@ -1,9 +1,10 @@
 // commands
 
+use crate::RELAY_DESKTOP_READY_TIMEOUT_MS;
 use crate::SharedState;
 use crate::relay_server::RelayEvent;
+use crate::relay_wait_timeout_from_payload;
 use crate::telegram_client;
-use crate::{RELAY_DESKTOP_READY_TIMEOUT_MS, relay_wait_timeout_from_payload};
 use serde_json::json;
 use tracing::info;
 pub async fn handle_relay_bootstrap(

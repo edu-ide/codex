@@ -3,9 +3,11 @@
 //! This test ensures that the codex-ilhae binary natively supports
 //! the ACP protocol over HTTP.
 
-use serde_json::{Value, json};
+use serde_json::Value;
+use serde_json::json;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
+use std::process::Stdio;
 use std::time::Duration;
 
 #[test]

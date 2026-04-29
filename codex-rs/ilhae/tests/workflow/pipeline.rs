@@ -1,7 +1,10 @@
 use serde_json::json;
-use std::io::{BufRead, BufReader, Write};
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
+use std::process::Stdio;
 use std::time::Duration;
 
 #[test]

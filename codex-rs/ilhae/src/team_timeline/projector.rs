@@ -2,7 +2,8 @@ use serde_json::json;
 
 use crate::context_proxy::team_utils::TeamSplitMessage;
 
-use super::events::{TeamTimelineEvent, TeamTimelineKind};
+use super::events::TeamTimelineEvent;
+use super::events::TeamTimelineKind;
 
 pub fn delegation_started_event(
     target_role: &str,

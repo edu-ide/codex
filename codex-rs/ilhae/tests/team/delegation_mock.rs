@@ -15,13 +15,16 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use a2a_rs::event::{EventBus, ExecutionEvent};
-use a2a_rs::executor::{AgentExecutor, RequestContext};
+use a2a_rs::event::EventBus;
+use a2a_rs::event::ExecutionEvent;
+use a2a_rs::executor::AgentExecutor;
+use a2a_rs::executor::RequestContext;
 use a2a_rs::proxy::A2aProxy;
 use a2a_rs::server::A2AServer;
 use a2a_rs::store::InMemoryTaskStore;
 use a2a_rs::types::*;
-use ilhae_proxy::context_proxy::{TeamRoleTarget, TeamRuntimeConfig};
+use ilhae_proxy::context_proxy::TeamRoleTarget;
+use ilhae_proxy::context_proxy::TeamRuntimeConfig;
 
 // ─── Mock Agent ──────────────────────────────────────────────────────────
 

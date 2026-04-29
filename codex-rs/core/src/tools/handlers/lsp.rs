@@ -1,13 +1,17 @@
 use async_trait::async_trait;
 use rmcp::schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::function_tool::FunctionCallError;
-use crate::tools::context::{FunctionToolOutput, ToolInvocation, ToolPayload};
-use crate::tools::registry::{ToolHandler, ToolKind};
+use crate::tools::context::FunctionToolOutput;
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolHandler;
+use crate::tools::registry::ToolKind;
 
 use super::lsp_manager::LspServerManager;
 use super::parse_arguments_with_base_path;

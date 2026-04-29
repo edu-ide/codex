@@ -135,7 +135,8 @@ async fn start_mock_user_agent(port: u16, response_text: &str) -> tokio::task::J
         .unwrap_or_else(|_| panic!("Failed to bind mock UA on port {}", port));
 
     tokio::spawn(async move {
-        use axum::{Router, routing::post};
+        use axum::Router;
+        use axum::routing::post;
         let body_clone = body_str.clone();
         let app = Router::new().route(
             "/",

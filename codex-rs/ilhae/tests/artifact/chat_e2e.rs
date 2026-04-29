@@ -8,11 +8,16 @@
 //!
 //! Run: `cargo test --test artifact_chat_e2e -- --nocapture`
 
-use serde_json::{Value, json};
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use serde_json::Value;
+use serde_json::json;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Write;
+use std::process::Command;
+use std::process::Stdio;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 // ─── Proxy Process Helper ────────────────────────────────────────────────
 

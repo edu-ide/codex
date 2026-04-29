@@ -6,7 +6,6 @@
 
 use agent_client_protocol_schema::NewSessionResponse;
 use serde_json::json;
-use std::path::Path;
 use tracing::info;
 
 use crate::helpers::ILHAE_DIR_NAME;
@@ -342,10 +341,7 @@ fn ilhae_profile_model_name(
     profile: &crate::config::IlhaeProfileConfig,
 ) -> String {
     let native_model = if profile.native_runtime.enabled {
-        Path::new(&profile.native_runtime.model_path)
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().to_string())
-            .filter(|stem| !stem.trim().is_empty())
+        crate::config::native_runtime_model_name_from_path(&profile.native_runtime.model_path)
     } else {
         None
     };

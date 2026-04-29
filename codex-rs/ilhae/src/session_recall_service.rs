@@ -1,10 +1,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_client_protocol_schema::{ContentBlock, TextContent};
+use agent_client_protocol_schema::ContentBlock;
+use agent_client_protocol_schema::TextContent;
 use brain_knowledge_rs::memory_store;
 use brain_rs::BrainService;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 use crate::helpers::is_ilhae_native_agent_id;
 

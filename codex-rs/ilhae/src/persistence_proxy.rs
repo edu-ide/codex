@@ -5,24 +5,49 @@
 
 use std::sync::Arc;
 
-use sacp::{Agent, Client, Conductor, ConnectTo, ConnectionTo, Proxy, Responder};
-use tracing::{info, warn};
+use sacp::Agent;
+use sacp::Client;
+use sacp::Conductor;
+use sacp::ConnectTo;
+use sacp::ConnectionTo;
+use sacp::Proxy;
+use sacp::Responder;
+use tracing::info;
+use tracing::warn;
 
-use crate::{
-    DeleteSessionRequest, DeleteSessionResponse, IlhaeAppSessionCreateRequest,
-    IlhaeAppSessionCreateResponse, IlhaeAppSessionDeleteRequest, IlhaeAppSessionDeleteResponse,
-    IlhaeAppSessionGetRequest, IlhaeAppSessionGetResponse, IlhaeAppSessionListRequest,
-    IlhaeAppSessionListResponse, IlhaeAppSessionSearchRequest, IlhaeAppSessionSearchResponse,
-    IlhaeAppSessionUpdateRequest, IlhaeAppSessionUpdateResponse, IlhaeAppTimelineReadRequest,
-    IlhaeAppTimelineReadResponse, ListSessionsRequest, ListSessionsResponse,
-    LoadSessionMessagesRequest, LoadSessionMessagesResponse, LoadTeamTimelineRequest,
-    LoadTeamTimelineResponse, SearchSessionsRequest, SearchSessionsResponse, SessionInfoDto,
-    UpdateSessionTitleRequest, UpdateSessionTitleResponse, enrich_response_with_config_options,
-    infer_agent_id_from_command,
-};
-use agent_client_protocol_schema::{
-    LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse,
-};
+use crate::DeleteSessionRequest;
+use crate::DeleteSessionResponse;
+use crate::IlhaeAppSessionCreateRequest;
+use crate::IlhaeAppSessionCreateResponse;
+use crate::IlhaeAppSessionDeleteRequest;
+use crate::IlhaeAppSessionDeleteResponse;
+use crate::IlhaeAppSessionGetRequest;
+use crate::IlhaeAppSessionGetResponse;
+use crate::IlhaeAppSessionListRequest;
+use crate::IlhaeAppSessionListResponse;
+use crate::IlhaeAppSessionSearchRequest;
+use crate::IlhaeAppSessionSearchResponse;
+use crate::IlhaeAppSessionUpdateRequest;
+use crate::IlhaeAppSessionUpdateResponse;
+use crate::IlhaeAppTimelineReadRequest;
+use crate::IlhaeAppTimelineReadResponse;
+use crate::ListSessionsRequest;
+use crate::ListSessionsResponse;
+use crate::LoadSessionMessagesRequest;
+use crate::LoadSessionMessagesResponse;
+use crate::LoadTeamTimelineRequest;
+use crate::LoadTeamTimelineResponse;
+use crate::SearchSessionsRequest;
+use crate::SearchSessionsResponse;
+use crate::SessionInfoDto;
+use crate::UpdateSessionTitleRequest;
+use crate::UpdateSessionTitleResponse;
+use crate::enrich_response_with_config_options;
+use crate::infer_agent_id_from_command;
+use agent_client_protocol_schema::LoadSessionRequest;
+use agent_client_protocol_schema::LoadSessionResponse;
+use agent_client_protocol_schema::NewSessionRequest;
+use agent_client_protocol_schema::NewSessionResponse;
 
 // ─── PersistenceProxy state ─────────────────────────────────────────────
 

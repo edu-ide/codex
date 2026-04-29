@@ -1,18 +1,30 @@
 use codex_protocol::config_types::TrustLevel;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use tracing::{info, warn};
+use std::path::Path;
+use std::path::PathBuf;
+use tracing::info;
+use tracing::warn;
 
 use crate::settings_store::SettingsStore;
-use crate::settings_types::{
-    default_advisor_preset, default_approval_preset, default_auto_max_turns,
-    default_auto_pause_on_error, default_auto_timebox_minutes, default_knowledge_mode,
-    default_knowledge_periodic_interval_secs, default_knowledge_poll_interval_secs,
-    default_knowledge_report_relative_path, default_knowledge_report_target,
-    default_self_improvement_enabled, default_self_improvement_preset, default_team_backend,
-    default_team_max_retries, default_team_merge_policy, default_team_pause_on_error,
-    default_thinking_mode, normalize_thinking_mode, thinking_mode_enabled,
-};
+use crate::settings_types::default_advisor_preset;
+use crate::settings_types::default_approval_preset;
+use crate::settings_types::default_auto_max_turns;
+use crate::settings_types::default_auto_pause_on_error;
+use crate::settings_types::default_auto_timebox_minutes;
+use crate::settings_types::default_knowledge_mode;
+use crate::settings_types::default_knowledge_periodic_interval_secs;
+use crate::settings_types::default_knowledge_poll_interval_secs;
+use crate::settings_types::default_knowledge_report_relative_path;
+use crate::settings_types::default_knowledge_report_target;
+use crate::settings_types::default_self_improvement_enabled;
+use crate::settings_types::default_self_improvement_preset;
+use crate::settings_types::default_team_backend;
+use crate::settings_types::default_team_max_retries;
+use crate::settings_types::default_team_merge_policy;
+use crate::settings_types::default_team_pause_on_error;
+use crate::settings_types::default_thinking_mode;
+use crate::settings_types::normalize_thinking_mode;
+use crate::settings_types::thinking_mode_enabled;
 
 /// Resolve the ilhae data directory (~/.ilhae).
 pub fn resolve_ilhae_data_dir() -> PathBuf {
@@ -525,6 +537,7 @@ pub fn profile_to_dto(id: &str, profile: &IlhaeProfileConfig) -> crate::IlhaeApp
             kairos: profile.agent.kairos,
             self_improvement: profile.agent.self_improvement,
             self_improvement_preset: profile.agent.self_improvement_preset.clone(),
+            native_runtime_enabled: profile.native_runtime.enabled,
         },
         permissions: crate::IlhaeAppProfilePermissionsDto {
             approval_preset: profile.permissions.approval_preset.clone(),
@@ -627,7 +640,10 @@ pub fn dto_to_profile(dto: &crate::IlhaeAppProfileDto) -> IlhaeProfileConfig {
                 },
             }),
         system2: IlhaeProfileSystem2Config::default(),
-        native_runtime: IlhaeProfileNativeRuntimeConfig::default(),
+        native_runtime: IlhaeProfileNativeRuntimeConfig {
+            enabled: dto.agent.native_runtime_enabled,
+            ..Default::default()
+        },
     }
 }
 
@@ -681,6 +697,7 @@ pub fn upsert_ilhae_profile(
         .and_then(|existing| existing.knowledge.clone());
     let mut persisted = dto_to_profile(&profile);
     persisted.native_runtime = existing_native_runtime;
+    persisted.native_runtime.enabled = profile.agent.native_runtime_enabled;
     persisted.knowledge = profile
         .knowledge
         .as_ref()
@@ -742,9 +759,6 @@ pub fn get_native_runtime_config(
         .map(str::to_string)
         .or(config.profile.active)?;
     let profile = config.profiles.get(&target_profile)?;
-    if !profile.native_runtime.enabled {
-        return None;
-    }
     Some((target_profile, profile.native_runtime.clone()))
 }
 
@@ -862,6 +876,18 @@ pub fn apply_ilhae_profile_projection(
     settings.set_value(
         "agent.kairos_enabled",
         serde_json::json!(profile.agent.kairos),
+    )?;
+    settings.set_value(
+        "agent.thinking_mode",
+        serde_json::json!(if profile.agent.native_runtime_enabled {
+            "on"
+        } else {
+            "off"
+        }),
+    )?;
+    settings.set_value(
+        "agent.native_runtime_enabled",
+        serde_json::json!(profile.agent.native_runtime_enabled),
     )?;
     settings.set_value(
         "agent.knowledge_mode",
@@ -1042,13 +1068,17 @@ fn parse_context_window_from_native_args(args: &[String]) -> u64 {
     let mut idx = 0usize;
     while idx < args.len() {
         let arg = args[idx].trim();
-        if matches!(arg, "-c" | "--ctx-size" | "--context-size") {
+        if matches!(
+            arg,
+            "-c" | "--ctx-size" | "--context-size" | "--context-length"
+        ) {
             if let Some(value) = args.get(idx + 1).and_then(|next| next.parse::<u64>().ok()) {
                 return value;
             }
         } else if let Some(value) = arg
             .strip_prefix("--ctx-size=")
             .or_else(|| arg.strip_prefix("--context-size="))
+            .or_else(|| arg.strip_prefix("--context-length="))
             .and_then(|value| value.parse::<u64>().ok())
         {
             return value;
@@ -1087,13 +1117,26 @@ fn profile_runtime_model_name(profile: &IlhaeProfileConfig) -> Option<String> {
         return None;
     }
 
-    let model_name = Path::new(raw_model_path)
-        .file_stem()
-        .or_else(|| Path::new(raw_model_path).file_name())
-        .map(|name| name.to_string_lossy().trim().to_string())
-        .filter(|name| !name.is_empty())?;
+    native_runtime_model_name_from_path(raw_model_path)
+}
 
-    if model_name.eq_ignore_ascii_case("default") {
+pub fn native_runtime_model_name_from_path(raw_model_path: &str) -> Option<String> {
+    let path = Path::new(raw_model_path.trim());
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    let use_stem = matches!(
+        extension.as_deref(),
+        Some("gguf" | "safetensors" | "bin" | "pt" | "pth" | "onnx" | "ckpt")
+    );
+    let name = if use_stem {
+        path.file_stem().or_else(|| path.file_name())
+    } else {
+        path.file_name().or_else(|| path.file_stem())
+    }?;
+    let model_name = name.to_string_lossy().trim().to_string();
+    if model_name.is_empty() || model_name.eq_ignore_ascii_case("default") {
         None
     } else {
         Some(model_name)
@@ -1103,11 +1146,7 @@ fn profile_runtime_model_name(profile: &IlhaeProfileConfig) -> Option<String> {
 fn native_runtime_for_profile(
     profile: &IlhaeProfileConfig,
 ) -> Option<&IlhaeProfileNativeRuntimeConfig> {
-    if profile.native_runtime.enabled {
-        Some(&profile.native_runtime)
-    } else {
-        None
-    }
+    Some(&profile.native_runtime)
 }
 
 fn native_model_provider_id_for_profile(profile_id: &str) -> String {
@@ -1167,11 +1206,7 @@ fn codex_profile_table_for_ilhae_profile(
     let native = native_runtime_for_profile(profile);
     let mut table = toml::value::Table::new();
     let model_name = native
-        .and_then(|runtime| {
-            Path::new(&runtime.model_path)
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
-        })
+        .and_then(|runtime| native_runtime_model_name_from_path(&runtime.model_path))
         .or_else(|| profile.agent.command.clone())
         .or_else(|| profile.agent.engine_id.clone())
         .unwrap_or_else(|| "ilhae".to_string());
@@ -1186,7 +1221,23 @@ fn codex_profile_table_for_ilhae_profile(
                 .and_then(|runtime| runtime.provider.clone())
                 .filter(|provider| !provider.trim().is_empty())
         })
-        .unwrap_or_else(|| profile_engine_id(profile));
+        .unwrap_or_else(|| {
+            let engine = profile_engine_id(profile);
+            if engine == "ilhae" || engine == "codex" {
+                "llama-server".to_string()
+            } else {
+                engine
+            }
+        });
+
+    // Final safety check: if the resolved provider is "ilhae" or "codex",
+    // it MUST be mapped to "llama-server" because "ilhae" is not a valid
+    // provider ID in the core engine (it's the engine name).
+    let model_provider = if model_provider == "ilhae" || model_provider == "codex" {
+        "llama-server".to_string()
+    } else {
+        model_provider
+    };
 
     table.insert("model".to_string(), toml::Value::String(model_name));
     table.insert(
@@ -2017,6 +2068,50 @@ requires_openai_auth = false
         assert_eq!(
             local_provider.get("base_url").and_then(toml::Value::as_str),
             Some("http://127.0.0.1:8081/v1")
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_preserves_sglang_directory_model_names() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let mut config = IlhaeTomlConfig::default();
+        config.profile.active = Some("qwen3.6-sglang".to_string());
+
+        let mut sglang = IlhaeProfileConfig::default();
+        sglang.agent.engine_id = Some("sglang".to_string());
+        sglang.agent.command = Some("ilhae".to_string());
+        sglang.native_runtime.enabled = true;
+        sglang.native_runtime.base_url = "http://192.168.219.113:30000/v1".to_string();
+        sglang.native_runtime.provider = Some("sglang".to_string());
+        sglang.native_runtime.model_path = "/home/sk/ws/llm/models/Qwen3.6-27B".to_string();
+        sglang.native_runtime.args = vec!["--context-length".to_string(), "262144".to_string()];
+        config.profiles.insert("qwen3.6-sglang".to_string(), sglang);
+
+        save_ilhae_toml_config(&config).expect("save config");
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
+            .expect("read managed config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let profile = parsed
+            .get("profiles")
+            .and_then(toml::Value::as_table)
+            .and_then(|profiles| profiles.get("qwen3.6-sglang"))
+            .and_then(toml::Value::as_table)
+            .expect("sglang profile");
+
+        assert_eq!(
+            profile.get("model").and_then(toml::Value::as_str),
+            Some("Qwen3.6-27B")
+        );
+        assert_eq!(
+            profile
+                .get("model_context_window")
+                .and_then(toml::Value::as_integer),
+            Some(262144)
         );
     }
 
