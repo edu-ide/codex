@@ -1,4 +1,4 @@
-use async_trait::async_trait;
+use codex_tools::ToolName;
 use rmcp::schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -69,6 +69,10 @@ impl LspToolHandler {
 
 impl ToolHandler for LspToolHandler {
     type Output = FunctionToolOutput;
+
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain(LSP_TOOL_NAME)
+    }
 
     fn kind(&self) -> ToolKind {
         ToolKind::Function

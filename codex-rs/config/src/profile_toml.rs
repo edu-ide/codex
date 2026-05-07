@@ -7,6 +7,7 @@ use crate::config_toml::ToolsToml;
 use crate::types::AnalyticsConfigToml;
 use crate::types::ApprovalsReviewer;
 use crate::types::Personality;
+use crate::types::SessionPickerViewMode;
 use crate::types::WindowsToml;
 use codex_features::FeaturesToml;
 use codex_protocol::config_types::ReasoningSummary;
@@ -23,6 +24,7 @@ use codex_protocol::protocol::AskForApproval;
 #[schemars(deny_unknown_fields)]
 pub struct ConfigProfile {
     pub model: Option<String>,
+    /// Optional explicit service tier preference for new turns (`fast` or `flex`).
     pub service_tier: Option<ServiceTier>,
     /// The key in the `model_providers` map identifying the
     /// [`ModelProviderInfo`] to use.
@@ -40,11 +42,14 @@ pub struct ConfigProfile {
     pub chatgpt_base_url: Option<String>,
     /// Optional path to a file containing model instructions.
     pub model_instructions_file: Option<AbsolutePathBuf>,
+    /// Deprecated: ignored.
+    #[schemars(skip)]
+    pub js_repl_node_path: Option<AbsolutePathBuf>,
+    /// Deprecated: ignored.
+    #[schemars(skip)]
+    pub js_repl_node_module_dirs: Option<Vec<AbsolutePathBuf>>,
     /// Optional absolute path to patched zsh used by zsh-exec-bridge-backed shell execution.
     pub zsh_path: Option<AbsolutePathBuf>,
-    pub js_repl_node_path: Option<AbsolutePathBuf>,
-    /// Ordered list of directories to search for Node modules in `js_repl`.
-    pub js_repl_node_module_dirs: Option<Vec<AbsolutePathBuf>>,
     /// Deprecated: ignored. Use `model_instructions_file`.
     #[schemars(skip)]
     pub experimental_instructions_file: Option<AbsolutePathBuf>,
@@ -59,6 +64,9 @@ pub struct ConfigProfile {
     pub tools: Option<ToolsToml>,
     pub web_search: Option<WebSearchMode>,
     pub analytics: Option<AnalyticsConfigToml>,
+    /// TUI settings scoped to this profile.
+    #[serde(default)]
+    pub tui: Option<ProfileTui>,
     #[serde(default)]
     pub windows: Option<WindowsToml>,
     /// Optional feature toggles scoped to this profile.
@@ -67,6 +75,16 @@ pub struct ConfigProfile {
     #[schemars(schema_with = "crate::schema::features_schema")]
     pub features: Option<FeaturesToml>,
     pub oss_provider: Option<String>,
+}
+
+/// TUI settings supported inside a named profile.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
+pub struct ProfileTui {
+    /// Preferred layout for resume/fork session picker results.
+    #[serde(default)]
+    pub session_picker_view: Option<SessionPickerViewMode>,
 }
 
 impl From<ConfigProfile> for codex_app_server_protocol::Profile {

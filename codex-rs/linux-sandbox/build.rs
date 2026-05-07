@@ -5,6 +5,7 @@ use std::path::PathBuf;
 fn main() {
     // Tell rustc/clippy that this is an expected cfg value.
     println!("cargo:rustc-check-cfg=cfg(vendored_bwrap_available)");
+    println!("cargo:rerun-if-env-changed=CODEX_BWRAP_SHA256");
     println!("cargo:rerun-if-env-changed=CODEX_BWRAP_SOURCE_DIR");
     println!("cargo:rerun-if-env-changed=PKG_CONFIG_ALLOW_CROSS");
     println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");

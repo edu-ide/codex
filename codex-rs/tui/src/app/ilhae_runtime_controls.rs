@@ -195,12 +195,11 @@ impl App {
                 let result =
                     codex_ilhae::stop_native_runtime_server_for_config(&profile_id, &config).await;
                 if result.is_ok() {
-                    let still_alive =
-                        tokio::time::timeout(
-                            std::time::Duration::from_secs(3),
-                            codex_ilhae::native_runtime_healthcheck(&health_url),
-                        )
-                        .await;
+                    let still_alive = tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        codex_ilhae::native_runtime_healthcheck(&health_url),
+                    )
+                    .await;
                     match still_alive {
                         Ok(false) | Err(_) => {
                             // timeout = server likely gone
@@ -214,10 +213,10 @@ impl App {
                         }
                     }
                 } else {
-                    self.chat_widget
-                        .add_error_message(
-                            format!("⚠ Failed to stop local server: {}", result.unwrap_err())
-                        );
+                    self.chat_widget.add_error_message(format!(
+                        "⚠ Failed to stop local server: {}",
+                        result.unwrap_err()
+                    ));
                 }
             } else {
                 let result = codex_ilhae::spawn_native_runtime_server(&config);
@@ -226,7 +225,7 @@ impl App {
                         // Verify the server actually started
                         let health_url = config.health_url.clone();
                         let startup_secs = config.startup_timeout_secs;
-                        let mut last = std::time::Instant::now();
+                        let last = std::time::Instant::now();
                         let timeout = std::time::Duration::from_secs(startup_secs.max(5));
                         while last.elapsed() < timeout {
                             if codex_ilhae::native_runtime_healthcheck(&health_url).await {

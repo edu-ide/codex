@@ -402,7 +402,7 @@ impl ConnectTo<Conductor> for PersistenceProxy {
                 async move |req: NewSessionRequest, responder: Responder<NewSessionResponse>, cx: ConnectionTo<Conductor>| {
                     cx_cache.try_add(cx.clone()).await;
                     let cwd = req.cwd.display().to_string();
-                    
+
                     // Capture dynamic MCP servers before forwarding req
                     let mcp_servers_clone = req.mcp_servers.clone();
 
@@ -426,14 +426,14 @@ impl ConnectTo<Conductor> for PersistenceProxy {
                             match result {
                                 Ok(response) => {
                                     let session_id = response.session_id.0.to_string();
-                                    
+
                                     let is_team = settings.get().agent.team_mode;
                                     let agent_id = if is_team {
                                         "team".to_string()
                                     } else {
                                         infer_agent_id_from_command(&settings.get().agent.command)
                                     };
-                                    
+
                                     info!("NewSession created by agent: session_id={}, has_config_options={}, has_modes={}",
                                         session_id,
                                         response.config_options.is_some(),

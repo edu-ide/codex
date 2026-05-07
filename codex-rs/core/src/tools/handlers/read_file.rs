@@ -1,4 +1,4 @@
-use async_trait::async_trait;
+use codex_tools::ToolName;
 use serde::Deserialize;
 use std::path::Path;
 use std::path::PathBuf;
@@ -33,6 +33,10 @@ fn default_limit() -> usize {
 
 impl ToolHandler for ReadFileHandler {
     type Output = FunctionToolOutput;
+
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("read_file")
+    }
 
     fn kind(&self) -> ToolKind {
         ToolKind::Function

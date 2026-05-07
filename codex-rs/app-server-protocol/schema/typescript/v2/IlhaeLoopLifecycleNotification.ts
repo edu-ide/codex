@@ -4,4 +4,4 @@
 import type { LoopLifecycleItem } from "../LoopLifecycleItem";
 import type { LoopLifecycleKind } from "../LoopLifecycleKind";
 
-export type IlhaeLoopLifecycleNotification = { "event": "started", sessionId: string, item: LoopLifecycleItem, } | { "event": "progress", sessionId: string, itemId: string, kind: LoopLifecycleKind, summary: string, detail?: string, counts?: { [key in string]?: bigint }, } | { "event": "completed", sessionId: string, item: LoopLifecycleItem, } | { "event": "failed", sessionId: string, item: LoopLifecycleItem, };
+export type IlhaeLoopLifecycleNotification = { "event": "started", sessionId: string, item: LoopLifecycleItem, } | { "event": "progress", sessionId: string, itemId: string, kind: LoopLifecycleKind, summary: string, detail: string | null, counts: { [key in string]?: bigint } | null, } | { "event": "completed", sessionId: string, item: LoopLifecycleItem, } | { "event": "failed", sessionId: string, item: LoopLifecycleItem, };

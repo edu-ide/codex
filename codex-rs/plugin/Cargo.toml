@@ -1,5 +1,8 @@
 [package]
+edition.workspace = true
+license.workspace = true
 name = "codex-plugin"
+version.workspace = true
 
 [lib]
 doctest = false
@@ -9,20 +12,8 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[package.edition]
-workspace = true
-
-[package.license]
-workspace = true
-
-[package.version]
-workspace = true
-
-[dependencies.codex-utils-absolute-path]
-workspace = true
-
-[dependencies.codex-utils-plugins]
-workspace = true
-
-[dependencies.thiserror]
-version = "2.0.17"
+[dependencies]
+codex-config = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-plugins = { workspace = true }
+thiserror = { workspace = true }

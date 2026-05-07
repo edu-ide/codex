@@ -13,6 +13,7 @@ axum = { workspace = true, default-features = false, features = [
     "http1",
     "tokio",
 ] }
+codex-api = { workspace = true }
 codex-client = { workspace = true }
 codex-config = { workspace = true }
 codex-exec-server = { workspace = true }
@@ -36,6 +37,7 @@ rmcp = { workspace = true, default-features = false, features = [
     "macros",
     "schemars",
     "server",
+    "transport-async-rw",
     "transport-child-process",
     "transport-streamable-http-client-reqwest",
     "transport-streamable-http-server",

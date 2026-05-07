@@ -10,6 +10,12 @@ use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 
 fn normalize_agents_display_path(path: &Path) -> String {
+    if let Some(rel) = relativize_to_home(path) {
+        if rel.as_os_str().is_empty() {
+            return "~".to_string();
+        }
+        return format!("~{}{}", std::path::MAIN_SEPARATOR, rel.display());
+    }
     dunce::simplified(path).display().to_string()
 }
 

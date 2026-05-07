@@ -1183,8 +1183,13 @@ impl ProcessSupervisor {
 
                     if !should_be_enabled {
                         // Stop server if disabled
-                        if let Some((profile_id, config)) = crate::config::get_native_runtime_config(None) {
-                            info!("[Supervisor] Stopping local-server (profile: {})", profile_id);
+                        if let Some((profile_id, config)) =
+                            crate::config::get_native_runtime_config(None)
+                        {
+                            info!(
+                                "[Supervisor] Stopping local-server (profile: {})",
+                                profile_id
+                            );
                             let _ = crate::startup_main::stop_native_runtime_server_for_config(
                                 &profile_id,
                                 &config,
@@ -1228,7 +1233,7 @@ impl ProcessSupervisor {
                     if let Some(pid) = proc.pid {
                         if let Some(sys_proc) = self.sys.process(sysinfo::Pid::from_u32(pid)) {
                             let memory_usage = sys_proc.memory(); // in bytes
-                                                                  // OOM Threshold: 1.5GB
+                            // OOM Threshold: 1.5GB
                             if memory_usage > 1_536 * 1024 * 1024 {
                                 warn!(
                                     "[Supervisor] ⚠️ OOM WARNING: {} (PID {}) memory usage {} bytes exceeds threshold! Initiating proactive migration...",
@@ -1250,13 +1255,12 @@ impl ProcessSupervisor {
                                         "[Supervisor] Spawning replacement for {} on new port {}...",
                                         proc.name, new_port
                                     );
-                                    let team_env = proc
-                                        .workspace_path
-                                        .as_ref()
-                                        .map(|ws| crate::TeamSpawnEnv {
+                                    let team_env = proc.workspace_path.as_ref().map(|ws| {
+                                        crate::TeamSpawnEnv {
                                             workspace_path: ws.clone(),
                                             role: proc.role.clone().unwrap_or_default(),
-                                        });
+                                        }
+                                    });
 
                                     match self
                                         .spawner
@@ -1290,7 +1294,10 @@ impl ProcessSupervisor {
                                             }
                                         }
                                         Err(e) => {
-                                            warn!("[Supervisor] Failed to spawn OOM replacement: {}", e)
+                                            warn!(
+                                                "[Supervisor] Failed to spawn OOM replacement: {}",
+                                                e
+                                            )
                                         }
                                     }
                                 }

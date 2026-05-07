@@ -19,6 +19,10 @@ async fn resume_startup_does_not_consume_model_availability_nux_count() -> Resul
 
     let repo_root = codex_utils_cargo_bin::repo_root()?;
     let codex_home = tempdir()?;
+    let ilhae_config_dir = codex_home.path().join("ilhae-config");
+    let ilhae_data_dir = codex_home.path().join("ilhae-data");
+    std::fs::create_dir_all(&ilhae_config_dir)?;
+    std::fs::create_dir_all(&ilhae_data_dir)?;
 
     let mut source_catalog: JsonValue = serde_json::to_value(bundled_models_response()?)?;
     let models = source_catalog
@@ -89,6 +93,8 @@ trust_level = "trusted"
         .arg(&repo_root)
         .arg("seed session for resume")
         .env("CODEX_HOME", codex_home.path())
+        .env("ILHAE_CONFIG_DIR", &ilhae_config_dir)
+        .env("ILHAE_DATA_DIR", &ilhae_data_dir)
         .env("OPENAI_API_KEY", "dummy")
         .env("CODEX_RS_SSE_FIXTURE", fixture_path)
         .output()
@@ -103,6 +109,14 @@ trust_level = "trusted"
     env.insert(
         "CODEX_HOME".to_string(),
         codex_home.path().display().to_string(),
+    );
+    env.insert(
+        "ILHAE_CONFIG_DIR".to_string(),
+        ilhae_config_dir.display().to_string(),
+    );
+    env.insert(
+        "ILHAE_DATA_DIR".to_string(),
+        ilhae_data_dir.display().to_string(),
     );
     env.insert("OPENAI_API_KEY".to_string(), "dummy".to_string());
 

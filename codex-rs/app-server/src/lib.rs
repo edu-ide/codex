@@ -1,11 +1,13 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use codex_arg0::Arg0DispatchPaths;
+use codex_config::ConfigLayerStackOrdering;
+use codex_config::LoaderOverrides;
 use codex_config::NoopThreadConfigLoader;
+use codex_config::RemoteThreadConfigLoader;
 use codex_config::ThreadConfigLoader;
 use codex_core::config::Config;
-use codex_core::config_loader::ConfigLayerStackOrdering;
-use codex_core::config_loader::LoaderOverrides;
+use codex_core::resolve_installation_id;
 use codex_exec_server::EnvironmentManagerArgs;
 use codex_features::Feature;
 use codex_login::AuthManager;
@@ -20,6 +22,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 
+use crate::analytics_utils::analytics_events_client_from_config;
 use crate::config_manager::ConfigManager;
 use crate::message_processor::MessageProcessor;
 use crate::message_processor::MessageProcessorArgs;
@@ -33,6 +36,7 @@ use crate::transport::OutboundConnectionState;
 use crate::transport::TransportEvent;
 use crate::transport::auth::policy_from_settings;
 use crate::transport::route_outgoing_envelope;
+use crate::transport::start_control_socket_acceptor;
 use crate::transport::start_remote_control;
 use crate::transport::start_stdio_connection;
 use crate::transport::start_websocket_acceptor;
@@ -40,18 +44,20 @@ use codex_analytics::AppServerRpcTransport;
 use codex_app_server_protocol::ConfigLayerSource;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::JSONRPCMessage;
+use codex_app_server_protocol::RemoteControlStatusChangedNotification;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::TextPosition as AppTextPosition;
 use codex_app_server_protocol::TextRange as AppTextRange;
+use codex_config::ConfigLoadError;
+use codex_config::TextRange as CoreTextRange;
 use codex_core::ExecPolicyError;
 use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::find_codex_home;
-use codex_core::config_loader::ConfigLoadError;
-use codex_core::config_loader::TextRange as CoreTextRange;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;
+use codex_rollout::state_db as rollout_state_db;
 use codex_state::log_db;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -70,32 +76,33 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 pub type AppServerTurnStartFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 pub type AppServerTurnStartHook = Arc<dyn Fn() -> AppServerTurnStartFuture + Send + Sync>;
+pub type ExternalServerNotificationReceiver = mpsc::Receiver<ServerNotification>;
 
 #[derive(Clone, Default)]
 pub struct AppServerRuntimeHooks {
     pub before_turn_start: Option<AppServerTurnStartHook>,
 }
 
+mod analytics_utils;
 mod app_server_tracing;
 mod bespoke_event_handling;
-mod codex_message_processor;
 mod command_exec;
 mod config;
-mod config_api;
 mod config_manager;
 mod config_manager_service;
-mod device_key_api;
+mod connection_rpc_gate;
 mod dynamic_tools;
 mod error_code;
-mod external_agent_config_api;
 mod filters;
-mod fs_api;
 mod fs_watch;
 mod fuzzy_file_search;
 pub mod in_process;
+mod mcp_refresh;
 mod message_processor;
 mod models;
 mod outgoing_message;
+mod request_processors;
+mod request_serialization;
 mod server_request_error;
 mod thread_state;
 mod thread_status;
@@ -104,11 +111,10 @@ mod transport;
 pub use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;
 pub use crate::error_code::INVALID_PARAMS_ERROR_CODE;
 pub use crate::transport::AppServerTransport;
+pub use crate::transport::app_server_control_socket_path;
 pub use crate::transport::auth::AppServerWebsocketAuthArgs;
 pub use crate::transport::auth::AppServerWebsocketAuthSettings;
 pub use crate::transport::auth::WebsocketAuthCliMode;
-
-pub type ExternalServerNotificationReceiver = mpsc::Receiver<ServerNotification>;
 
 const LOG_FORMAT_ENV_VAR: &str = "LOG_FORMAT";
 
@@ -119,6 +125,13 @@ enum LogFormat {
 }
 
 type StderrLogLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
+
+fn configured_thread_config_loader(config: &Config) -> Arc<dyn ThreadConfigLoader> {
+    match config.experimental_thread_config_endpoint.as_deref() {
+        Some(endpoint) => Arc::new(RemoteThreadConfigLoader::new(endpoint)),
+        None => Arc::new(NoopThreadConfigLoader),
+    }
+}
 
 /// Control-plane messages from the processor/transport side to the outbound router task.
 ///
@@ -365,6 +378,28 @@ pub async fn run_main(
     .await
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginStartupTasks {
+    Start,
+    Skip,
+}
+
+pub struct AppServerRuntimeOptions {
+    pub plugin_startup_tasks: PluginStartupTasks,
+    pub external_notifications: Option<ExternalServerNotificationReceiver>,
+    pub runtime_hooks: AppServerRuntimeHooks,
+}
+
+impl Default for AppServerRuntimeOptions {
+    fn default() -> Self {
+        Self {
+            plugin_startup_tasks: PluginStartupTasks::Start,
+            external_notifications: None,
+            runtime_hooks: AppServerRuntimeHooks::default(),
+        }
+    }
+}
+
 pub async fn run_main_with_transport(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
@@ -374,7 +409,7 @@ pub async fn run_main_with_transport(
     session_source: SessionSource,
     auth: AppServerWebsocketAuthSettings,
 ) -> IoResult<()> {
-    run_main_with_transport_and_server_notifications(
+    run_main_with_transport_options(
         arg0_paths,
         cli_config_overrides,
         loader_overrides,
@@ -382,12 +417,13 @@ pub async fn run_main_with_transport(
         transport,
         session_source,
         auth,
-        None,
+        AppServerRuntimeOptions::default(),
     )
     .await
 }
 
-pub async fn run_main_with_transport_and_server_notifications(
+#[allow(clippy::too_many_arguments)]
+pub async fn run_main_with_transport_options(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
     loader_overrides: LoaderOverrides,
@@ -395,44 +431,27 @@ pub async fn run_main_with_transport_and_server_notifications(
     transport: AppServerTransport,
     session_source: SessionSource,
     auth: AppServerWebsocketAuthSettings,
-    external_notifications: Option<ExternalServerNotificationReceiver>,
+    runtime_options: AppServerRuntimeOptions,
 ) -> IoResult<()> {
-    run_main_with_transport_notifications_and_runtime_hooks(
-        arg0_paths,
-        cli_config_overrides,
-        loader_overrides,
-        default_analytics_enabled,
-        transport,
-        session_source,
-        auth,
-        external_notifications,
-        AppServerRuntimeHooks::default(),
-    )
-    .await
-}
-
-pub async fn run_main_with_transport_notifications_and_runtime_hooks(
-    arg0_paths: Arg0DispatchPaths,
-    cli_config_overrides: CliConfigOverrides,
-    loader_overrides: LoaderOverrides,
-    default_analytics_enabled: bool,
-    transport: AppServerTransport,
-    session_source: SessionSource,
-    auth: AppServerWebsocketAuthSettings,
-    external_notifications: Option<ExternalServerNotificationReceiver>,
-    runtime_hooks: AppServerRuntimeHooks,
-) -> IoResult<()> {
-    let environment_manager = Arc::new(EnvironmentManager::new(EnvironmentManagerArgs::from_env(
-        ExecServerRuntimePaths::from_optional_paths(
-            arg0_paths.codex_self_exe.clone(),
-            arg0_paths.codex_linux_sandbox_exe.clone(),
-        )?,
-    )));
+    let environment_manager = Arc::new(
+        EnvironmentManager::new(EnvironmentManagerArgs::new(
+            ExecServerRuntimePaths::from_optional_paths(
+                arg0_paths.codex_self_exe.clone(),
+                arg0_paths.codex_linux_sandbox_exe.clone(),
+            )?,
+        ))
+        .await,
+    );
     let (transport_event_tx, mut transport_event_rx) =
         mpsc::channel::<TransportEvent>(CHANNEL_CAPACITY);
     let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<OutgoingEnvelope>(CHANNEL_CAPACITY);
     let (outbound_control_tx, mut outbound_control_rx) =
         mpsc::channel::<OutboundControlEvent>(CHANNEL_CAPACITY);
+    let AppServerRuntimeOptions {
+        plugin_startup_tasks,
+        external_notifications,
+        runtime_hooks,
+    } = runtime_options;
 
     // Parse CLI overrides once and derive the base Config eagerly so later
     // components do not need to work with raw TOML values.
@@ -443,39 +462,24 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
         )
     })?;
     let codex_home = find_codex_home()?;
-    let thread_config_loader: Arc<dyn ThreadConfigLoader> = Arc::new(NoopThreadConfigLoader);
     let config_manager = ConfigManager::new(
         codex_home.to_path_buf(),
         cli_kv_overrides.clone(),
         loader_overrides,
         Default::default(),
         arg0_paths.clone(),
-        thread_config_loader.clone(),
+        Arc::new(NoopThreadConfigLoader),
     );
     match config_manager
         .load_latest_config(/*fallback_cwd*/ None)
         .await
     {
         Ok(config) => {
-            let effective_toml = config.config_layer_stack.effective_config();
-            match effective_toml.try_into() {
-                Ok(config_toml) => {
-                    if let Err(err) = codex_core::personality_migration::maybe_migrate_personality(
-                        &config.codex_home,
-                        &config_toml,
-                    )
-                    .await
-                    {
-                        warn!(error = %err, "Failed to run personality migration");
-                    }
-                }
-                Err(err) => {
-                    warn!(error = %err, "Failed to deserialize config for personality migration");
-                }
-            }
-
+            let discovered_thread_config_loader = configured_thread_config_loader(&config);
+            config_manager
+                .replace_thread_config_loader(Arc::clone(&discovered_thread_config_loader));
             let auth_manager =
-                AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false);
+                AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
             config_manager.replace_cloud_requirements_loader(auth_manager, config.chatgpt_base_url);
         }
         Err(err) => {
@@ -484,22 +488,69 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
         }
     };
     let mut config_warnings = Vec::new();
-    let config = match config_manager
+    let (mut config, should_run_personality_migration) = match config_manager
         .load_latest_config(/*fallback_cwd*/ None)
         .await
     {
-        Ok(config) => config,
+        Ok(config) => (config, true),
         Err(err) => {
             let message = config_warning_from_error("Invalid configuration; using defaults.", &err);
             config_warnings.push(message);
-            config_manager.load_default_config().await.map_err(|e| {
-                std::io::Error::new(
-                    ErrorKind::InvalidData,
-                    format!("error loading default config after config error: {e}"),
-                )
-            })?
+            (
+                config_manager.load_default_config().await.map_err(|e| {
+                    std::io::Error::new(
+                        ErrorKind::InvalidData,
+                        format!("error loading default config after config error: {e}"),
+                    )
+                })?,
+                false,
+            )
         }
     };
+
+    let state_db_result = rollout_state_db::try_init(&config).await;
+    let state_db_init_error = state_db_result.as_ref().err().map(ToString::to_string);
+    let state_db = state_db_result.ok();
+
+    if should_run_personality_migration {
+        let effective_toml = config.config_layer_stack.effective_config();
+        match effective_toml.try_into() {
+            Ok(config_toml) => {
+                match codex_core::personality_migration::maybe_migrate_personality(
+                    &config.codex_home,
+                    &config_toml,
+                    state_db.clone(),
+                )
+                .await
+                {
+                    Ok(codex_core::personality_migration::PersonalityMigrationStatus::Applied) => {
+                        config = config_manager
+                            .load_latest_config(/*fallback_cwd*/ None)
+                            .await
+                            .map_err(|err| {
+                                std::io::Error::new(
+                                    ErrorKind::InvalidData,
+                                    format!(
+                                        "error reloading config after personality migration: {err}"
+                                    ),
+                                )
+                            })?;
+                    }
+                    Ok(
+                        codex_core::personality_migration::PersonalityMigrationStatus::SkippedMarker
+                        | codex_core::personality_migration::PersonalityMigrationStatus::SkippedExplicitPersonality
+                        | codex_core::personality_migration::PersonalityMigrationStatus::SkippedNoSessions,
+                    ) => {}
+                    Err(err) => {
+                        warn!(error = %err, "Failed to run personality migration");
+                    }
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, "Failed to deserialize config for personality migration");
+            }
+        }
+    }
 
     if let Ok(Some(err)) = check_execpolicy_for_warnings(&config.config_layer_stack).await {
         let (path, range) = exec_policy_warning_location(&err);
@@ -524,7 +575,7 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
         });
     }
     if let Some(warning) =
-        codex_core::config::system_bwrap_warning(config.permissions.sandbox_policy.get())
+        codex_core::config::system_bwrap_warning(config.permissions.permission_profile.get())
     {
         config_warnings.push(ConfigWarningNotification {
             summary: warning,
@@ -568,12 +619,6 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
 
     let feedback_layer = feedback.logger_layer();
     let feedback_metadata_layer = feedback.metadata_layer();
-    let state_db = codex_state::StateRuntime::init(
-        config.sqlite_home.clone(),
-        config.model_provider_id.clone(),
-    )
-    .await
-    .ok();
     let log_db = state_db.clone().map(log_db::start);
     let log_db_layer = log_db
         .clone()
@@ -594,6 +639,10 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
             None => error!("{}", warning.summary),
         }
     }
+    let installation_id = resolve_installation_id(&config.codex_home).await?;
+    if let Some(err) = &state_db_init_error {
+        error!("failed to initialize sqlite state db: {err}");
+    }
 
     let transport_shutdown_token = CancellationToken::new();
     let mut transport_accept_handles = Vec::<JoinHandle<()>>::new();
@@ -603,7 +652,7 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
     let graceful_signal_restart_enabled = !single_client_mode;
     let mut app_server_client_name_rx = None;
 
-    match transport {
+    match &transport {
         AppServerTransport::Stdio => {
             let (stdio_client_name_tx, stdio_client_name_rx) = oneshot::channel::<String>();
             app_server_client_name_rx = Some(stdio_client_name_rx);
@@ -614,9 +663,18 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
             )
             .await?;
         }
+        AppServerTransport::UnixSocket { socket_path } => {
+            let accept_handle = start_control_socket_acceptor(
+                socket_path.clone(),
+                transport_event_tx.clone(),
+                transport_shutdown_token.clone(),
+            )
+            .await?;
+            transport_accept_handles.push(accept_handle);
+        }
         AppServerTransport::WebSocket { bind_address } => {
             let accept_handle = start_websocket_acceptor(
-                bind_address,
+                *bind_address,
                 transport_event_tx.clone(),
                 transport_shutdown_token.clone(),
                 policy_from_settings(&auth)?,
@@ -628,13 +686,21 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
     }
 
     let auth_manager =
-        AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false);
+        AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
 
-    let remote_control_enabled = config.features.enabled(Feature::RemoteControl);
+    let remote_control_config_enabled = config.features.enabled(Feature::RemoteControl);
+    let remote_control_enabled = remote_control_config_enabled && state_db.is_some();
+    if remote_control_config_enabled && state_db.is_none() {
+        error!("remote control disabled because sqlite state db is unavailable");
+    }
     if transport_accept_handles.is_empty() && !remote_control_enabled {
         return Err(std::io::Error::new(
             ErrorKind::InvalidInput,
-            "no transport configured; use --listen or enable remote control",
+            if remote_control_config_enabled && state_db.is_none() {
+                "no transport configured; remote control disabled because sqlite state db is unavailable"
+            } else {
+                "no transport configured; use --listen or enable remote control"
+            },
         ));
     }
 
@@ -705,41 +771,51 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
         info!("outbound router task exited (channel closed)");
     });
 
-    let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(outgoing_tx));
-    let external_notification_handle = external_notifications.map(|mut external_rx| {
-        let outgoing_message_sender = Arc::clone(&outgoing_message_sender);
-        tokio::spawn(async move {
-            while let Some(notification) = external_rx.recv().await {
-                outgoing_message_sender
-                    .send_server_notification(notification)
-                    .await;
-            }
-        })
-    });
-
     let processor_handle = tokio::spawn({
-        let outgoing_message_sender = Arc::clone(&outgoing_message_sender);
-        let outbound_control_tx = outbound_control_tx;
         let auth_manager =
-            AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false);
+            AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
+        let analytics_events_client =
+            analytics_events_client_from_config(Arc::clone(&auth_manager), &config);
+        let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(
+            outgoing_tx,
+            analytics_events_client.clone(),
+        ));
+        let external_notification_handle = external_notifications.map(|mut external_rx| {
+            let outgoing_message_sender = Arc::clone(&outgoing_message_sender);
+            tokio::spawn(async move {
+                while let Some(notification) = external_rx.recv().await {
+                    outgoing_message_sender
+                        .send_server_notification(notification)
+                        .await;
+                }
+            })
+        });
+        let initialize_notification_sender = outgoing_message_sender.clone();
+        let outbound_control_tx = outbound_control_tx;
         let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
             outgoing: outgoing_message_sender,
+            analytics_events_client,
             arg0_paths,
             config: Arc::new(config),
             config_manager,
             environment_manager,
             feedback: feedback.clone(),
             log_db,
+            state_db: state_db.clone(),
             config_warnings,
             session_source,
             auth_manager,
-            rpc_transport: analytics_rpc_transport(transport),
-            remote_control_handle: Some(remote_control_handle),
+            installation_id,
+            rpc_transport: analytics_rpc_transport(&transport),
+            remote_control_handle: Some(remote_control_handle.clone()),
+            plugin_startup_tasks,
             runtime_hooks,
         }));
         let mut thread_created_rx = processor.thread_created_receiver();
         let mut running_turn_count_rx = processor.subscribe_running_assistant_turn_count();
         let mut connections = HashMap::<ConnectionId, ConnectionState>::new();
+        let mut remote_control_status_rx = remote_control_handle.status_receiver();
+        let mut remote_control_status = remote_control_status_rx.borrow().clone();
         let transport_shutdown_token = transport_shutdown_token.clone();
         async move {
             let mut listen_for_threads = true;
@@ -818,9 +894,9 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
                                 );
                             }
                             TransportEvent::ConnectionClosed { connection_id } => {
-                                if connections.remove(&connection_id).is_none() {
+                                let Some(connection_state) = connections.remove(&connection_id) else {
                                     continue;
-                                }
+                                };
                                 if outbound_control_tx
                                     .send(OutboundControlEvent::Closed { connection_id })
                                     .await
@@ -828,7 +904,7 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
                                 {
                                     break;
                                 }
-                                processor.connection_closed(connection_id).await;
+                                processor.connection_closed(connection_id, &connection_state.session).await;
                                 if shutdown_when_no_connections && connections.is_empty() {
                                     break;
                                 }
@@ -846,7 +922,7 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
                                             .process_request(
                                                 connection_id,
                                                 request,
-                                                transport,
+                                                &transport,
                                                 Arc::clone(&connection_state.session),
                                             )
                                             .await;
@@ -877,6 +953,14 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
                                             processor
                                                 .send_initialize_notifications_to_connection(
                                                     connection_id,
+                                                )
+                                                .await;
+                                            initialize_notification_sender
+                                                .send_server_notification_to_connections(
+                                                    &[connection_id],
+                                                    ServerNotification::RemoteControlStatusChanged(
+                                                        remote_control_status.clone(),
+                                                    ),
                                                 )
                                                 .await;
                                             processor.connection_initialized(connection_id).await;
@@ -910,6 +994,24 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
                             }
                         }
                     }
+                    changed = remote_control_status_rx.changed() => {
+                        if changed.is_err() {
+                            continue;
+                        }
+                        let status = remote_control_status_rx.borrow().clone();
+                        if remote_control_status == status {
+                            continue;
+                        }
+                        remote_control_status = status.clone();
+                        initialize_notification_sender
+                            .send_server_notification(ServerNotification::RemoteControlStatusChanged(
+                                RemoteControlStatusChangedNotification {
+                                    status: status.status,
+                                    environment_id: status.environment_id,
+                                },
+                            ))
+                            .await;
+                    }
                     created = thread_created_rx.recv(), if listen_for_threads => {
                         match created {
                             Ok(thread_id) => {
@@ -942,8 +1044,18 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
             }
 
             if !shutdown_state.forced() {
+                futures::future::join_all(
+                    connections
+                        .values()
+                        .map(|connection_state| connection_state.session.rpc_gate.shutdown()),
+                )
+                .await;
                 processor.drain_background_tasks().await;
                 processor.shutdown_threads().await;
+            }
+            if let Some(handle) = external_notification_handle {
+                handle.abort();
+                let _ = handle.await;
             }
             info!("processor task exited (channel closed)");
         }
@@ -952,11 +1064,6 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
     drop(transport_event_tx);
 
     let _ = processor_handle.await;
-    if let Some(handle) = external_notification_handle {
-        handle.abort();
-        let _ = handle.await;
-    }
-    drop(outgoing_message_sender);
     let _ = outbound_handle.await;
 
     transport_shutdown_token.cancel();
@@ -971,12 +1078,12 @@ pub async fn run_main_with_transport_notifications_and_runtime_hooks(
     Ok(())
 }
 
-fn analytics_rpc_transport(transport: AppServerTransport) -> AppServerRpcTransport {
+fn analytics_rpc_transport(transport: &AppServerTransport) -> AppServerRpcTransport {
     match transport {
         AppServerTransport::Stdio => AppServerRpcTransport::Stdio,
-        AppServerTransport::WebSocket { .. } | AppServerTransport::Off => {
-            AppServerRpcTransport::Websocket
-        }
+        AppServerTransport::UnixSocket { .. }
+        | AppServerTransport::WebSocket { .. }
+        | AppServerTransport::Off => AppServerRpcTransport::Websocket,
     }
 }
 

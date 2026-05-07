@@ -79,15 +79,15 @@ bazel_dep(name = "apple_support", version = "2.1.0")
 bazel_dep(name = "rules_cc", version = "0.2.16")
 bazel_dep(name = "rules_platform", version = "0.1.0")
 bazel_dep(name = "rules_rs", version = "0.0.58")
-# `rules_rs` still does not model `windows-gnullvm` as a distinct Windows exec
-# platform, so patch it until upstream grows that support for both x86_64 and
-# aarch64.
+# Keep local `rules_rs` patches narrow: windows-gnullvm support plus Cargo path
+# dependencies that live in the surrounding monorepo.
 single_version_override(
     module_name = "rules_rs",
     patch_strip = 1,
     patches = [
         "//patches:rules_rs_windows_gnullvm_exec.patch",
         "//patches:rules_rs_windows_exec_linker.patch",
+        "//patches:rules_rs_external_path_deps_no_watch.patch",
     ],
     version = "0.0.58",
 )
@@ -307,6 +307,36 @@ crate.annotation(
     workspace_cargo_toml = "rust/runfiles/Cargo.toml",
 )
 
+crate.annotation(
+    crate = "rig-core",
+    strip_prefix = "rig/rig-core",
+)
+
+crate.annotation(
+    crate = "playwright-rs",
+    workspace_cargo_toml = "../../Cargo.toml",
+)
+
+crate.annotation(
+    crate = "sacp",
+    workspace_cargo_toml = "../../Cargo.toml",
+)
+
+crate.annotation(
+    crate = "sacp-conductor",
+    workspace_cargo_toml = "../../Cargo.toml",
+)
+
+crate.annotation(
+    crate = "sacp-tokio",
+    workspace_cargo_toml = "../../Cargo.toml",
+)
+
+crate.annotation(
+    crate = "sacp-trace-viewer",
+    workspace_cargo_toml = "../../Cargo.toml",
+)
+
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 new_local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "new_local_repository")
@@ -327,6 +357,18 @@ crate.annotation(
         "RUSTY_V8_SRC_BINDING_PATH": "$(execpath @v8_targets//:rusty_v8_binding_for_target)",
     },
     crate = "v8",
+    # Keep the Rust feature aligned with the source-built Bazel artifacts.
+    # Windows MSVC still consumes upstream non-sandboxed prebuilts.
+    crate_features_select = {
+        "aarch64-apple-darwin": ["v8_enable_sandbox"],
+        "aarch64-pc-windows-gnullvm": ["v8_enable_sandbox"],
+        "aarch64-unknown-linux-gnu": ["v8_enable_sandbox"],
+        "aarch64-unknown-linux-musl": ["v8_enable_sandbox"],
+        "x86_64-apple-darwin": ["v8_enable_sandbox"],
+        "x86_64-pc-windows-gnullvm": ["v8_enable_sandbox"],
+        "x86_64-unknown-linux-gnu": ["v8_enable_sandbox"],
+        "x86_64-unknown-linux-musl": ["v8_enable_sandbox"],
+    },
     gen_build_script = "on",
     patch_args = ["-p1"],
     patches = [

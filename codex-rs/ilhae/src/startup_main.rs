@@ -329,18 +329,19 @@ pub fn spawn_native_runtime_server(
 
     // Spawn a background reaper thread to prevent zombie processes.
     // This thread will wait for the child to exit and clean up the process table entry.
-    std::thread::spawn(move || {
-        match child.wait() {
-            Ok(status) => {
-                if status.success() {
-                    info!(pid = pid, "[NativeRuntime] local model server exited normally");
-                } else {
-                    warn!(pid = pid, status = %status, "[NativeRuntime] local model server exited with error");
-                }
+    std::thread::spawn(move || match child.wait() {
+        Ok(status) => {
+            if status.success() {
+                info!(
+                    pid = pid,
+                    "[NativeRuntime] local model server exited normally"
+                );
+            } else {
+                warn!(pid = pid, status = %status, "[NativeRuntime] local model server exited with error");
             }
-            Err(e) => {
-                warn!(pid = pid, error = %e, "[NativeRuntime] error waiting for local model server");
-            }
+        }
+        Err(e) => {
+            warn!(pid = pid, error = %e, "[NativeRuntime] error waiting for local model server");
         }
     });
 
@@ -419,7 +420,9 @@ fn read_proc_cmdline(pid: u32) -> Option<Vec<String>> {
     )
 }
 
-fn extract_port_from_config(config: &crate::config::IlhaeProfileNativeRuntimeConfig) -> Option<u16> {
+fn extract_port_from_config(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> Option<u16> {
     // 1. Try to extract from args (e.g. --port 8082)
     for i in 0..config.args.len() {
         if (config.args[i] == "--port" || config.args[i] == "-p") && i + 1 < config.args.len() {
@@ -533,12 +536,14 @@ fn native_runtime_cmdline_matches(
     }
 
     // Model path match (either exact or as part of an argument like --model /path/to/model)
-    cmdline.iter().any(|arg| {
-        arg == model_path || arg.contains(model_path)
-    })
+    cmdline
+        .iter()
+        .any(|arg| arg == model_path || arg.contains(model_path))
 }
 
-pub fn find_native_runtime_pids(config: &crate::config::IlhaeProfileNativeRuntimeConfig) -> Vec<u32> {
+pub fn find_native_runtime_pids(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> Vec<u32> {
     let current_pid = std::process::id();
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return Vec::new();
@@ -579,19 +584,25 @@ pub async fn stop_native_runtime_server_for_config(
 
     // Fallback: search for llama-server processes if no specific PIDs found yet
     if pids.is_empty() {
-            let server_name = std::path::Path::new(&config.server_bin)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("llama-server")
-                .to_string();
+        let server_name = std::path::Path::new(&config.server_bin)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("llama-server")
+            .to_string();
 
         info!(profile = %profile_id, server_name = %server_name, "[NativeRuntime] no PIDs found by strict match, searching by name fallback");
 
         let current_pid = std::process::id();
         if let Ok(entries) = std::fs::read_dir("/proc") {
             for entry in entries.flatten() {
-                if let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) {
-                    if pid == current_pid { continue; }
+                if let Some(pid) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|n| n.parse::<u32>().ok())
+                {
+                    if pid == current_pid {
+                        continue;
+                    }
                     if let Some(cmdline) = read_proc_cmdline(pid) {
                         if cmdline.iter().any(|arg| arg.contains(&server_name)) {
                             info!(profile = %profile_id, pid = pid, "[NativeRuntime] found process by name substring match: {:?}", cmdline);

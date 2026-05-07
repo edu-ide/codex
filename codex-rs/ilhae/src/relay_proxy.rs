@@ -423,7 +423,7 @@ impl ConnectTo<Conductor> for RelayProxy {
                     let browser = browser.clone();
                     let store = store.clone();
                     let reverse_session_map = reverse_session_map.clone();
-                    
+
                     async move {
                         cx_cache.try_add(cx.clone()).await;
                         let acp_session_id = notif.session_id.0.to_string();
@@ -547,7 +547,7 @@ impl ConnectTo<Conductor> for RelayProxy {
                                         .unwrap_or(val);
                                     buffer.advance_patch();
                                     lock.insert(session_id.clone(), buffer);
-                                    
+
                                     maybe_emit_team_tool_events(&store, &cx, &session_id, &merged_val, previous_status.as_deref());
                                     true
                                 }

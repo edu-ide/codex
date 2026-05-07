@@ -20,10 +20,10 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_arg0::Arg0DispatchPaths;
+use codex_config::CloudRequirementsLoader;
+use codex_config::LoaderOverrides;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::config::ConfigBuilder;
-use codex_core::config_loader::CloudRequirementsLoader;
-use codex_core::config_loader::LoaderOverrides;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;
@@ -204,6 +204,7 @@ async fn mcp_resource_read_returns_error_for_unknown_thread() -> Result<()> {
         thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
         feedback: CodexFeedback::new(),
         log_db: None,
+        state_db: None,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
         config_warnings: Vec::new(),
         session_source: SessionSource::Cli,
@@ -286,11 +287,8 @@ struct ResourceAppsMcpServer;
 
 impl ServerHandler for ResourceAppsMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2025_06_18,
-            capabilities: ServerCapabilities::builder().enable_resources().build(),
-            ..ServerInfo::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_resources().build())
+            .with_protocol_version(ProtocolVersion::V_2025_06_18)
     }
 
     async fn read_resource(
@@ -306,21 +304,19 @@ impl ServerHandler for ResourceAppsMcpServer {
             ));
         }
 
-        Ok(ReadResourceResult {
-            contents: vec![
-                ResourceContents::TextResourceContents {
-                    uri: TEST_RESOURCE_URI.to_string(),
-                    mime_type: Some("text/markdown".to_string()),
-                    text: TEST_RESOURCE_TEXT.to_string(),
-                    meta: None,
-                },
-                ResourceContents::BlobResourceContents {
-                    uri: TEST_BLOB_RESOURCE_URI.to_string(),
-                    mime_type: Some("application/octet-stream".to_string()),
-                    blob: TEST_RESOURCE_BLOB.to_string(),
-                    meta: None,
-                },
-            ],
-        })
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::TextResourceContents {
+                uri: TEST_RESOURCE_URI.to_string(),
+                mime_type: Some("text/markdown".to_string()),
+                text: TEST_RESOURCE_TEXT.to_string(),
+                meta: None,
+            },
+            ResourceContents::BlobResourceContents {
+                uri: TEST_BLOB_RESOURCE_URI.to_string(),
+                mime_type: Some("application/octet-stream".to_string()),
+                blob: TEST_RESOURCE_BLOB.to_string(),
+                meta: None,
+            },
+        ]))
     }
 }

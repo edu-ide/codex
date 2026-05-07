@@ -4,9 +4,9 @@ use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
-use codex_tools::create_apply_patch_json_tool;
 
 use super::JsonSchema;
+use crate::tools::handlers::apply_patch_spec::create_apply_patch_json_tool;
 
 pub fn create_tools_json_for_responses_api_with_provider(
     tools: &[ToolSpec],

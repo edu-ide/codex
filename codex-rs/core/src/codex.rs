@@ -2186,6 +2186,7 @@ impl Session {
             thread_store: LocalThreadStore::new(RolloutConfig::from_view(config.as_ref())),
             model_client: ModelClient::new(
                 Some(Arc::clone(&auth_manager)),
+                conversation_id.into(),
                 conversation_id,
                 config.model_provider_id.clone(),
                 installation_id,

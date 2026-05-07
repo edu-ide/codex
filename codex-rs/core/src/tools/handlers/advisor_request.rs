@@ -12,6 +12,7 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::LoopLifecycleKind;
 use codex_protocol::protocol::LoopLifecycleProgressEvent;
 use codex_protocol::protocol::LoopLifecycleStatus;
+use codex_tools::ToolName;
 use serde::Deserialize;
 use std::time::Instant;
 
@@ -209,6 +210,10 @@ impl ToolHandler for AdvisorRequestHandler {
 
     fn kind(&self) -> ToolKind {
         ToolKind::Function
+    }
+
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("advisor_request")
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {

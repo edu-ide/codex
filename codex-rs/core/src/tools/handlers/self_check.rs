@@ -1,4 +1,4 @@
-use async_trait::async_trait;
+use codex_tools::ToolName;
 use serde::Deserialize;
 
 use crate::function_tool::FunctionCallError;
@@ -19,6 +19,10 @@ struct SelfCheckArgs {
 
 impl ToolHandler for SelfCheckHandler {
     type Output = FunctionToolOutput;
+
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("self_check")
+    }
 
     fn kind(&self) -> ToolKind {
         ToolKind::Function

@@ -3,17 +3,12 @@ use crate::JsonSchema;
 use crate::LoadableToolSpec;
 use crate::ResponsesApiNamespace;
 use crate::ResponsesApiTool;
-use codex_protocol::config_types::WebSearchConfig;
 use codex_protocol::config_types::WebSearchContextSize;
 use codex_protocol::config_types::WebSearchFilters as ConfigWebSearchFilters;
-use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WebSearchUserLocation as ConfigWebSearchUserLocation;
 use codex_protocol::config_types::WebSearchUserLocationType;
-use codex_protocol::openai_models::WebSearchToolType;
 use serde::Serialize;
 use serde_json::Value;
-
-const WEB_SEARCH_TEXT_AND_IMAGE_CONTENT_TYPES: [&str; 2] = ["text", "image"];
 
 /// When serialized as JSON, this produces a valid "Tool" in the OpenAI
 /// Responses API.
@@ -78,41 +73,6 @@ impl From<LoadableToolSpec> for ToolSpec {
             LoadableToolSpec::Namespace(namespace) => ToolSpec::Namespace(namespace),
         }
     }
-}
-
-pub fn create_local_shell_tool() -> ToolSpec {
-    ToolSpec::LocalShell {}
-}
-
-pub fn create_image_generation_tool(output_format: &str) -> ToolSpec {
-    ToolSpec::ImageGeneration {
-        output_format: output_format.to_string(),
-    }
-}
-
-pub struct WebSearchToolOptions<'a> {
-    pub web_search_mode: Option<WebSearchMode>,
-    pub web_search_config: Option<&'a WebSearchConfig>,
-    pub web_search_tool_type: WebSearchToolType,
-}
-
-pub fn create_web_search_tool(_options: WebSearchToolOptions<'_>) -> Option<ToolSpec> {
-    let mut properties = std::collections::BTreeMap::new();
-    properties.insert(
-        "query".to_string(),
-        crate::JsonSchema::string(Some("Search query. Extract dates, times, scores, names, numbers, prices, and facts. Be specific, direct, and detailed.".to_string())),
-    );
-
-    Some(ToolSpec::Function(ResponsesApiTool {
-        name: "web_search".to_string(),
-        description:
-            "Perform a web search using DuckDuckGo or SearXNG and read the content using Jina.ai."
-                .to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: crate::JsonSchema::object(properties, Some(vec!["query".to_string()]), None),
-        output_schema: None,
-    }))
 }
 
 #[derive(Debug, Clone, PartialEq)]

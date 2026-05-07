@@ -4,6 +4,8 @@ use codex_app_server_protocol::ServerNotification;
 use codex_core::config::Config;
 use codex_protocol::protocol::SessionConfiguredEvent;
 
+use crate::exec_events::AutonomyDecisionAction;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexStatus {
     Running,
@@ -24,6 +26,17 @@ pub(crate) trait EventProcessor {
 
     /// Handle a local exec warning that is not represented as an app-server notification.
     fn process_warning(&mut self, message: String) -> CodexStatus;
+
+    /// Handle a local exec autonomous follow-up decision.
+    fn process_autonomy_decision(
+        &mut self,
+        _turn_id: String,
+        _action: AutonomyDecisionAction,
+        _reason: &str,
+        _stalled_turns: u32,
+    ) -> CodexStatus {
+        CodexStatus::Running
+    }
 
     fn has_inflight_items(&self) -> bool {
         false

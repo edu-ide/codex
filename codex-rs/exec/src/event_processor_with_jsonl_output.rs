@@ -23,6 +23,8 @@ pub use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
 use crate::event_processor::handle_last_message;
 use crate::exec_events::AgentMessageItem;
+use crate::exec_events::AutonomyDecisionAction;
+use crate::exec_events::AutonomyDecisionEvent;
 use crate::exec_events::CollabAgentState;
 use crate::exec_events::CollabAgentStatus;
 use crate::exec_events::CollabTool;
@@ -124,6 +126,7 @@ impl EventProcessorWithJsonOutput {
             input_tokens: usage.total.input_tokens,
             cached_input_tokens: usage.total.cached_input_tokens,
             output_tokens: usage.total.output_tokens,
+            reasoning_output_tokens: usage.total.reasoning_output_tokens,
         }
     }
 
@@ -393,7 +396,7 @@ impl EventProcessorWithJsonOutput {
 
     pub fn thread_started_event(session_configured: &SessionConfiguredEvent) -> ThreadEvent {
         ThreadEvent::ThreadStarted(ThreadStartedEvent {
-            thread_id: session_configured.session_id.to_string(),
+            thread_id: session_configured.thread_id.to_string(),
         })
     }
 
@@ -407,6 +410,22 @@ impl EventProcessorWithJsonOutput {
             })],
             status: CodexStatus::Running,
         }
+    }
+
+    pub fn process_autonomy_decision(
+        &mut self,
+        turn_id: String,
+        action: AutonomyDecisionAction,
+        reason: &str,
+        stalled_turns: u32,
+    ) -> CodexStatus {
+        self.emit(ThreadEvent::AutonomyDecision(AutonomyDecisionEvent {
+            turn_id,
+            action,
+            reason: reason.to_string(),
+            stalled_turns,
+        }));
+        CodexStatus::Running
     }
 
     pub fn collect_thread_events(
@@ -491,6 +510,7 @@ impl EventProcessorWithJsonOutput {
                 }));
                 CodexStatus::Running
             }
+            ServerNotification::ModelVerification(_) => CodexStatus::Running,
             ServerNotification::ThreadTokenUsageUpdated(notification) => {
                 self.last_total_token_usage = Some(notification.token_usage);
                 CodexStatus::Running
@@ -620,6 +640,22 @@ impl EventProcessor for EventProcessorWithJsonOutput {
             self.emit(event);
         }
         collected.status
+    }
+
+    fn process_autonomy_decision(
+        &mut self,
+        turn_id: String,
+        action: AutonomyDecisionAction,
+        reason: &str,
+        stalled_turns: u32,
+    ) -> CodexStatus {
+        EventProcessorWithJsonOutput::process_autonomy_decision(
+            self,
+            turn_id,
+            action,
+            reason,
+            stalled_turns,
+        )
     }
 
     fn print_final_output(&mut self) {

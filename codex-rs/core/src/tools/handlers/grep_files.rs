@@ -1,4 +1,4 @@
-use async_trait::async_trait;
+use codex_tools::ToolName;
 use serde::Deserialize;
 use std::path::Path;
 use tokio::process::Command as TokioCommand;
@@ -27,6 +27,10 @@ fn default_limit() -> usize {
 
 impl ToolHandler for GrepSearchHandler {
     type Output = FunctionToolOutput;
+
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("grep_search")
+    }
 
     fn kind(&self) -> ToolKind {
         ToolKind::Function

@@ -5,6 +5,7 @@ use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
+use codex_tools::ToolName;
 use serde::Deserialize;
 use web_search_rs::WebSearchClient;
 
@@ -27,6 +28,10 @@ struct WebSearchArgs {
 
 impl ToolHandler for WebSearchHandler {
     type Output = FunctionToolOutput;
+
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("web_search")
+    }
 
     fn kind(&self) -> ToolKind {
         ToolKind::Function
