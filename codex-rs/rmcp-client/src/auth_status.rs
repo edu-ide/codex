@@ -194,8 +194,10 @@ fn discovery_paths(base_path: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::Json;
     use axum::Router;
+    use axum::body::Body;
+    use axum::http::Response;
+    use axum::http::header::CONTENT_TYPE;
     use axum::routing::get;
     use pretty_assertions::assert_eq;
     use serial_test::serial;
@@ -225,7 +227,12 @@ mod tests {
                 let metadata = metadata.clone();
                 move || {
                     let metadata = metadata.clone();
-                    async move { Json(metadata) }
+                    async move {
+                        Response::builder()
+                            .header(CONTENT_TYPE, "application/json")
+                            .body(Body::from(metadata.to_string()))
+                            .expect("metadata response should be valid")
+                    }
                 }
             }),
         );

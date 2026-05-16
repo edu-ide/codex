@@ -400,11 +400,10 @@ impl ServerHandler for TestToolServer {
             JsonObject::new(),
         )]));
 
-        ServerInfo {
-            instructions: Some("Use these tools to exercise the rmcp test server.".to_string()),
-            capabilities,
-            ..ServerInfo::default()
-        }
+        let mut info = ServerInfo::default();
+        info.instructions = Some("Use these tools to exercise the rmcp test server.".to_string());
+        info.capabilities = capabilities;
+        info
     }
 
     fn list_tools(

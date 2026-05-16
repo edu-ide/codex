@@ -10,6 +10,8 @@ use anyhow::bail;
 use reqwest::ClientBuilder;
 use reqwest::Url;
 use rmcp::transport::auth::OAuthState;
+use tiny_http::Header;
+use tiny_http::Method;
 use tiny_http::Response;
 use tiny_http::Server;
 use tokio::sync::oneshot;
@@ -201,11 +203,20 @@ fn spawn_callback_server(
 ) {
     tokio::task::spawn_blocking(move || {
         while let Ok(request) = server.recv() {
+            if matches!(request.method(), Method::Options) {
+                let response = oauth_callback_response("", 204);
+                if let Err(err) = request.respond(response) {
+                    eprintln!("Failed to respond to OAuth callback preflight: {err}");
+                }
+                continue;
+            }
+
             let path = request.url().to_string();
             match parse_oauth_callback(&path, &expected_callback_path) {
                 CallbackOutcome::Success(OauthCallbackResult { code, state }) => {
-                    let response = Response::from_string(
+                    let response = oauth_callback_response(
                         "Authentication complete. You may close this window.",
+                        200,
                     );
                     if let Err(err) = request.respond(response) {
                         eprintln!("Failed to respond to OAuth callback: {err}");
@@ -218,7 +229,7 @@ fn spawn_callback_server(
                     break;
                 }
                 CallbackOutcome::Error(error) => {
-                    let response = Response::from_string(error.to_string()).with_status_code(400);
+                    let response = oauth_callback_response(error.to_string(), 400);
                     if let Err(err) = request.respond(response) {
                         eprintln!("Failed to respond to OAuth callback: {err}");
                     }
@@ -228,8 +239,7 @@ fn spawn_callback_server(
                     break;
                 }
                 CallbackOutcome::Invalid => {
-                    let response =
-                        Response::from_string("Invalid OAuth callback").with_status_code(400);
+                    let response = oauth_callback_response("Invalid OAuth callback", 400);
                     if let Err(err) = request.respond(response) {
                         eprintln!("Failed to respond to OAuth callback: {err}");
                     }
@@ -239,13 +249,36 @@ fn spawn_callback_server(
     });
 }
 
+fn oauth_callback_response(
+    body: impl Into<String>,
+    status_code: u16,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mut response = Response::from_string(body.into()).with_status_code(status_code);
+    for (name, value) in [
+        ("Access-Control-Allow-Origin", "*"),
+        ("Access-Control-Allow-Methods", "GET, OPTIONS"),
+        (
+            "Access-Control-Allow-Headers",
+            "Accept, Authorization, Content-Type",
+        ),
+        ("Access-Control-Max-Age", "600"),
+        ("Cache-Control", "no-store"),
+    ] {
+        match Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+            Ok(header) => response.add_header(header),
+            Err(()) => eprintln!("Failed to create OAuth callback response header: {name}"),
+        }
+    }
+    response
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OauthCallbackResult {
     code: String,
     state: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum CallbackResult {
     Success(OauthCallbackResult),
     Error(OAuthProviderError),
@@ -573,13 +606,23 @@ fn append_query_param(url: &str, key: &str, value: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
+    use std::io::Write;
+    use std::net::TcpStream;
+    use std::sync::Arc;
+
     use pretty_assertions::assert_eq;
+    use tiny_http::Server;
+    use tokio::sync::oneshot;
 
     use super::CallbackOutcome;
+    use super::CallbackResult;
     use super::OAuthProviderError;
+    use super::OauthCallbackResult;
     use super::append_query_param;
     use super::callback_path_from_redirect_uri;
     use super::parse_oauth_callback;
+    use super::spawn_callback_server;
 
     #[test]
     fn parse_oauth_callback_accepts_default_path() {
@@ -652,5 +695,60 @@ mod tests {
         let url = append_query_param("not a url", "resource", Some("api/resource"));
 
         assert_eq!(url, "not a url?resource=api%2Fresource");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn callback_response_allows_cross_origin_completion_fetch() {
+        let server = Arc::new(Server::http("127.0.0.1:0").expect("callback server should bind"));
+        let addr = match server.server_addr() {
+            tiny_http::ListenAddr::IP(addr) => addr,
+            #[cfg(not(target_os = "windows"))]
+            _ => panic!("callback server should bind to an IP address"),
+        };
+        let (tx, rx) = oneshot::channel();
+        spawn_callback_server(Arc::clone(&server), tx, "/callback".to_string());
+
+        let mut preflight =
+            TcpStream::connect(addr).expect("callback server should accept preflight TCP");
+        write!(
+            preflight,
+            "OPTIONS /callback HTTP/1.1\r\nHost: {addr}\r\nOrigin: https://apps.example\r\nAccess-Control-Request-Method: GET\r\nConnection: close\r\n\r\n"
+        )
+        .expect("callback preflight should be written");
+        let mut preflight_response = String::new();
+        preflight
+            .read_to_string(&mut preflight_response)
+            .expect("callback preflight response should be readable");
+        assert!(
+            preflight_response.contains("204 No Content")
+                && preflight_response.contains("Access-Control-Allow-Origin: *"),
+            "{preflight_response}"
+        );
+
+        let mut stream = TcpStream::connect(addr).expect("callback server should accept TCP");
+        write!(
+            stream,
+            "GET /callback?code=abc&state=xyz HTTP/1.1\r\nHost: {addr}\r\nOrigin: https://apps.example\r\nConnection: close\r\n\r\n"
+        )
+        .expect("callback request should be written");
+
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("callback response should be readable");
+
+        assert!(
+            response.contains("Access-Control-Allow-Origin: *"),
+            "{response}"
+        );
+
+        let callback = rx.await.expect("callback should be sent");
+        assert_eq!(
+            callback,
+            CallbackResult::Success(OauthCallbackResult {
+                code: "abc".to_string(),
+                state: "xyz".to_string(),
+            })
+        );
     }
 }

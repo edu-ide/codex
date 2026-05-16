@@ -878,8 +878,10 @@ mod tests {
         );
         assert_eq!(actual_response.scopes(), expected_response.scopes());
         assert_eq!(
-            actual_response.extra_fields(),
-            expected_response.extra_fields()
+            serde_json::to_value(actual_response.extra_fields())
+                .expect("actual extra token fields should serialize"),
+            serde_json::to_value(expected_response.extra_fields())
+                .expect("expected extra token fields should serialize")
         );
         assert_eq!(
             actual_response.expires_in().is_some(),
