@@ -44,7 +44,7 @@ impl ToolHandler for SelfCheckHandler {
             output.push_str(&format!("\nTracking {} errors for mitigation.", errs.len()));
         }
         if let Some(plan) = args.mitigation_plan {
-            output.push_str(&format!("\nMitigation plan logged: {}", plan));
+            output.push_str(&format!("\nMitigation plan logged: {plan}"));
         }
 
         let mut tool_output = FunctionToolOutput::from_text(output, Some(true));

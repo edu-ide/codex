@@ -106,7 +106,7 @@ impl ToolHandler for LspToolHandler {
                 Err(e) => {
                     let output = LspToolOutput {
                         operation: args.operation,
-                        result: format!("Error starting LSP server: {}", e),
+                        result: format!("Error starting LSP server: {e}"),
                         file_path: args.file_path,
                         result_count: Some(0),
                         file_count: Some(0),
@@ -187,7 +187,7 @@ impl ToolHandler for LspToolHandler {
                     serde_json::to_string_pretty(&val).unwrap_or_else(|_| "[]".to_string())
                 }
             }
-            Err(e) => format!("LSP Request Failed: {}", e),
+            Err(e) => format!("LSP Request Failed: {e}"),
         };
 
         let output = LspToolOutput {
@@ -220,7 +220,10 @@ fn format_symbols(
     if let Some(arr) = symbols.as_array() {
         for sym in arr {
             let name = sym.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-            let kind = sym.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
+            let kind = sym
+                .get("kind")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
 
             let location = sym.get("location");
             let range = sym
@@ -231,12 +234,12 @@ fn format_symbols(
             let start_line = range
                 .and_then(|r| r.get("start"))
                 .and_then(|s| s.get("line"))
-                .and_then(|l| l.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             let end_line = range
                 .and_then(|r| r.get("end"))
                 .and_then(|s| s.get("line"))
-                .and_then(|l| l.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
 
             let kind_str = match kind {
@@ -274,13 +277,13 @@ fn format_symbols(
             let mut extra = String::new();
             if let Some(u) = uri {
                 let clean_uri = u.strip_prefix("file://").unwrap_or(u);
-                extra = format!(" ({})", clean_uri);
-            } else if let Some(content) = file_content {
-                if let Some(line) = content.lines().nth(start_line as usize) {
-                    let trimmed = line.trim();
-                    if !trimmed.is_empty() {
-                        extra = format!(" // {}", trimmed);
-                    }
+                extra = format!(" ({clean_uri})");
+            } else if let Some(content) = file_content
+                && let Some(line) = content.lines().nth(start_line as usize)
+            {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    extra = format!(" // {trimmed}");
                 }
             }
 

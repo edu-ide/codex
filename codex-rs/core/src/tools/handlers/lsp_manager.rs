@@ -1,21 +1,14 @@
-use crate::tools::handlers::lsp::LspOperation;
 use lsp_types::ClientCapabilities;
 use lsp_types::InitializeParams;
-use lsp_types::Position;
-use lsp_types::SymbolKind;
-use lsp_types::TextDocumentIdentifier;
 use lsp_types::Url;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::HashMap;
-use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
-use tokio::io::BufWriter;
 use tokio::process::Child;
 use tokio::process::ChildStdin;
 use tokio::process::ChildStdout;
@@ -75,13 +68,13 @@ impl LspServerInstance {
     }
 
     async fn cache_diagnostics(&self, params: &Value) {
-        if let Some(uri) = params.get("uri").and_then(|u| u.as_str()) {
-            if let Some(diags) = params.get("diagnostics").and_then(|d| d.as_array()) {
-                self.diagnostics
-                    .lock()
-                    .await
-                    .insert(uri.to_string(), diags.clone());
-            }
+        if let Some(uri) = params.get("uri").and_then(|u| u.as_str())
+            && let Some(diags) = params.get("diagnostics").and_then(|d| d.as_array())
+        {
+            self.diagnostics
+                .lock()
+                .await
+                .insert(uri.to_string(), diags.clone());
         }
     }
 
@@ -109,14 +102,14 @@ impl LspServerInstance {
                 if line.is_empty() {
                     break;
                 }
-                if line.to_lowercase().starts_with("content-length:") {
-                    if let Some(len_str) = line.split(':').nth(1) {
-                        content_length = len_str.trim().parse().ok();
-                    }
+                if line.to_lowercase().starts_with("content-length:")
+                    && let Some(len_str) = line.split(':').nth(1)
+                {
+                    content_length = len_str.trim().parse().ok();
                 }
             }
 
-            if let Some(mut len) = content_length {
+            if let Some(len) = content_length {
                 let mut body = vec![0; len];
                 if reader.read_exact(&mut body).await.is_err() {
                     break; // EOF or error
@@ -130,12 +123,11 @@ impl LspServerInstance {
                                 let _ = tx.send(msg);
                             }
                         }
-                    } else if let Some(method) = msg.get("method").and_then(|m| m.as_str()) {
-                        if method == "textDocument/publishDiagnostics" {
-                            if let Some(params) = msg.get("params") {
-                                self.cache_diagnostics(params).await;
-                            }
-                        }
+                    } else if let Some(method) = msg.get("method").and_then(|m| m.as_str())
+                        && method == "textDocument/publishDiagnostics"
+                        && let Some(params) = msg.get("params")
+                    {
+                        self.cache_diagnostics(params).await;
                     }
                 }
             }
@@ -177,16 +169,17 @@ impl LspServerInstance {
 
             let resp = rx.await?;
             if let Some(err) = resp.get("error") {
-                if let Some(code) = err.get("code").and_then(|c| c.as_i64()) {
-                    if (code == -32801 || code == -32800) && retries < max_retries {
-                        // -32801: Content Modified, -32800: Request Cancelled
-                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-                        retries += 1;
-                        delay_ms *= 2;
-                        continue;
-                    }
+                if let Some(code) = err.get("code").and_then(serde_json::Value::as_i64)
+                    && (code == -32801 || code == -32800)
+                    && retries < max_retries
+                {
+                    // -32801: Content Modified, -32800: Request Cancelled
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    retries += 1;
+                    delay_ms *= 2;
+                    continue;
                 }
-                return Err(anyhow::anyhow!("LSP Error: {:?}", err));
+                return Err(anyhow::anyhow!("LSP Error: {err:?}"));
             }
 
             return Ok(resp.get("result").cloned().unwrap_or(Value::Null));
@@ -213,7 +206,7 @@ impl LspServerInstance {
     pub async fn initialize(&self, root_uri: &str) -> anyhow::Result<()> {
         #[allow(deprecated)]
         let params = InitializeParams {
-            process_id: Some(std::process::id() as u32),
+            process_id: Some(std::process::id()),
             root_uri: Some(Url::parse(root_uri)?),
             capabilities: ClientCapabilities::default(),
             ..Default::default()
@@ -275,7 +268,7 @@ impl LspServerManager {
             "ts" | "tsx" | "js" | "jsx" => "typescript-language-server",
             "rs" => "rust-analyzer",
             "py" => "pylsp",
-            _ => return Err(anyhow::anyhow!("Unsupported file extension: {}", ext)),
+            _ => return Err(anyhow::anyhow!("Unsupported file extension: {ext}")),
         };
 
         if let Some(instance) = servers.get(cmd) {
@@ -301,7 +294,7 @@ impl LspServerManager {
         content: &str,
     ) -> anyhow::Result<()> {
         // Normally we'd track opened files. For simplicity in phase 1, we just re-open or send didChange.
-        let uri = format!("file://{}", file_path);
+        let uri = format!("file://{file_path}");
         instance
             .send_notification(
                 "textDocument/didOpen",
@@ -330,9 +323,9 @@ impl LspServerManager {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
         // The URI format used for caching
-        let uri = format!("file://{}", file_path);
+        let uri = format!("file://{file_path}");
 
-        let mut diagnostics = instance.diagnostics.lock().await;
+        let diagnostics = instance.diagnostics.lock().await;
         let diags = diagnostics.get(&uri).cloned().unwrap_or_default();
 
         Ok(diags)

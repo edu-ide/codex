@@ -76,7 +76,7 @@ fn summarize_recent_history(items: &[ResponseItem], max_entries: usize) -> Strin
                 .to_text()
                 .map(|text| text.trim().to_string())
                 .filter(|text| !text.is_empty())
-                .map(|text| format!("tool_output: {}", text)),
+                .map(|text| format!("tool_output: {text}")),
             _ => None,
         };
 
@@ -428,7 +428,6 @@ mod tests {
                 content: vec![ContentItem::InputText {
                     text: "첫 질문".to_string(),
                 }],
-                end_turn: None,
                 phase: None,
             },
             ResponseItem::FunctionCallOutput {
@@ -441,7 +440,6 @@ mod tests {
                 content: vec![ContentItem::OutputText {
                     text: "다음 단계로 갑니다".to_string(),
                 }],
-                end_turn: None,
                 phase: None,
             },
         ];

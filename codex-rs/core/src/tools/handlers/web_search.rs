@@ -74,8 +74,7 @@ impl ToolHandler for WebSearchHandler {
         match client.perform_full_search(&args.query, 3).await {
             Ok(content) => Ok(FunctionToolOutput::from_text(content, Some(true))),
             Err(e) => Err(FunctionCallError::RespondToModel(format!(
-                "Search failed: {}",
-                e
+                "Search failed: {e}"
             ))),
         }
     }

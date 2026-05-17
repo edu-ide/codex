@@ -6,7 +6,6 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::items::TurnItem;
-use codex_protocol::models::WebSearchAction;
 use codex_utils_stream_parser::strip_citations;
 use tokio_util::sync::CancellationToken;
 
@@ -29,7 +28,6 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::WebSearchBeginEvent;
-use codex_protocol::protocol::WebSearchEndEvent;
 use codex_rollout::state_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_stream_parser::strip_proposed_plan_blocks;
@@ -530,12 +528,12 @@ fn is_web_search_call(call: &crate::tools::router::ToolCall) -> bool {
 
 /// Extract the `query` field from a web_search function call's JSON arguments.
 fn extract_web_search_query(payload: &crate::tools::context::ToolPayload) -> Option<String> {
-    if let crate::tools::context::ToolPayload::Function { arguments } = payload {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) {
-            return value
-                .get("query")
-                .and_then(|q| q.as_str().map(String::from));
-        }
+    if let crate::tools::context::ToolPayload::Function { arguments } = payload
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments)
+    {
+        return value
+            .get("query")
+            .and_then(|q| q.as_str().map(String::from));
     }
     None
 }

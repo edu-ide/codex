@@ -84,10 +84,8 @@ impl ToolHandler for ReadFileHandler {
         let lines = match slice::read(&abs_path, args.offset, args.limit).await {
             Ok(l) => l,
             Err(e) => {
-                let mut out = FunctionToolOutput::from_text(
-                    format!("Failed to read file: {}", e),
-                    Some(false),
-                );
+                let mut out =
+                    FunctionToolOutput::from_text(format!("Failed to read file: {e}"), Some(false));
                 if e.to_string().contains("offset exceeds") {
                     out.hint = Some("The requested offset is beyond the file bounds. Try reading from offset 1 or using grep_files.".to_string());
                 }
@@ -170,7 +168,7 @@ pub mod slice {
                 if content.len() > MAX_LINE_LENGTH {
                     content.truncate(MAX_LINE_LENGTH);
                 }
-                lines.push(format!("L{}: {}", current_line, content));
+                lines.push(format!("L{current_line}: {content}"));
                 if lines.len() >= limit {
                     break;
                 }
@@ -219,13 +217,15 @@ pub mod indentation {
             Ok(c) => c,
             Err(e) => {
                 return Err(super::FunctionCallError::RespondToModel(format!(
-                    "Failed to read file: {}",
-                    e
+                    "Failed to read file: {e}"
                 )));
             }
         };
         let lossy_content = String::from_utf8_lossy(&content);
-        let lines: Vec<String> = lossy_content.lines().map(|s| s.to_string()).collect();
+        let lines: Vec<String> = lossy_content
+            .lines()
+            .map(std::string::ToString::to_string)
+            .collect();
         let target_anchor = options.anchor_line.unwrap_or(offset);
         if lines.is_empty() || target_anchor == 0 || target_anchor > lines.len() {
             return Ok(Vec::new());
@@ -239,12 +239,12 @@ pub mod indentation {
                 break;
             }
             for prev_idx in (1..current_anchor).rev() {
-                if let Some(ind) = indent_of(&lines[prev_idx - 1]) {
-                    if ind < current_indent {
-                        current_anchor = prev_idx;
-                        current_indent = ind;
-                        break;
-                    }
+                if let Some(ind) = indent_of(&lines[prev_idx - 1])
+                    && ind < current_indent
+                {
+                    current_anchor = prev_idx;
+                    current_indent = ind;
+                    break;
                 }
             }
         }
@@ -284,37 +284,35 @@ pub mod indentation {
             let line = &lines[i - 1];
 
             // if we are past the original anchor's parent block (i > current_anchor)
-            if i > current_anchor {
-                if let Some(ind) = indent_of(line) {
-                    if ind < base_indent {
-                        break;
-                    } else if ind == base_indent {
-                        if !options.include_siblings {
-                            let trimmed = line.trim();
-                            if trimmed.starts_with('}')
-                                || trimmed.starts_with(']')
-                                || trimmed.starts_with(')')
-                            {
-                                result.push(format!("L{}: {}", i, line));
-                            }
-                            break;
-                        }
+            if i > current_anchor
+                && let Some(ind) = indent_of(line)
+            {
+                if ind < base_indent {
+                    break;
+                } else if ind == base_indent && !options.include_siblings {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with('}')
+                        || trimmed.starts_with(']')
+                        || trimmed.starts_with(')')
+                    {
+                        result.push(format!("L{i}: {line}"));
                     }
+                    break;
                 }
             }
 
-            result.push(format!("L{}: {}", i, line));
+            result.push(format!("L{i}: {line}"));
             if result.len() >= limit {
                 break;
             }
         }
 
         while let Some(last) = result.last() {
-            if let Some((_, content)) = last.split_once(": ") {
-                if content.trim().is_empty() {
-                    result.pop();
-                    continue;
-                }
+            if let Some((_, content)) = last.split_once(": ")
+                && content.trim().is_empty()
+            {
+                result.pop();
+                continue;
             }
             break;
         }

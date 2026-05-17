@@ -89,7 +89,7 @@ pub fn parse_results(stdout: &[u8], limit: usize) -> Vec<String> {
     let mut lines: Vec<String> = output
         .lines()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| l.to_string())
+        .map(std::string::ToString::to_string)
         .collect();
 
     if lines.len() > limit {
