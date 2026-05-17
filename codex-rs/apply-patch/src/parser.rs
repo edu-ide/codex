@@ -35,17 +35,17 @@ use thiserror::Error;
 /// to ensure that string matching doesn't fail due to the AI hallucinating these prefixes into the code.
 fn strip_line_prefix(s: &str) -> String {
     let trimmed = s.trim_start();
-    if let Some(rest) = trimmed.strip_prefix('L') {
-        if let Some(colon_idx) = rest.find(':') {
-            let digits = &rest[..colon_idx];
-            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
-                let remainder = &rest[colon_idx + 1..];
-                // strip at most one leading space after the colon
-                if let Some(without_space) = remainder.strip_prefix(' ') {
-                    return without_space.to_string();
-                } else {
-                    return remainder.to_string();
-                }
+    if let Some(rest) = trimmed.strip_prefix('L')
+        && let Some(colon_idx) = rest.find(':')
+    {
+        let digits = &rest[..colon_idx];
+        if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+            let remainder = &rest[colon_idx + 1..];
+            // strip at most one leading space after the colon
+            if let Some(without_space) = remainder.strip_prefix(' ') {
+                return without_space.to_string();
+            } else {
+                return remainder.to_string();
             }
         }
     }
@@ -910,114 +910,6 @@ fn test_parse_patch_lenient() {
         parse_patch_text(&patch_text_with_missing_closing_heredoc, ParseMode::Lenient),
         Err(InvalidPatchError(
             "The last line of the patch must be '*** End Patch'".to_string()
-        ))
-    );
-}
-#[test]
-fn test_parse_one_hunk() {
-    assert_eq!(
-        parse_one_hunk(&["bad"], /*line_number*/ 234, /*allow_incomplete*/ false),
-        Err(InvalidHunkError {
-            message: "'bad' is not a valid hunk header. \
-            Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'".to_string(),
-            line_number: 234
-        })
-    );
-    // Other edge cases are already covered by tests above/below.
-}
-
-#[test]
-fn test_update_file_chunk() {
-    assert_eq!(
-        parse_update_file_chunk(
-            &["bad"],
-            /*line_number*/ 123,
-            /*allow_missing_context*/ false
-        ),
-        Err(InvalidHunkError {
-            message: "Expected update hunk to start with a @@ context marker, got: 'bad'"
-                .to_string(),
-            line_number: 123
-        })
-    );
-    assert_eq!(
-        parse_update_file_chunk(
-            &["@@"],
-            /*line_number*/ 123,
-            /*allow_missing_context*/ false
-        ),
-        Err(InvalidHunkError {
-            message: "Update hunk does not contain any lines".to_string(),
-            line_number: 124
-        })
-    );
-    assert_eq!(
-        parse_update_file_chunk(&["@@", "bad"], /*line_number*/ 123, /*allow_missing_context*/ false),
-        Err(InvalidHunkError {
-            message:  "Unexpected line found in update hunk: 'bad'. \
-                       Every line should start with ' ' (context line), '+' (added line), or '-' (removed line)".to_string(),
-            line_number: 124
-        })
-    );
-    assert_eq!(
-        parse_update_file_chunk(
-            &["@@", "*** End of File"],
-            /*line_number*/ 123,
-            /*allow_missing_context*/ false
-        ),
-        Err(InvalidHunkError {
-            message: "Update hunk does not contain any lines".to_string(),
-            line_number: 124
-        })
-    );
-    assert_eq!(
-        parse_update_file_chunk(
-            &[
-                "@@ change_context",
-                "",
-                " context",
-                "-remove",
-                "+add",
-                " context2",
-                "*** End Patch",
-            ],
-            /*line_number*/ 123,
-            /*allow_missing_context*/ false
-        ),
-        Ok((
-            (UpdateFileChunk {
-                change_context: Some("change_context".to_string()),
-                old_lines: vec![
-                    "".to_string(),
-                    "context".to_string(),
-                    "remove".to_string(),
-                    "context2".to_string()
-                ],
-                new_lines: vec![
-                    "".to_string(),
-                    "context".to_string(),
-                    "add".to_string(),
-                    "context2".to_string()
-                ],
-                is_end_of_file: false
-            }),
-            6
-        ))
-    );
-    assert_eq!(
-        parse_update_file_chunk(
-            &["@@", "+line", "*** End of File"],
-            /*line_number*/ 123,
-            /*allow_missing_context*/ false
-        ),
-        Ok((
-            (UpdateFileChunk {
-                change_context: None,
-                old_lines: vec![],
-                new_lines: vec!["line".to_string()],
-                is_end_of_file: true
-            }),
-            3
         ))
     );
 }

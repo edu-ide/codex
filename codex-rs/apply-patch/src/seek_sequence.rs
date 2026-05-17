@@ -26,19 +26,23 @@ pub(crate) fn seek_sequence(
     if pattern.len() > lines.len() {
         return None;
     }
+    let end = lines.len().saturating_sub(pattern.len());
     let search_start = if eof && lines.len() >= pattern.len() {
-        lines.len() - pattern.len()
+        (lines.len() - pattern.len()).max(start)
     } else {
         start
     };
+    if search_start > end {
+        return None;
+    }
     // Exact match first.
-    for i in search_start..=lines.len().saturating_sub(pattern.len()) {
+    for i in search_start..=end {
         if lines[i..i + pattern.len()] == *pattern {
             return Some(i);
         }
     }
     // Then rstrip match.
-    for i in search_start..=lines.len().saturating_sub(pattern.len()) {
+    for i in search_start..=end {
         let mut ok = true;
         for (p_idx, pat) in pattern.iter().enumerate() {
             if lines[i + p_idx].trim_end() != pat.trim_end() {
@@ -51,7 +55,7 @@ pub(crate) fn seek_sequence(
         }
     }
     // Finally, trim both sides to allow more lenience.
-    for i in search_start..=lines.len().saturating_sub(pattern.len()) {
+    for i in search_start..=end {
         let mut ok = true;
         for (p_idx, pat) in pattern.iter().enumerate() {
             if lines[i + p_idx].trim() != pat.trim() {
@@ -106,7 +110,7 @@ pub(crate) fn seek_sequence(
         result
     }
 
-    for i in search_start..=lines.len().saturating_sub(pattern.len()) {
+    for i in search_start..=end {
         let mut ok = true;
         for (p_idx, pat) in pattern.iter().enumerate() {
             if normalise(&lines[i + p_idx]) != normalise(pat) {
@@ -170,6 +174,20 @@ mod tests {
         // Should not panic – must return None when pattern cannot possibly fit.
         assert_eq!(
             seek_sequence(&lines, &pattern, /*start*/ 0, /*eof*/ false),
+            None
+        );
+    }
+
+    #[test]
+    fn test_eof_search_respects_start_offset() {
+        let lines = to_vec(&["alpha", "last"]);
+        let pattern = to_vec(&["last"]);
+        assert_eq!(
+            seek_sequence(&lines, &pattern, /*start*/ 0, /*eof*/ true),
+            Some(1)
+        );
+        assert_eq!(
+            seek_sequence(&lines, &pattern, /*start*/ 2, /*eof*/ true),
             None
         );
     }
