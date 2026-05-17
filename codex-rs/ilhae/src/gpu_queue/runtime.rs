@@ -21,7 +21,9 @@ impl NativeLlmRuntime {
             return LlmRuntimeState::Stopped;
         }
 
-        if crate::startup_main::native_runtime_healthcheck(&config.health_url).await {
+        if crate::startup_main::native_runtime_healthcheck(&config.health_url).await
+            || !crate::startup_main::find_native_runtime_pids(&config).is_empty()
+        {
             LlmRuntimeState::Running
         } else {
             LlmRuntimeState::Stopped

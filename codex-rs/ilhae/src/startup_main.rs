@@ -9,6 +9,8 @@ use sacp::DynConnectTo;
 use moka::sync::Cache;
 use std::collections::HashMap;
 use std::collections::HashSet;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -321,6 +323,8 @@ pub fn spawn_native_runtime_server(
         command.args(effective_native_runtime_args(config, &thinking_mode));
     }
 
+    #[cfg(unix)]
+    command.process_group(0);
     command.stdin(Stdio::null());
 
     if config.log_file.trim().is_empty() {
@@ -461,10 +465,11 @@ fn extract_port_from_config(
 ) -> Option<u16> {
     // 1. Try to extract from args (e.g. --port 8082)
     for i in 0..config.args.len() {
-        if (config.args[i] == "--port" || config.args[i] == "-p") && i + 1 < config.args.len() {
-            if let Ok(port) = config.args[i + 1].parse::<u16>() {
-                return Some(port);
-            }
+        if (config.args[i] == "--port" || config.args[i] == "-p")
+            && i + 1 < config.args.len()
+            && let Ok(port) = config.args[i + 1].parse::<u16>()
+        {
+            return Some(port);
         }
     }
 
@@ -487,53 +492,36 @@ fn extract_port_from_config(
 }
 
 fn find_pid_by_port(port: u16) -> Option<u32> {
-    // 1. Try fuser (common on Linux)
-    if let Ok(output) = std::process::Command::new("fuser")
-        .arg(format!("{}/tcp", port))
-        .output()
-    {
-        // fuser often outputs the PID to stderr instead of stdout
-        let out = String::from_utf8_lossy(&output.stdout);
-        let err = String::from_utf8_lossy(&output.stderr);
-        let combined = format!("{} {}", out, err);
-
-        if let Some(pid_str) = combined.trim().split_whitespace().last() {
-            if let Ok(pid) = pid_str.parse::<u32>() {
-                return Some(pid);
-            }
-        }
-    }
-
-    // 2. Try lsof as fallback
+    // Only consider the listener on the runtime port. Tools such as fuser also
+    // report clients connected to the port, which can include the Responses API
+    // compatibility proxy that must survive native-runtime preemption.
     if let Ok(output) = std::process::Command::new("lsof")
-        .args(["-t", "-i", &format!("tcp:{}", port)])
+        .args(["-nP", "-t", "-sTCP:LISTEN", "-iTCP", &format!(":{port}")])
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let s = String::from_utf8_lossy(&output.stdout);
-            if let Some(pid_str) = s.trim().lines().next() {
-                if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                    return Some(pid);
-                }
-            }
+        let s = String::from_utf8_lossy(&output.stdout);
+        if let Some(pid_str) = s.trim().lines().next()
+            && let Ok(pid) = pid_str.trim().parse::<u32>()
+        {
+            return Some(pid);
         }
     }
 
-    // 3. Try ss as last resort
+    // Try ss as fallback.
     if let Ok(output) = std::process::Command::new("ss")
         .args(["-lptn", &format!("sport = :{}", port)])
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let s = String::from_utf8_lossy(&output.stdout);
-            // Example: LISTEN 0 128 *:8082 *:* users:(("llama-server",pid=701443,fd=16))
-            if let Some(pos) = s.find("pid=") {
-                let rest = &s[pos + 4..];
-                if let Some(end) = rest.find(',') {
-                    if let Ok(pid) = rest[..end].parse::<u32>() {
-                        return Some(pid);
-                    }
-                }
+        let s = String::from_utf8_lossy(&output.stdout);
+        // Example: LISTEN 0 128 *:8082 *:* users:(("llama-server",pid=701443,fd=16))
+        if let Some(pos) = s.find("pid=") {
+            let rest = &s[pos + 4..];
+            if let Some(end) = rest.find(',')
+                && let Ok(pid) = rest[..end].parse::<u32>()
+            {
+                return Some(pid);
             }
         }
     }
@@ -609,13 +597,12 @@ pub async fn stop_native_runtime_server_for_config(
     let mut pids = find_native_runtime_pids(config);
 
     // Try to find PID by port if config has a port in health_url or args
-    if let Some(port) = extract_port_from_config(config) {
-        if let Some(pid) = find_pid_by_port(port) {
-            if !pids.contains(&pid) {
-                info!(profile = %profile_id, port = port, pid = pid, "[NativeRuntime] found process by port fallback");
-                pids.push(pid);
-            }
-        }
+    if let Some(port) = extract_port_from_config(config)
+        && let Some(pid) = find_pid_by_port(port)
+        && !pids.contains(&pid)
+    {
+        info!(profile = %profile_id, port = port, pid = pid, "[NativeRuntime] found process by port fallback");
+        pids.push(pid);
     }
 
     // Fallback: search for llama-server processes if no specific PIDs found yet
@@ -639,11 +626,11 @@ pub async fn stop_native_runtime_server_for_config(
                     if pid == current_pid {
                         continue;
                     }
-                    if let Some(cmdline) = read_proc_cmdline(pid) {
-                        if cmdline.iter().any(|arg| arg.contains(&server_name)) {
-                            info!(profile = %profile_id, pid = pid, "[NativeRuntime] found process by name substring match: {:?}", cmdline);
-                            pids.push(pid);
-                        }
+                    if let Some(cmdline) = read_proc_cmdline(pid)
+                        && cmdline.iter().any(|arg| arg.contains(&server_name))
+                    {
+                        info!(profile = %profile_id, pid = pid, "[NativeRuntime] found process by name substring match: {:?}", cmdline);
+                        pids.push(pid);
                     }
                 }
             }
@@ -692,11 +679,6 @@ pub async fn stop_native_runtime_server_for_config(
         if remaining.is_empty() {
             break;
         }
-        if !config.health_url.trim().is_empty()
-            && !native_runtime_healthcheck(&config.health_url).await
-        {
-            break;
-        }
         if started.elapsed() >= Duration::from_secs(15) {
             for pid in remaining {
                 let _ = std::process::Command::new("kill")
@@ -726,6 +708,8 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
         return Ok(());
     }
 
+    crate::gpu_queue::start_gate::wait_for_native_runtime_start_gate().await?;
+
     if native_runtime_healthcheck(&config.health_url).await {
         if !config.base_url.trim().is_empty() {
             unsafe {
@@ -743,6 +727,10 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
             }
         }
         return Ok(());
+    }
+
+    if !find_native_runtime_pids(&config).is_empty() {
+        stop_native_runtime_server_for_config(&profile_id, &config).await?;
     }
 
     spawn_native_runtime_server(&config)?;
@@ -1358,10 +1346,10 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
 
                     // Register spawned PIDs with supervisor for accurate lifecycle management
                     for (child, agent_cfg) in children.iter().zip(team.agents.iter()) {
-                        if let Some(pid) = child.id() {
-                            if let Some(port) = extract_port_from_endpoint(&agent_cfg.endpoint) {
-                                process_supervisor::record_pid(&sv, port, pid).await;
-                            }
+                        if let Some(pid) = child.id()
+                            && let Some(port) = extract_port_from_endpoint(&agent_cfg.endpoint)
+                        {
+                            process_supervisor::record_pid(&sv, port, pid).await;
                         }
                     }
 
@@ -1458,7 +1446,7 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
     {
         let store_bg = store.clone();
         tokio::task::spawn_blocking(move || {
-            if let Some(ref bw) = store_bg.brain_writer() {
+            if let Some(bw) = store_bg.brain_writer() {
                 match bw.migrate_from_db(&store_bg) {
                     Ok(n) if n > 0 => info!(
                         "[BrainSessionWriter] Migrated {} existing sessions to markdown",

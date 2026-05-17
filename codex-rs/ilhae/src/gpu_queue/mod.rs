@@ -3,3 +3,4 @@ pub mod client;
 pub mod daemon;
 pub mod runtime;
 pub mod scheduler;
+pub mod start_gate;

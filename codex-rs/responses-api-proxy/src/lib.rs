@@ -9,6 +9,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -78,6 +79,9 @@ pub enum ProviderMode {
     SglangQwen,
 }
 
+const UPSTREAM_LOADING_RETRY_TIMEOUT_SECS: u64 = 300;
+const UPSTREAM_LOADING_RETRY_INTERVAL_MS: u64 = 2_000;
+
 #[derive(Serialize)]
 struct ServerInfo {
     port: u16,
@@ -88,6 +92,12 @@ struct ForwardConfig {
     upstream_url: Url,
     host_header: HeaderValue,
     provider_mode: ProviderMode,
+}
+
+struct BufferedUpstreamResponse {
+    status: reqwest::StatusCode,
+    headers: HeaderMap,
+    body: Vec<u8>,
 }
 
 /// Entry point for the library main, for parity with other crates.
@@ -366,27 +376,19 @@ fn forward_sglang_qwen_request(
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     let chat_body = responses_to_chat_completions_request(&request_json)?;
-    let chat_url = derive_chat_completions_url(&config.upstream_url)?;
-    let upstream_resp = client
-        .post(chat_url)
-        .header(HOST, config.host_header.clone())
-        .header("content-type", "application/json")
-        .body(serde_json::to_vec(&chat_body)?)
-        .send()
-        .context("forwarding transformed request to sglang chat/completions")?;
-
-    let status = upstream_resp.status();
-    let upstream_headers = upstream_resp.headers().clone();
-    let upstream_body = upstream_resp
-        .bytes()
-        .context("reading transformed upstream response body")?;
+    let upstream_resp = send_sglang_qwen_chat_request_with_retries(client, config, &chat_body)?;
+    let BufferedUpstreamResponse {
+        status,
+        headers: upstream_headers,
+        body: upstream_body,
+    } = upstream_resp;
 
     if !status.is_success() {
         return respond_with_bytes(
             req,
             status.as_u16(),
             upstream_headers,
-            upstream_body.to_vec(),
+            upstream_body,
             exchange_dump,
         );
     }
@@ -415,6 +417,79 @@ fn forward_sglang_qwen_request(
     }
 
     respond_with_bytes(req, 200, response_headers, response_body, exchange_dump)
+}
+
+fn send_sglang_qwen_chat_request_with_retries(
+    client: &Client,
+    config: &ForwardConfig,
+    chat_body: &serde_json::Value,
+) -> Result<BufferedUpstreamResponse> {
+    let chat_url = derive_chat_completions_url(&config.upstream_url)?;
+    let request_body = serde_json::to_vec(chat_body)?;
+    let deadline = Instant::now() + Duration::from_secs(UPSTREAM_LOADING_RETRY_TIMEOUT_SECS);
+    let retry_connection_errors =
+        matches!(chat_url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+
+    loop {
+        let upstream_result = client
+            .post(chat_url.clone())
+            .header(HOST, config.host_header.clone())
+            .header("content-type", "application/json")
+            .body(request_body.clone())
+            .send();
+
+        match upstream_result {
+            Ok(upstream_resp) => {
+                let status = upstream_resp.status();
+                let headers = upstream_resp.headers().clone();
+                let body = upstream_resp
+                    .bytes()
+                    .context("reading transformed upstream response body")?
+                    .to_vec();
+                if should_retry_loading_upstream(status, &body) && Instant::now() < deadline {
+                    sleep_before_loading_retry(deadline);
+                    continue;
+                }
+                return Ok(BufferedUpstreamResponse {
+                    status,
+                    headers,
+                    body,
+                });
+            }
+            Err(err)
+                if retry_connection_errors
+                    && (err.is_connect() || err.is_timeout())
+                    && Instant::now() < deadline =>
+            {
+                sleep_before_loading_retry(deadline);
+                continue;
+            }
+            Err(err) => {
+                return Err(err)
+                    .context("forwarding transformed request to sglang chat/completions");
+            }
+        }
+    }
+}
+
+fn should_retry_loading_upstream(status: reqwest::StatusCode, body: &[u8]) -> bool {
+    if status != reqwest::StatusCode::SERVICE_UNAVAILABLE {
+        return false;
+    }
+
+    String::from_utf8_lossy(body)
+        .to_ascii_lowercase()
+        .contains("loading model")
+}
+
+fn sleep_before_loading_retry(deadline: Instant) {
+    let max_delay = Duration::from_millis(UPSTREAM_LOADING_RETRY_INTERVAL_MS);
+    let delay = deadline
+        .saturating_duration_since(Instant::now())
+        .min(max_delay);
+    if !delay.is_zero() {
+        std::thread::sleep(delay);
+    }
 }
 
 fn fetch_sglang_server_model_id(client: &Client, config: &ForwardConfig) -> Result<String> {
@@ -508,6 +583,52 @@ fn respond_with_bytes(
 mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::json;
+
+    #[test]
+    fn retries_llama_server_loading_model_response() {
+        assert!(super::should_retry_loading_upstream(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            b"Loading model"
+        ));
+    }
+
+    #[test]
+    fn retries_json_loading_model_response() {
+        let body = json!({
+            "error": {
+                "message": "Loading model"
+            }
+        })
+        .to_string();
+
+        assert!(super::should_retry_loading_upstream(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            body.as_bytes()
+        ));
+    }
+
+    #[test]
+    fn does_not_retry_generic_service_unavailable() {
+        let body = json!({
+            "error": {
+                "code": "server_is_overloaded"
+            }
+        })
+        .to_string();
+
+        assert!(!super::should_retry_loading_upstream(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            body.as_bytes()
+        ));
+    }
+
+    #[test]
+    fn does_not_retry_loading_message_with_non_503_status() {
+        assert!(!super::should_retry_loading_upstream(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            b"Loading model"
+        ));
+    }
 
     #[test]
     fn transforms_qwen_tool_markup_into_function_call_item() {
