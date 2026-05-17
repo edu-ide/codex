@@ -28,6 +28,7 @@ use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
+use core_test_support::skip_if_platform_sandbox_unavailable;
 use core_test_support::skip_if_sandbox;
 use core_test_support::skip_if_windows;
 use core_test_support::test_codex::TestCodex;
@@ -787,6 +788,7 @@ async fn unified_exec_network_denial_emits_failed_background_end_event() -> Resu
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     skip_if_windows!(Ok(()));
+    skip_if_platform_sandbox_unavailable!(PermissionProfile::workspace_write(), Ok(()));
 
     let server = start_mock_server().await;
     let (test, sandbox_policy) = unified_exec_network_denial_test(&server).await?;
@@ -830,6 +832,7 @@ async fn unified_exec_short_lived_network_denial_emits_failed_end_event() -> Res
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     skip_if_windows!(Ok(()));
+    skip_if_platform_sandbox_unavailable!(PermissionProfile::workspace_write(), Ok(()));
 
     let server = start_mock_server().await;
     let (test, sandbox_policy) = unified_exec_network_denial_test(&server).await?;
@@ -2672,6 +2675,7 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     skip_if_windows!(Ok(()));
+    skip_if_platform_sandbox_unavailable!(PermissionProfile::read_only(), Ok(()));
 
     let server = start_mock_server().await;
 
@@ -2762,6 +2766,7 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
 
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_platform_sandbox_unavailable!(PermissionProfile::read_only(), Ok(()));
 
     let server = start_mock_server().await;
     let read_only_policy = SandboxPolicy::new_read_only_policy();

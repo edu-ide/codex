@@ -574,6 +574,30 @@ macro_rules! skip_if_no_network {
     }};
 }
 
+pub fn platform_sandbox_unavailable_warning(
+    permission_profile: &codex_protocol::models::PermissionProfile,
+) -> Option<String> {
+    codex_core::config::system_bwrap_warning(permission_profile)
+}
+
+#[macro_export]
+macro_rules! skip_if_platform_sandbox_unavailable {
+    ($permission_profile:expr) => {{
+        let permission_profile = $permission_profile;
+        if let Some(warning) = $crate::platform_sandbox_unavailable_warning(&permission_profile) {
+            eprintln!("Skipping test because platform sandbox is unavailable: {warning}");
+            return;
+        }
+    }};
+    ($permission_profile:expr, $return_value:expr $(,)?) => {{
+        let permission_profile = $permission_profile;
+        if let Some(warning) = $crate::platform_sandbox_unavailable_warning(&permission_profile) {
+            eprintln!("Skipping test because platform sandbox is unavailable: {warning}");
+            return $return_value;
+        }
+    }};
+}
+
 #[macro_export]
 macro_rules! skip_if_remote {
     ($reason:expr $(,)?) => {{

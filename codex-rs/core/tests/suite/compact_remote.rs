@@ -914,6 +914,10 @@ async fn remote_compact_filters_deferred_dynamic_tools() -> Result<()> {
             description: "Hidden until discovered.".to_string(),
             input_schema: input_schema.clone(),
             defer_loading: true,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
         },
         DynamicToolSpec {
             namespace: Some("codex_app".to_string()),
@@ -921,6 +925,10 @@ async fn remote_compact_filters_deferred_dynamic_tools() -> Result<()> {
             description: "Visible immediately.".to_string(),
             input_schema,
             defer_loading: false,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
         },
     ];
     let new_thread = test
@@ -1529,7 +1537,7 @@ async fn remote_compact_trim_estimate_uses_session_base_instructions() -> Result
     let override_base_instructions = format!(
         "{}\nREMOTE_BASE_INSTRUCTIONS_OVERRIDE {}",
         baseline_compact_request.instructions_text(),
-        "x".repeat(4_000)
+        "x".repeat(40_000)
     );
     let override_context_window = baseline_payload_tokens.saturating_add(500);
     let pretrim_override_estimate =

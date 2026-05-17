@@ -10,6 +10,7 @@ use codex_features::Feature;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::approvals::NetworkPolicyAmendment;
 use codex_protocol::approvals::NetworkPolicyRuleAction;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
@@ -30,6 +31,7 @@ use core_test_support::responses::mount_sse_once_match;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
+use core_test_support::skip_if_platform_sandbox_unavailable;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::test_codex::turn_permission_fields;
@@ -1794,6 +1796,17 @@ async fn approval_matrix_covers_group(group: ScenarioGroup) -> Result<()> {
 
 async fn run_scenario_group(group: ScenarioGroup) -> Result<()> {
     skip_if_no_network!(Ok(()));
+
+    let required_profile = match group {
+        ScenarioGroup::DangerFullAccess
+        | ScenarioGroup::ApplyPatch
+        | ScenarioGroup::UnifiedExec => None,
+        ScenarioGroup::ReadOnly => Some(PermissionProfile::read_only()),
+        ScenarioGroup::WorkspaceWrite => Some(PermissionProfile::workspace_write()),
+    };
+    if let Some(permission_profile) = required_profile {
+        skip_if_platform_sandbox_unavailable!(permission_profile, Ok(()));
+    }
 
     let scenarios = scenarios()
         .into_iter()

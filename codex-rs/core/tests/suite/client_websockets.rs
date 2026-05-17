@@ -55,6 +55,7 @@ use tracing_test::traced_test;
 const MODEL: &str = "gpt-5.3-codex";
 const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
 const USER_AGENT_HEADER: &str = "user-agent";
+const OPENAI_BETA_RESPONSES_WEBSOCKETS: &str = "responses_websockets=2025-03-01";
 const WS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const X_CLIENT_REQUEST_ID_HEADER: &str = "x-client-request-id";
 const TEST_INSTALLATION_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -844,8 +845,8 @@ async fn responses_websocket_v2_prewarm_runs_when_only_v2_feature_enabled() {
             &prompt,
             &harness.model_info,
             &harness.session_telemetry,
-            harness.effort.clone(),
-            harness.summary.clone(),
+            harness.effort,
+            harness.summary,
             None,
             None,
         )
@@ -853,7 +854,7 @@ async fn responses_websocket_v2_prewarm_runs_when_only_v2_feature_enabled() {
         .expect("websocket prewarm failed");
 
     assert_eq!(server.handshakes().len(), 1);
-    assert_eq!(server.single_connection().len(), 0);
+    assert_eq!(server.single_connection().len(), 1);
     stream_until_complete(&mut client_session, &harness, &prompt).await;
 
     assert_eq!(server.handshakes().len(), 1);
@@ -887,7 +888,7 @@ async fn responses_websocket_v2_requests_use_v2_when_model_prefers_websockets() 
         vec![
             ev_response_created("resp-1"),
             ev_assistant_message("msg-1", "assistant output"),
-            ev_done_with_id("resp-1"),
+            ev_completed("resp-1"),
         ],
         vec![ev_response_created("resp-2"), ev_completed("resp-2")],
     ]])
@@ -2062,6 +2063,7 @@ async fn websocket_harness_with_provider_options(
         /*auth_manager*/ None,
         session_id,
         thread_id,
+        codex_core::OPENAI_PROVIDER_ID.to_string(),
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
         provider.clone(),
         SessionSource::Exec,

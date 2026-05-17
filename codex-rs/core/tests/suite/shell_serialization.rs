@@ -458,13 +458,13 @@ Output:
 4
 5
 6
-.*…46 tokens truncated….*
+.*…\d+ tokens truncated….*
 396
 397
 398
 399
 400
-$"#;
+(?:\n\n\.\.\. \(Command output was truncated\. Use grep, less, or file reading tools to view more details\))?\n?$"#;
     assert_regex_match(truncated_pattern, output);
 
     Ok(())

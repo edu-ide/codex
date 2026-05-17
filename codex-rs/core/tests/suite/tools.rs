@@ -32,6 +32,7 @@ use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
+use core_test_support::skip_if_platform_sandbox_unavailable;
 use core_test_support::skip_if_sandbox;
 use core_test_support::stdio_server_bin;
 use core_test_support::test_codex::test_codex;
@@ -449,6 +450,7 @@ async fn shell_escalated_permissions_rejected_then_ok() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sandbox_denied_shell_returns_original_output() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_platform_sandbox_unavailable!(PermissionProfile::read_only(), Ok(()));
 
     let server = start_mock_server().await;
     let mut builder = test_codex().with_model("gpt-5.4");
@@ -543,6 +545,7 @@ async fn sandbox_denied_shell_returns_original_output() -> Result<()> {
 async fn shell_enforces_glob_deny_read_policy() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_platform_sandbox_unavailable!(PermissionProfile::read_only(), Ok(()));
 
     let server = start_mock_server().await;
     let mut builder = test_codex()

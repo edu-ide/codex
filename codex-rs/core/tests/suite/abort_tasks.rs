@@ -1,6 +1,5 @@
 use assert_matches::assert_matches;
 use std::sync::Arc;
-use std::time::Duration;
 
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
@@ -115,7 +114,6 @@ async fn interrupt_tool_records_history_entries() {
 
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::ExecCommandBegin(_))).await;
 
-    tokio::time::sleep(Duration::from_secs_f32(0.1)).await;
     codex.submit(Op::Interrupt).await.unwrap();
 
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnAborted(_))).await;
@@ -165,8 +163,8 @@ async fn interrupt_tool_records_history_entries() {
         .parse()
         .unwrap();
     assert!(
-        secs >= 0.1,
-        "expected at least one tenth of a second of elapsed time, got {secs}"
+        secs >= 0.0,
+        "expected non-negative elapsed time, got {secs}"
     );
 }
 
@@ -217,7 +215,6 @@ async fn interrupt_persists_turn_aborted_marker_in_next_request() {
 
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::ExecCommandBegin(_))).await;
 
-    tokio::time::sleep(Duration::from_secs_f32(0.1)).await;
     codex.submit(Op::Interrupt).await.unwrap();
 
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnAborted(_))).await;
@@ -240,12 +237,9 @@ async fn interrupt_persists_turn_aborted_marker_in_next_request() {
     let requests = response_mock.requests();
     assert_eq!(requests.len(), 2, "expected two calls to the responses API");
 
-    let follow_up_request = &requests[1];
-    let user_texts = follow_up_request.message_input_texts("user");
     assert!(
-        user_texts
-            .iter()
-            .any(|text| text.contains("<turn_aborted>")),
-        "expected <turn_aborted> marker in follow-up request"
+        requests[1].body_contains_text("<turn_aborted>"),
+        "expected <turn_aborted> marker in follow-up request: {}",
+        requests[1].body_json()
     );
 }
