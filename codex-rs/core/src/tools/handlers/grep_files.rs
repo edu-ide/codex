@@ -68,7 +68,10 @@ impl ToolHandler for GrepSearchHandler {
         let (text, hint) = if results.is_empty() {
             (
                 "No Matches".to_string(),
-                Some("Consider broadening your search query or checking a different directory. You can also use `list_dir` to inspect the contents of the target directory.".to_string()),
+                Some(
+                    "Consider broadening your search query or checking a different directory."
+                        .to_string(),
+                ),
             )
         } else {
             (results.join("\n"), None)

@@ -1,6 +1,15 @@
 use super::*;
+use crate::session::tests::make_session_and_context;
+use crate::tools::context::ToolCallSource;
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolHandler;
+use crate::turn_diff_tracker::TurnDiffTracker;
+use serde_json::json;
 use std::process::Command as StdCommand;
+use std::sync::Arc;
 use tempfile::tempdir;
+use tokio::sync::Mutex;
 
 #[test]
 fn parses_basic_results() {
@@ -83,6 +92,40 @@ async fn run_search_handles_no_matches() -> anyhow::Result<()> {
 
     let results = run_rg_search("alpha", None, dir, 5, dir).await?;
     assert!(results.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn no_match_hint_does_not_reference_removed_list_dir_tool() -> anyhow::Result<()> {
+    if !rg_available() {
+        return Ok(());
+    }
+    let temp = tempdir().expect("create temp dir");
+    let dir = temp.path();
+    std::fs::write(dir.join("one.txt"), "omega").unwrap();
+    let (session, turn) = make_session_and_context().await;
+    let output = GrepSearchHandler
+        .handle(ToolInvocation {
+            session: session.into(),
+            turn: turn.into(),
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
+            tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+            call_id: "call-grep-search".to_string(),
+            tool_name: ToolName::plain("grep_search"),
+            source: ToolCallSource::Direct,
+            payload: ToolPayload::Function {
+                arguments: json!({
+                    "query": "alpha",
+                    "path": dir,
+                    "limit": 5
+                })
+                .to_string(),
+            },
+        })
+        .await?;
+
+    let hint = output.hint.expect("no-match hint");
+    assert!(!hint.contains("list_dir"), "{hint}");
     Ok(())
 }
 
