@@ -58,6 +58,7 @@ use codex_core_plugins::PluginsManager;
 use codex_exec_server::LOCAL_FS;
 use codex_features::Feature;
 use codex_features::FeaturesToml;
+use codex_model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
@@ -7060,7 +7061,10 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             tui_terminal_title: None,
             tui_theme: None,
             tui_session_picker_view: SessionPickerViewMode::Dense,
-            otel: OtelConfig::default(),
+            otel: OtelConfig {
+                metrics_exporter: OtelExporterKind::Statsig,
+                ..Default::default()
+            },
         },
         o3_profile_config
     );
@@ -7319,7 +7323,10 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         tui_terminal_title: None,
         tui_theme: None,
         tui_session_picker_view: SessionPickerViewMode::Dense,
-        otel: OtelConfig::default(),
+        otel: OtelConfig {
+            metrics_exporter: OtelExporterKind::Statsig,
+            ..Default::default()
+        },
     };
 
     assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -7477,7 +7484,10 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         tui_terminal_title: None,
         tui_theme: None,
         tui_session_picker_view: SessionPickerViewMode::Dense,
-        otel: OtelConfig::default(),
+        otel: OtelConfig {
+            metrics_exporter: OtelExporterKind::Statsig,
+            ..Default::default()
+        },
     };
 
     assert_eq!(expected_zdr_profile_config, zdr_profile_config);
@@ -7620,7 +7630,10 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         tui_terminal_title: None,
         tui_theme: None,
         tui_session_picker_view: SessionPickerViewMode::Dense,
-        otel: OtelConfig::default(),
+        otel: OtelConfig {
+            metrics_exporter: OtelExporterKind::Statsig,
+            ..Default::default()
+        },
     };
 
     assert_eq!(expected_gpt5_profile_config, gpt5_profile_config);

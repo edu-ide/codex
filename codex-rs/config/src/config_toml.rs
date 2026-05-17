@@ -32,6 +32,7 @@ use codex_app_server_protocol::UserSavedConfig;
 use codex_features::FeaturesToml;
 use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
 use codex_model_provider_info::LEGACY_OLLAMA_CHAT_PROVIDER_ID;
+use codex_model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
@@ -950,7 +951,7 @@ where
 
 pub fn validate_oss_provider(provider: &str) -> std::io::Result<()> {
     match provider {
-        LMSTUDIO_OSS_PROVIDER_ID | OLLAMA_OSS_PROVIDER_ID => Ok(()),
+        LLAMA_SERVER_OSS_PROVIDER_ID | LMSTUDIO_OSS_PROVIDER_ID | OLLAMA_OSS_PROVIDER_ID => Ok(()),
         LEGACY_OLLAMA_CHAT_PROVIDER_ID => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             OLLAMA_CHAT_PROVIDER_REMOVED_ERROR,
@@ -958,7 +959,7 @@ pub fn validate_oss_provider(provider: &str) -> std::io::Result<()> {
         _ => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!(
-                "Invalid OSS provider '{provider}'. Must be one of: {LMSTUDIO_OSS_PROVIDER_ID}, {OLLAMA_OSS_PROVIDER_ID}"
+                "Invalid OSS provider '{provider}'. Must be one of: {LLAMA_SERVER_OSS_PROVIDER_ID}, {LMSTUDIO_OSS_PROVIDER_ID}, {OLLAMA_OSS_PROVIDER_ID}"
             ),
         )),
     }
