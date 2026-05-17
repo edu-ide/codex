@@ -223,6 +223,7 @@ pub struct IlhaeProfileNativeRuntimeConfig {
     pub model_path: String,
     pub chat_template_file: String,
     pub log_file: String,
+    pub env: std::collections::BTreeMap<String, String>,
     #[serde(default = "default_native_runtime_startup_timeout_secs")]
     pub startup_timeout_secs: u64,
     pub args: Vec<String>,
@@ -332,6 +333,7 @@ impl Default for IlhaeProfileNativeRuntimeConfig {
             model_path: String::new(),
             chat_template_file: String::new(),
             log_file: String::new(),
+            env: std::collections::BTreeMap::new(),
             startup_timeout_secs: default_native_runtime_startup_timeout_secs(),
             args: Vec::new(),
         }

@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

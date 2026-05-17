@@ -9,7 +9,6 @@ use sacp::DynConnectTo;
 use moka::sync::Cache;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::os::fd::AsRawFd;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -242,9 +241,14 @@ struct NativeRuntimeStartLock {
 
 impl Drop for NativeRuntimeStartLock {
     fn drop(&mut self) {
-        // SAFETY: file descriptor is owned by this guard and remains valid until drop completes.
-        unsafe {
-            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+
+            // SAFETY: file descriptor is owned by this guard and remains valid until drop completes.
+            unsafe {
+                libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+            }
         }
     }
 }
@@ -266,15 +270,25 @@ fn acquire_native_runtime_start_lock(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .append(true)
-        .open(&path)?;
-    // SAFETY: flock is called on a valid file descriptor and the guard unlocks it on drop.
-    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-    if rc != 0 {
-        return Err(anyhow::Error::from(std::io::Error::last_os_error()));
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).read(true).append(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        // Deny all sharing while the guard owns the file handle.
+        options.share_mode(0);
+    }
+    let file = options.open(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+
+        // SAFETY: flock is called on a valid file descriptor and the guard unlocks it on drop.
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+        if rc != 0 {
+            return Err(anyhow::Error::from(std::io::Error::last_os_error()));
+        }
     }
     Ok(NativeRuntimeStartLock { file })
 }
@@ -286,9 +300,11 @@ pub fn spawn_native_runtime_server(
         anyhow::bail!("native runtime server_bin is required");
     }
 
-    let mut command = std::process::Command::new(&config.server_bin);
     let thinking_mode = crate::config::current_thinking_mode();
-    command.env(ILHAE_NATIVE_THINKING_MODE_ENV, &thinking_mode);
+    let mut command = std::process::Command::new(&config.server_bin);
+    for (key, value) in effective_native_runtime_env(config, &thinking_mode) {
+        command.env(key, value);
+    }
     if config.args.is_empty() {
         if !config.model_path.trim().is_empty() {
             command.arg("-m").arg(&config.model_path);
@@ -394,6 +410,25 @@ fn effective_native_runtime_args(
     args
 }
 
+fn effective_native_runtime_env(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+    thinking_mode: &str,
+) -> Vec<(String, String)> {
+    let mut env = Vec::with_capacity(config.env.len() + 1);
+    env.push((
+        ILHAE_NATIVE_THINKING_MODE_ENV.to_string(),
+        thinking_mode.to_string(),
+    ));
+    env.extend(
+        config
+            .env
+            .iter()
+            .filter(|(key, _)| !key.trim().is_empty())
+            .map(|(key, value)| (key.clone(), value.clone())),
+    );
+    env
+}
+
 fn native_runtime_configs_equivalent(
     left: &crate::config::IlhaeProfileNativeRuntimeConfig,
     right: &crate::config::IlhaeProfileNativeRuntimeConfig,
@@ -403,6 +438,7 @@ fn native_runtime_configs_equivalent(
         && left.health_url.trim() == right.health_url.trim()
         && left.base_url.trim() == right.base_url.trim()
         && left.model_path.trim() == right.model_path.trim()
+        && left.env == right.env
         && left.args == right.args
 }
 
@@ -2243,6 +2279,25 @@ mod tests {
         assert_eq!(
             native_runtime_start_lock_path("qwen-local", &first),
             native_runtime_start_lock_path("nemotron-local", &second)
+        );
+    }
+
+    #[test]
+    fn effective_native_runtime_env_includes_config_env_and_thinking_mode() {
+        let mut config = crate::config::IlhaeProfileNativeRuntimeConfig::default();
+        config
+            .env
+            .insert("TURBO_AUTO_ASYMMETRIC".to_string(), "0".to_string());
+
+        let env = effective_native_runtime_env(&config, "on");
+
+        assert!(
+            env.iter()
+                .any(|(key, value)| { key == "ILHAE_NATIVE_THINKING_MODE" && value == "on" })
+        );
+        assert!(
+            env.iter()
+                .any(|(key, value)| { key == "TURBO_AUTO_ASYMMETRIC" && value == "0" })
         );
     }
 }
