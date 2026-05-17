@@ -155,6 +155,10 @@ async fn model_visible_specs_filter_deferred_dynamic_tools() -> anyhow::Result<(
                 "additionalProperties": false,
             }),
             defer_loading: true,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
         },
         DynamicToolSpec {
             namespace: Some("codex_app".to_string()),
@@ -166,6 +170,10 @@ async fn model_visible_specs_filter_deferred_dynamic_tools() -> anyhow::Result<(
                 "additionalProperties": false,
             }),
             defer_loading: false,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
         },
     ];
 

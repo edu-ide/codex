@@ -691,6 +691,7 @@ fn replace_last_turn_images_replaces_tool_output_images() {
                     },
                 ]),
                 success: Some(true),
+                hint: None,
             },
         },
     ];
@@ -711,6 +712,7 @@ fn replace_last_turn_images_replaces_tool_output_images() {
                         },
                     ]),
                     success: Some(true),
+                    hint: None,
                 },
             },
         ]
@@ -1025,6 +1027,7 @@ fn record_items_truncates_function_call_output_content() {
         output: FunctionCallOutputPayload {
             body: FunctionCallOutputBody::Text(long_output.clone()),
             success: Some(true),
+            hint: None,
         },
     };
 
@@ -1090,6 +1093,7 @@ fn record_items_respects_custom_token_limit() {
         output: FunctionCallOutputPayload {
             body: FunctionCallOutputBody::Text(long_output),
             success: Some(true),
+            hint: None,
         },
     };
 

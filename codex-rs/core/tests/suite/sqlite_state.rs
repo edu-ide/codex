@@ -114,6 +114,10 @@ async fn backfill_scans_existing_rollouts() -> Result<()> {
                 "properties": { "city": { "type": "string" } }
             }),
             defer_loading: true,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
         },
         DynamicToolSpec {
             namespace: None,
@@ -125,6 +129,10 @@ async fn backfill_scans_existing_rollouts() -> Result<()> {
                 "properties": { "zip": { "type": "string" } }
             }),
             defer_loading: false,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
         },
     ];
     let dynamic_tools_for_hook = dynamic_tools.clone();

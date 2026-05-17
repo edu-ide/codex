@@ -4,6 +4,7 @@ use codex_api::TextControls;
 use codex_api::create_text_param_for_request;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::FunctionCallOutputPayload;
+use codex_tools as tools;
 use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ResponsesApiTool;
@@ -262,16 +263,14 @@ fn llama_server_keeps_function_style_apply_patch_outputs_unmodified() {
     };
 
     assert_eq!(
-        prompt.get_formatted_input_for_provider(Some(
-            crate::model_provider_info::LLAMA_SERVER_OSS_PROVIDER_ID
-        )),
+        prompt.get_formatted_input_for_provider(Some(crate::LLAMA_SERVER_OSS_PROVIDER_ID)),
         prompt.input
     );
 }
 
 #[test]
 fn tool_search_output_namespace_serializes_with_deferred_child_tools() {
-    let namespace = tools::ToolSearchOutputTool::Namespace(ResponsesApiNamespace {
+    let namespace = tools::LoadableToolSpec::Namespace(ResponsesApiNamespace {
         name: "mcp__codex_apps__calendar".to_string(),
         description: "Plan events".to_string(),
         tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
@@ -279,11 +278,7 @@ fn tool_search_output_namespace_serializes_with_deferred_child_tools() {
             description: "Create a calendar event.".to_string(),
             strict: false,
             defer_loading: Some(true),
-            parameters: crate::tools::spec::JsonSchema::Object {
-                properties: Default::default(),
-                required: None,
-                additional_properties: None,
-            },
+            parameters: codex_tools::JsonSchema::object(Default::default(), None, None),
             output_schema: None,
         })],
     });

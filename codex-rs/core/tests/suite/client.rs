@@ -893,6 +893,7 @@ async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuth
         ))),
         thread_id.into(),
         thread_id,
+        codex_core::OPENAI_PROVIDER_ID.to_string(),
         /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
         provider,
         SessionSource::Exec,
@@ -1496,15 +1497,15 @@ async fn skills_append_to_developer_message() {
         developer_text.contains("## Skills"),
         "expected skills section present: {developer_messages:?}"
     );
+    let expected_root = normalize_path(codex_home.path().join("skills")).unwrap();
+    let expected_root_str = expected_root.to_string_lossy().replace('\\', "/");
     assert!(
-        developer_text.contains("demo: build charts"),
-        "expected skill summary: {developer_messages:?}"
+        developer_text.contains(&format!("- `r1` = `{expected_root_str}`")),
+        "expected root alias for {expected_root_str}: {developer_messages:?}"
     );
-    let expected_path = normalize_path(skill_dir.join("SKILL.md")).unwrap();
-    let expected_path_str = expected_path.to_string_lossy().replace('\\', "/");
     assert!(
-        developer_text.contains(&expected_path_str),
-        "expected path {expected_path_str} in developer message: {developer_messages:?}"
+        developer_text.contains("demo: build charts (file: r1/demo/SKILL.md)"),
+        "expected skill summary with root alias: {developer_messages:?}"
     );
     let _codex_home_guard = codex_home;
 }
@@ -1532,7 +1533,7 @@ async fn skills_use_aliases_in_developer_message_under_budget_pressure() {
         std::fs::create_dir_all(&skill_dir).expect("create skill dir");
         std::fs::write(
             skill_dir.join("SKILL.md"),
-            format!("---\nname: s{index:02}\ndescription: d\n---\n\n# body\n"),
+            format!("---\nname: 00{index:02}\ndescription: d\n---\n\n# body\n"),
         )
         .expect("write skill");
     }
@@ -1585,7 +1586,7 @@ async fn skills_use_aliases_in_developer_message_under_budget_pressure() {
         "expected root alias for {expected_root_str}: {developer_messages:?}"
     );
     assert!(
-        developer_text.contains("- s00: d (file: r0/s00/SKILL.md)"),
+        developer_text.contains("- 0000: (file: r0/s00/SKILL.md)"),
         "expected skill path to use root alias: {developer_messages:?}"
     );
     assert!(
@@ -2306,6 +2307,7 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
         /*auth_manager*/ None,
         thread_id.into(),
         thread_id,
+        codex_core::OPENAI_PROVIDER_ID.to_string(),
         /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
         provider.clone(),
         SessionSource::Exec,

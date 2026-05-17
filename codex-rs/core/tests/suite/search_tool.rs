@@ -805,6 +805,10 @@ async fn tool_search_returns_deferred_dynamic_tool_and_routes_follow_up_call() -
         description: tool_description.to_string(),
         input_schema: input_schema.clone(),
         defer_loading: true,
+        tags: None,
+        linked_files: None,
+        version: None,
+        compatibility: None,
     };
 
     let mut builder = test_codex().with_config(configure_search_capable_model);
@@ -853,6 +857,7 @@ async fn tool_search_returns_deferred_dynamic_tool_and_routes_follow_up_call() -
                     text: "dynamic-search-ok".to_string(),
                 }],
                 success: true,
+                hint: None,
             },
         })
         .await?;

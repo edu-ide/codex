@@ -217,6 +217,10 @@ mod tests {
                 "additionalProperties": false,
             }),
             defer_loading: true,
+            tags: None,
+            linked_files: None,
+            version: None,
+            compatibility: None,
         }];
         let handler = handler_from_tools(
             Some(&std::collections::HashMap::from([
@@ -441,21 +445,15 @@ mod tests {
             callable_name: tool_name.to_string(),
             callable_namespace: format!("mcp__{server_name}__"),
             namespace_description: None,
-            tool: Tool {
-                name: tool_name.to_string().into(),
-                title: None,
-                description: Some(format!("{description_prefix} desktop tool").into()),
-                input_schema: Arc::new(rmcp::model::object(serde_json::json!({
+            tool: Tool::new(
+                tool_name.to_string(),
+                format!("{description_prefix} desktop tool"),
+                Arc::new(rmcp::model::object(serde_json::json!({
                     "type": "object",
                     "properties": {},
                     "additionalProperties": false,
                 }))),
-                output_schema: None,
-                annotations: None,
-                execution: None,
-                icons: None,
-                meta: None,
-            },
+            ),
             connector_id: None,
             connector_name: None,
             plugin_display_names: Vec::new(),

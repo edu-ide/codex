@@ -2566,6 +2566,10 @@ async fn code_mode_can_call_hidden_dynamic_tools() -> Result<()> {
                     "additionalProperties": false,
                 }),
                 defer_loading: true,
+                tags: None,
+                linked_files: None,
+                version: None,
+                compatibility: None,
             }],
             /*persist_extended_history*/ false,
         )
@@ -2652,6 +2656,7 @@ text(
                     text: "hidden-ok".to_string(),
                 }],
                 success: true,
+                hint: None,
             },
         })
         .await?;

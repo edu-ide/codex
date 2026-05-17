@@ -400,7 +400,7 @@ fn test_model_client_session() -> crate::client::ModelClientSession {
         /*auth_manager*/ None,
         thread_id.into(),
         thread_id,
-        crate::model_provider_info::OPENAI_PROVIDER_ID.to_string(),
+        crate::OPENAI_PROVIDER_ID.to_string(),
         /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
         ModelProviderInfo::create_openai_provider(/* base_url */ /*base_url*/ None),
         codex_protocol::protocol::SessionSource::Exec,
@@ -572,7 +572,9 @@ fn make_connector(id: &str, name: &str) -> AppInfo {
 
 #[test]
 fn assistant_message_stream_parsers_can_be_seeded_from_output_item_added_text() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false);
+    let mut parsers = AssistantMessageStreamParsers::new(
+        /*plan_mode*/ false, /*hide_think_tags*/ false,
+    );
     let item_id = "msg-1";
 
     let seeded = parsers.seed_item_text(item_id, "hello <oai-mem-citation>doc");
@@ -589,7 +591,9 @@ fn assistant_message_stream_parsers_can_be_seeded_from_output_item_added_text() 
 
 #[test]
 fn assistant_message_stream_parsers_seed_buffered_prefix_stays_out_of_finish_tail() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false);
+    let mut parsers = AssistantMessageStreamParsers::new(
+        /*plan_mode*/ false, /*hide_think_tags*/ false,
+    );
     let item_id = "msg-1";
 
     let seeded = parsers.seed_item_text(item_id, "hello <oai-mem-");
@@ -606,7 +610,8 @@ fn assistant_message_stream_parsers_seed_buffered_prefix_stays_out_of_finish_tai
 
 #[test]
 fn assistant_message_stream_parsers_seed_plan_parser_across_added_and_delta_boundaries() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ true);
+    let mut parsers =
+        AssistantMessageStreamParsers::new(/*plan_mode*/ true, /*hide_think_tags*/ false);
     let item_id = "msg-1";
 
     let seeded = parsers.seed_item_text(item_id, "Intro\n<proposed");
@@ -2648,6 +2653,7 @@ fn prefers_structured_content_when_present() {
             .unwrap(),
         ),
         success: Some(true),
+        hint: None,
     };
 
     assert_eq!(expected, got);
@@ -2729,6 +2735,7 @@ fn falls_back_to_content_when_structured_is_null() {
             serde_json::to_string(&vec![text_block("hello"), text_block("world")]).unwrap(),
         ),
         success: Some(true),
+        hint: None,
     };
 
     assert_eq!(expected, got);
@@ -2749,6 +2756,7 @@ fn success_flag_reflects_is_error_true() {
             serde_json::to_string(&json!({ "message": "bad" })).unwrap(),
         ),
         success: Some(false),
+        hint: None,
     };
 
     assert_eq!(expected, got);
@@ -2769,6 +2777,7 @@ fn success_flag_true_with_no_error_and_content_used() {
             serde_json::to_string(&vec![text_block("alpha")]).unwrap(),
         ),
         success: Some(true),
+        hint: None,
     };
 
     assert_eq!(expected, got);
