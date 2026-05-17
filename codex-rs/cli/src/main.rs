@@ -149,6 +149,10 @@ enum Subcommand {
     #[cfg(feature = "ilhae")]
     Start,
 
+    /// Manage the local GPU queue daemon.
+    #[cfg(feature = "ilhae")]
+    Gpu(GpuCommand),
+
     /// Launch the Codex desktop app (opens the app installer if missing).
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     App(app_cmd::AppCommand),
@@ -1166,6 +1170,129 @@ enum LocalServerCommand {
     Status,
 }
 
+#[cfg(feature = "ilhae")]
+#[derive(Debug, Parser)]
+struct GpuCommand {
+    /// GPU queue daemon address or base URL.
+    #[arg(long = "addr", global = true, value_name = "ADDR")]
+    addr: Option<String>,
+
+    #[command(subcommand)]
+    subcommand: GpuSubcommand,
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, clap::Subcommand)]
+enum GpuSubcommand {
+    /// Run the GPU queue daemon in the foreground.
+    Daemon(GpuDaemonCommand),
+
+    /// Print GPU queue daemon status.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Acquire a GPU lease.
+    Acquire(GpuAcquireCommand),
+
+    /// Release a GPU lease.
+    Release { lease_id: String },
+
+    /// Run a command while holding a GPU lease.
+    Run(GpuRunCommand),
+
+    /// Control the local LLM runtime through the GPU queue daemon.
+    Llm(GpuLlmCommand),
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, Parser)]
+struct GpuDaemonCommand {
+    /// Listen address for the daemon.
+    #[arg(long = "listen", value_name = "ADDR")]
+    listen: Option<String>,
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, Parser)]
+struct GpuAcquireCommand {
+    /// Lease owner label.
+    #[arg(long, default_value = "codex-cli")]
+    owner: String,
+
+    /// Lease kind, for example video or image.
+    #[arg(long, default_value = "video")]
+    kind: String,
+
+    /// Request a shared lease instead of the default exclusive lease.
+    #[arg(long)]
+    shared: bool,
+
+    /// Stop the local LLM runtime before granting the lease if it is running.
+    #[arg(long = "preempt-llm")]
+    preempt_llm: bool,
+
+    /// Lease TTL in seconds.
+    #[arg(long = "ttl-seconds", default_value_t = 3600)]
+    ttl_seconds: u64,
+
+    /// Wait for a pending lease for this many seconds.
+    #[arg(long = "wait-timeout-seconds")]
+    wait_timeout_seconds: Option<u64>,
+
+    /// Print the response as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, Parser)]
+struct GpuRunCommand {
+    /// Lease owner label.
+    #[arg(long, default_value = "codex-cli")]
+    owner: String,
+
+    /// Lease kind, for example video or image.
+    #[arg(long, default_value = "video")]
+    kind: String,
+
+    /// Request a shared lease instead of the default exclusive lease.
+    #[arg(long)]
+    shared: bool,
+
+    /// Stop the local LLM runtime before granting the lease if it is running.
+    #[arg(long = "preempt-llm")]
+    preempt_llm: bool,
+
+    /// Lease TTL in seconds.
+    #[arg(long = "ttl-seconds", default_value_t = 3600)]
+    ttl_seconds: u64,
+
+    /// Wait for a pending lease for this many seconds.
+    #[arg(long = "wait-timeout-seconds", default_value_t = 900)]
+    wait_timeout_seconds: u64,
+
+    /// Command to execute while holding the lease.
+    #[arg(last = true, required = true)]
+    command: Vec<String>,
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, Parser)]
+struct GpuLlmCommand {
+    #[command(subcommand)]
+    subcommand: GpuLlmSubcommand,
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, clap::Subcommand)]
+enum GpuLlmSubcommand {
+    Start,
+    Stop,
+    Restart,
+}
+
 async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     #[cfg(feature = "ilhae")]
     let prepared_ilhae_codex_home = prepare_ilhae_cli_environment_if_needed()?;
@@ -1559,6 +1686,16 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         },
 
         #[cfg(feature = "ilhae")]
+        Some(Subcommand::Gpu(gpu_cmd)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "gpu",
+            )?;
+            run_gpu_command(gpu_cmd, interactive.config_profile.as_deref()).await?;
+        }
+
+        #[cfg(feature = "ilhae")]
         Some(Subcommand::Start) => {
             codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
                 .await?;
@@ -1881,6 +2018,142 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(feature = "ilhae")]
+async fn run_gpu_command(cmd: GpuCommand, profile_id: Option<&str>) -> anyhow::Result<()> {
+    let addr = cmd
+        .addr
+        .unwrap_or_else(codex_ilhae::gpu_queue::api::default_listen_addr);
+    match cmd.subcommand {
+        GpuSubcommand::Daemon(daemon) => {
+            let listen = daemon.listen.unwrap_or(addr);
+            codex_ilhae::gpu_queue::daemon::run_daemon(
+                &listen,
+                profile_id.map(ToString::to_string),
+            )
+            .await?;
+        }
+        GpuSubcommand::Status { json } => {
+            let status = gpu_client(&addr).status().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("LLM: {:?}", status.llm_state);
+                match status.active_lease {
+                    Some(lease) => {
+                        println!(
+                            "Active: {} owner={} kind={} state={:?} expiresAt={:?}",
+                            lease.lease_id, lease.owner, lease.kind, lease.state, lease.expires_at
+                        );
+                    }
+                    None => println!("Active: none"),
+                }
+                println!("Pending: {}", status.pending_leases.len());
+            }
+        }
+        GpuSubcommand::Acquire(acquire) => {
+            let request = gpu_lease_request(
+                acquire.owner,
+                acquire.kind,
+                acquire.shared,
+                acquire.preempt_llm,
+                acquire.ttl_seconds,
+                acquire.wait_timeout_seconds,
+            );
+            let response = gpu_client(&addr).acquire_lease(&request).await?;
+            if acquire.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                println!(
+                    "Lease: {} state={:?} llmWasPreempted={}",
+                    response.lease_id, response.state, response.llm_was_preempted
+                );
+            }
+        }
+        GpuSubcommand::Release { lease_id } => {
+            let response = gpu_client(&addr).release_lease(&lease_id).await?;
+            println!(
+                "Released: {} llmRestarted={}",
+                response.released.lease_id, response.llm_restarted
+            );
+            if let Some(promoted) = response.promoted {
+                println!("Promoted: {}", promoted.lease_id);
+            }
+        }
+        GpuSubcommand::Run(run) => {
+            run_gpu_wrapped_command(&addr, run).await?;
+        }
+        GpuSubcommand::Llm(llm) => {
+            let client = gpu_client(&addr);
+            let response = match llm.subcommand {
+                GpuLlmSubcommand::Start => client.llm_start().await?,
+                GpuLlmSubcommand::Stop => client.llm_stop().await?,
+                GpuLlmSubcommand::Restart => client.llm_restart().await?,
+            };
+            println!("LLM: {:?}", response.state);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "ilhae")]
+async fn run_gpu_wrapped_command(addr: &str, run: GpuRunCommand) -> anyhow::Result<()> {
+    let request = gpu_lease_request(
+        run.owner,
+        run.kind,
+        run.shared,
+        run.preempt_llm,
+        run.ttl_seconds,
+        Some(run.wait_timeout_seconds),
+    );
+    let client = gpu_client(addr);
+    let response = client.acquire_lease(&request).await?;
+    if response.state != codex_ilhae::gpu_queue::api::LeaseState::Granted {
+        anyhow::bail!("GPU lease `{}` was not granted", response.lease_id);
+    }
+
+    let mut command = tokio::process::Command::new(&run.command[0]);
+    command.args(&run.command[1..]);
+    let status = command.status().await;
+    let release_result = client.release_lease(&response.lease_id).await;
+    if let Err(err) = release_result {
+        eprintln!("Failed to release GPU lease `{}`: {err}", response.lease_id);
+    }
+
+    let status = status?;
+    if !status.success() {
+        anyhow::bail!("GPU wrapped command exited with {status}");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "ilhae")]
+fn gpu_client(addr: &str) -> codex_ilhae::gpu_queue::client::GpuQueueClient {
+    codex_ilhae::gpu_queue::client::GpuQueueClient::from_addr(addr)
+}
+
+#[cfg(feature = "ilhae")]
+fn gpu_lease_request(
+    owner: String,
+    kind: String,
+    shared: bool,
+    preempt_llm: bool,
+    ttl_seconds: u64,
+    wait_timeout_seconds: Option<u64>,
+) -> codex_ilhae::gpu_queue::api::LeaseRequest {
+    codex_ilhae::gpu_queue::api::LeaseRequest {
+        owner,
+        kind,
+        mode: if shared {
+            codex_ilhae::gpu_queue::api::LeaseMode::Shared
+        } else {
+            codex_ilhae::gpu_queue::api::LeaseMode::Exclusive
+        },
+        preempt_llm,
+        ttl_seconds,
+        wait_timeout_seconds,
+    }
 }
 
 async fn run_exec_server_command(
@@ -3355,6 +3628,52 @@ args = ["--ctx-size", "131072"]
             panic!("expected features disable");
         };
         assert_eq!(feature, "shell_tool");
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn gpu_run_parses_command_after_separator() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "gpu",
+            "run",
+            "--kind",
+            "video",
+            "--preempt-llm",
+            "--",
+            "bash",
+            "-lc",
+            "echo ok",
+        ])
+        .expect("parse should succeed");
+        let Some(Subcommand::Gpu(GpuCommand {
+            subcommand: GpuSubcommand::Run(cmd),
+            ..
+        })) = cli.subcommand
+        else {
+            panic!("expected gpu run subcommand");
+        };
+
+        assert_eq!(cmd.kind, "video");
+        assert!(cmd.preempt_llm);
+        assert_eq!(cmd.command, vec!["bash", "-lc", "echo ok"]);
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn gpu_llm_restart_parses() {
+        let cli = MultitoolCli::try_parse_from(["codex", "gpu", "llm", "restart"])
+            .expect("parse should succeed");
+        let Some(Subcommand::Gpu(GpuCommand {
+            subcommand:
+                GpuSubcommand::Llm(GpuLlmCommand {
+                    subcommand: GpuLlmSubcommand::Restart,
+                }),
+            ..
+        })) = cli.subcommand
+        else {
+            panic!("expected gpu llm restart subcommand");
+        };
     }
 
     #[test]

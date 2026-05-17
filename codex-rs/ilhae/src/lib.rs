@@ -3,6 +3,7 @@
 // ── Extracted modules (testable via lib crate) ──
 pub mod builtins;
 pub mod config;
+pub mod gpu_queue;
 pub mod process_lifecycle;
 pub mod shared_state;
 
