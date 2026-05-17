@@ -946,6 +946,7 @@ fn web_search_config_is_forwarded_to_tool_spec() {
             timezone: Some("America/Los_Angeles".to_string()),
         }),
         search_context_size: Some(codex_protocol::config_types::WebSearchContextSize::High),
+        ..Default::default()
     };
 
     let available_models = Vec::new();
@@ -982,6 +983,39 @@ fn web_search_config_is_forwarded_to_tool_spec() {
             search_content_types: None,
         }
     );
+}
+
+#[test]
+fn duckduckgo_web_search_config_registers_local_function_tool() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Live),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_web_search_config(Some(WebSearchConfig {
+        engine: Some(codex_protocol::config_types::WebSearchEngine::Duckduckgo),
+        ..Default::default()
+    }));
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    let tool = find_tool(&tools, "web_search");
+    let ToolSpec::Function(function_tool) = &tool.spec else {
+        panic!("expected local function web_search tool");
+    };
+    assert_eq!(function_tool.name, "web_search");
 }
 
 #[test]
