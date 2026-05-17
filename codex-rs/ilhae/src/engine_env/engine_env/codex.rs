@@ -58,7 +58,8 @@ impl EngineEnv for CodexEnv {
             .arg(port.to_string())
             .arg("--role")
             .arg(role);
-        c.arg("--codex-bin").arg(resolve_codex_cli_bin(&self.engine_name));
+        c.arg("--codex-bin")
+            .arg(resolve_codex_cli_bin(&self.engine_name));
         if let Some(profile) = resolve_codex_cli_profile() {
             c.arg("--codex-profile").arg(profile);
         }
@@ -173,7 +174,7 @@ pub fn symlink_codex_auth_to_workspace(workspace: &std::path::Path) {
         let src = source_dir.join(file_name);
         let dst = target_dir.join(file_name);
         if src.exists() && !dst.exists() {
-            match std::os::unix::fs::symlink(&src, &dst) {
+            match crate::helpers::create_symlink(&src, &dst) {
                 Ok(()) => info!("[CodexEnv] Symlinked {} → {:?}", file_name, dst),
                 Err(e) => tracing::warn!("[CodexEnv] Failed to symlink {}: {}", file_name, e),
             }

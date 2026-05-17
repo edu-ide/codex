@@ -14,7 +14,9 @@ use super::team_config::*;
 /// remote agents during `Config.initialize()`, giving each a2a-server A2A **client** capability.
 ///
 /// Returns a map of role -> workspace_path so spawn can set CODER_AGENT_WORKSPACE_PATH.
-pub fn generate_peer_registration_files(team: &TeamRuntimeConfig) -> std::collections::HashMap<String, std::path::PathBuf> {
+pub fn generate_peer_registration_files(
+    team: &TeamRuntimeConfig,
+) -> std::collections::HashMap<String, std::path::PathBuf> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     let ilhae_dir = crate::config::resolve_ilhae_data_dir();
     let base_dir = ilhae_dir.join("team-workspaces");
@@ -33,13 +35,20 @@ pub fn generate_peer_registration_files(team: &TeamRuntimeConfig) -> std::collec
 
         // Seed auth + config files so isolated GEMINI_CLI_HOME can still authenticate.
         // Always overwrite auth tokens to keep them fresh (they expire within an hour).
-        for file_name in ["oauth_creds.json", "google_accounts.json", "settings.json", "trustedFolders.json", "mcp-server-enablement.json"] {
+        for file_name in [
+            "oauth_creds.json",
+            "google_accounts.json",
+            "settings.json",
+            "trustedFolders.json",
+            "mcp-server-enablement.json",
+        ] {
             let src = source_gemini_dir.join(file_name);
             let dst = gemini_dir.join(file_name);
             if src.exists() {
                 // DO NOT overwrite settings.json or mcp-server-enablement.json if they already exist,
                 // so that per-agent isolated capabilities (MCP toggles) are preserved!
-                let is_settings = file_name.ends_with(".json") && (file_name.starts_with("settings") || file_name.starts_with("mcp-server"));
+                let is_settings = file_name.ends_with(".json")
+                    && (file_name.starts_with("settings") || file_name.starts_with("mcp-server"));
                 if is_settings && dst.exists() {
                     continue;
                 }
@@ -55,14 +64,22 @@ pub fn generate_peer_registration_files(team: &TeamRuntimeConfig) -> std::collec
         if let Some(parent) = settings_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let settings_str = std::fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".to_string());
-        
+        let settings_str =
+            std::fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".to_string());
+
         let mut settings = match serde_json::from_str::<Value>(&settings_str) {
             Ok(s) => {
-                if s.is_object() { s } else { serde_json::json!({}) }
+                if s.is_object() {
+                    s
+                } else {
+                    serde_json::json!({})
+                }
             }
             Err(e) => {
-                tracing::warn!("[PeerGen] Invalid JSON in settings.json, resetting for injection: {}", e);
+                tracing::warn!(
+                    "[PeerGen] Invalid JSON in settings.json, resetting for injection: {}",
+                    e
+                );
                 serde_json::json!({})
             }
         };
@@ -78,7 +95,7 @@ pub fn generate_peer_registration_files(team: &TeamRuntimeConfig) -> std::collec
 
         if let Some(servers) = mcp_servers {
             servers.clear(); // Remove user's broken servers from the test environment!
-            
+
             // Resolve binary path: prefer target/debug, then target/release, then PATH
             let mcp_bin = resolve_brain_mcp_server_bin();
             servers.insert(
@@ -94,9 +111,16 @@ pub fn generate_peer_registration_files(team: &TeamRuntimeConfig) -> std::collec
             );
             if let Ok(updated) = serde_json::to_string_pretty(&settings) {
                 if let Err(e) = std::fs::write(&settings_path, updated) {
-                    tracing::error!("[PeerGen] Failed to write settings to {:?}: {}", settings_path, e);
-                 } else {
-                    tracing::info!("[PeerGen] {} -> injected ilhae-tools (orch-team-mcp-server) into settings.json", my_name);
+                    tracing::error!(
+                        "[PeerGen] Failed to write settings to {:?}: {}",
+                        settings_path,
+                        e
+                    );
+                } else {
+                    tracing::info!(
+                        "[PeerGen] {} -> injected ilhae-tools (orch-team-mcp-server) into settings.json",
+                        my_name
+                    );
                 }
             }
         }
@@ -113,7 +137,11 @@ pub fn generate_peer_registration_files(team: &TeamRuntimeConfig) -> std::collec
         });
         if let Ok(content) = serde_json::to_string_pretty(&enablement) {
             let _ = std::fs::write(&enablement_path, &content);
-            info!("[PeerGen] {} -> governance: {} tools allowed", my_name, allowed_tools.as_array().map(|a| a.len()).unwrap_or(0));
+            info!(
+                "[PeerGen] {} -> governance: {} tools allowed",
+                my_name,
+                allowed_tools.as_array().map(|a| a.len()).unwrap_or(0)
+            );
         }
 
         // ── Shared Context: team-wide shared_notes.json ──
@@ -126,7 +154,7 @@ pub fn generate_peer_registration_files(team: &TeamRuntimeConfig) -> std::collec
         let shared_notes_dst = workspace.join("shared_notes.json");
         // Symlink so all agents read/write the same file
         if !shared_notes_dst.exists() {
-            let _ = std::os::unix::fs::symlink(&shared_notes_src, &shared_notes_dst);
+            let _ = crate::helpers::create_symlink(&shared_notes_src, &shared_notes_dst);
             info!("[PeerGen] {} -> symlinked shared_notes.json", my_name);
         }
         let source_agents_dir = std::path::PathBuf::from(&home).join(".agents");
@@ -137,7 +165,11 @@ pub fn generate_peer_registration_files(team: &TeamRuntimeConfig) -> std::collec
             let _ = std::fs::create_dir_all(&agents_dir);
         } else if source_agents_dir.exists() && !dest_agents_dir.exists() {
             let _ = std::process::Command::new("cp")
-                .args(["-r", source_agents_dir.to_string_lossy().as_ref(), dest_agents_dir.to_string_lossy().as_ref()])
+                .args([
+                    "-r",
+                    source_agents_dir.to_string_lossy().as_ref(),
+                    dest_agents_dir.to_string_lossy().as_ref(),
+                ])
                 .output();
         }
 
@@ -150,10 +182,18 @@ pub fn generate_peer_registration_files(team: &TeamRuntimeConfig) -> std::collec
                     continue; // Skip self
                 }
                 let peer_desc = match peer_name.as_str() {
-                    "leader" | "manager" => "팀 리더. 전체 계획 수립 및 최종 통합 담당. 작업 분배와 결과 종합을 요청할 수 있습니다.",
-                    "researcher" => "자료 조사 전문가. 근거 수집, 사실 확인, 배경 조사를 위임할 수 있습니다.",
-                    "verifier" | "reviewer" => "검증 전문가. 결과 검증, 정확성 확인, 리스크 분석을 위임할 수 있습니다.",
-                    "creator" | "coder" => "콘텐츠 작성 전문가. 최종 답변 초안, 문서 작성, 코드 생성을 위임할 수 있습니다.",
+                    "leader" | "manager" => {
+                        "팀 리더. 전체 계획 수립 및 최종 통합 담당. 작업 분배와 결과 종합을 요청할 수 있습니다."
+                    }
+                    "researcher" => {
+                        "자료 조사 전문가. 근거 수집, 사실 확인, 배경 조사를 위임할 수 있습니다."
+                    }
+                    "verifier" | "reviewer" => {
+                        "검증 전문가. 결과 검증, 정확성 확인, 리스크 분석을 위임할 수 있습니다."
+                    }
+                    "creator" | "coder" => {
+                        "콘텐츠 작성 전문가. 최종 답변 초안, 문서 작성, 코드 생성을 위임할 수 있습니다."
+                    }
                     _ => "팀 에이전트",
                 };
                 peer_specs.push((
@@ -246,7 +286,10 @@ interface:
                 endpoint = peer_endpoint
             );
             match std::fs::write(&codex_skill_file, &codex_content) {
-                Ok(()) => info!("[PeerGen] {} -> codex skill file {:?}", my_name, codex_skill_file),
+                Ok(()) => info!(
+                    "[PeerGen] {} -> codex skill file {:?}",
+                    my_name, codex_skill_file
+                ),
                 Err(e) => warn!("[PeerGen] Failed to write {:?}: {}", codex_skill_file, e),
             }
         }
@@ -312,7 +355,10 @@ When calling another agent via tools, use these modes appropriately:
         );
         match std::fs::write(&gemini_md_path, &gemini_md_content) {
             Ok(()) => info!("[PeerGen] {} -> GEMINI.md {:?}", my_name, gemini_md_path),
-            Err(e) => warn!("[PeerGen] Failed to write GEMINI.md {:?}: {}", gemini_md_path, e),
+            Err(e) => warn!(
+                "[PeerGen] Failed to write GEMINI.md {:?}: {}",
+                gemini_md_path, e
+            ),
         }
 
         workspace_map.insert(my_name.to_string(), workspace);
@@ -335,18 +381,29 @@ fn role_based_tool_allowlist(role: &str, is_main: bool) -> serde_json::Value {
 
     match role {
         "researcher" => json!([
-            "memory_search", "memory_read", "knowledge_search",
-            "session_recall", "artifact_list",
-            "web_search", "read_url"
+            "memory_search",
+            "memory_read",
+            "knowledge_search",
+            "session_recall",
+            "artifact_list",
+            "web_search",
+            "read_url"
         ]),
         "creator" | "coder" => json!([
-            "artifact_save", "artifact_edit", "artifact_list",
-            "memory_write", "memory_read",
-            "write_file", "read_file"
+            "artifact_save",
+            "artifact_edit",
+            "artifact_list",
+            "memory_write",
+            "memory_read",
+            "write_file",
+            "read_file"
         ]),
         "verifier" | "reviewer" => json!([
-            "memory_read", "memory_search", "knowledge_search",
-            "artifact_list", "session_recall",
+            "memory_read",
+            "memory_search",
+            "knowledge_search",
+            "artifact_list",
+            "session_recall",
             "read_file"
         ]),
         _ => json!(["*"]), // Unknown roles get full access as safety fallback
@@ -369,17 +426,25 @@ pub fn resolve_brain_mcp_server_bin() -> String {
             if candidate.exists() {
                 return candidate.to_string_lossy().to_string();
             }
-            let candidate_release = cur.parent().unwrap_or(cur).join("release").join("orch-team-mcp-server");
+            let candidate_release = cur
+                .parent()
+                .unwrap_or(cur)
+                .join("release")
+                .join("orch-team-mcp-server");
             if candidate_release.exists() {
                 return candidate_release.to_string_lossy().to_string();
             }
-            let candidate_debug = cur.parent().unwrap_or(cur).join("debug").join("orch-team-mcp-server");
+            let candidate_debug = cur
+                .parent()
+                .unwrap_or(cur)
+                .join("debug")
+                .join("orch-team-mcp-server");
             if candidate_debug.exists() {
                 return candidate_debug.to_string_lossy().to_string();
             }
         }
     }
-    
+
     // Fallback to searching from CWD
     if let Ok(cwd) = std::env::current_dir() {
         let mut cur: Option<&std::path::Path> = Some(cwd.as_path());
@@ -441,17 +506,22 @@ pub async fn discover_and_refresh_peers(
             .send()
             .await
         {
-            Ok(res) if res.status().is_success() => {
-                match res.json().await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!("[PeerDiscovery] Failed to parse card for {}: {}", agent.role, e);
-                        continue;
-                    }
+            Ok(res) if res.status().is_success() => match res.json().await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(
+                        "[PeerDiscovery] Failed to parse card for {}: {}",
+                        agent.role, e
+                    );
+                    continue;
                 }
-            }
+            },
             Ok(res) => {
-                warn!("[PeerDiscovery] Non-200 from {} card: {}", agent.role, res.status());
+                warn!(
+                    "[PeerDiscovery] Non-200 from {} card: {}",
+                    agent.role,
+                    res.status()
+                );
                 continue;
             }
             Err(e) => {
@@ -466,9 +536,7 @@ pub async fn discover_and_refresh_peers(
             let sv = supervisor_handle.read().await;
             let key = format!("team-{}", agent.role.to_lowercase());
             match sv.processes.get(&key) {
-                Some(proc) => {
-                    proc.cached_agent_card.as_ref() != Some(&card)
-                }
+                Some(proc) => proc.cached_agent_card.as_ref() != Some(&card),
                 None => true,
             }
         };

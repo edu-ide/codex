@@ -41,6 +41,22 @@ pub const LEGACY_CODEX_AGENT_ID: &str = "codex";
 pub const ILHAE_NATIVE_TRANSPORT_ENV: &str = "ILHAE_NATIVE_TRANSPORT";
 pub const LEGACY_CODEX_TRANSPORT_ENV: &str = "ILHAE_CODEX_TRANSPORT";
 
+pub fn create_symlink(source: &Path, target: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source, target)
+    }
+
+    #[cfg(windows)]
+    {
+        if source.is_dir() {
+            std::os::windows::fs::symlink_dir(source, target)
+        } else {
+            std::os::windows::fs::symlink_file(source, target)
+        }
+    }
+}
+
 // ─── Agent ID inference ──────────────────────────────────────────────────
 
 pub fn is_ilhae_native_agent_id(agent_id: &str) -> bool {

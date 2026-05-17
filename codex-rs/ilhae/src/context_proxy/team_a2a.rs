@@ -1071,7 +1071,7 @@ fn symlink_gemini_auth_to_workspace(workspace: &std::path::Path) {
         if dst.exists() {
             continue; // Already exists (symlink or real file)
         }
-        match std::os::unix::fs::symlink(&src, &dst) {
+        match crate::helpers::create_symlink(&src, &dst) {
             Ok(()) => {
                 info!(
                     "[TeamSpawn] Symlinked auth file: {} -> {}",
