@@ -966,6 +966,14 @@ fn prepare_ilhae_cli_environment_if_needed() -> anyhow::Result<Option<std::path:
 }
 
 #[cfg(feature = "ilhae")]
+fn apply_ilhae_codex_home_loader_overrides(
+    loader_overrides: &mut codex_config::LoaderOverrides,
+    codex_home: &std::path::Path,
+) {
+    loader_overrides.managed_config_path = Some(codex_home.join("managed_config.toml"));
+}
+
+#[cfg(feature = "ilhae")]
 fn ilhae_profile_engine_id(profile: &codex_ilhae::config::IlhaeProfileConfig) -> String {
     profile
         .agent
@@ -1793,8 +1801,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                             None => codex_ilhae::config::prepare_ilhae_codex_home()
                                 .map_err(anyhow::Error::msg)?,
                         };
-                        loader_overrides.managed_config_path =
-                            Some(codex_home.join("managed_config.toml"));
+                        apply_ilhae_codex_home_loader_overrides(&mut loader_overrides, &codex_home);
                         codex_ilhae::ensure_native_runtime_for_cli(
                             interactive.config_profile.as_deref(),
                         )
@@ -2865,8 +2872,13 @@ async fn run_interactive_tui(
     remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
 ) -> std::io::Result<AppExitInfo> {
+    let mut loader_overrides = codex_config::LoaderOverrides::default();
     #[cfg(feature = "ilhae")]
     if remote.is_none() && is_invoked_as_ilhae_cli() {
+        let codex_home =
+            codex_ilhae::config::prepare_ilhae_codex_home().map_err(std::io::Error::other)?;
+        apply_ilhae_codex_home_loader_overrides(&mut loader_overrides, &codex_home);
+
         let _ = codex_ilhae::bootstrap_ilhae_runtime()
             .await
             .map_err(std::io::Error::other)?;
@@ -2938,7 +2950,7 @@ async fn run_interactive_tui(
     codex_tui::run_main(
         interactive,
         arg0_paths,
-        codex_config::LoaderOverrides::default(),
+        loader_overrides,
         normalized_remote,
         external_notifications,
     )
@@ -3208,6 +3220,13 @@ args = ["--ctx-size", "131072"]
             .expect("managed config written");
         assert!(managed.contains(r#"profile = "qwen-local""#));
         assert!(managed.contains(r#"model = "Qwen3.6-27B-UD-Q4_K_XL""#));
+
+        let mut loader_overrides = codex_config::LoaderOverrides::default();
+        apply_ilhae_codex_home_loader_overrides(&mut loader_overrides, &codex_home);
+        assert_eq!(
+            loader_overrides.managed_config_path,
+            Some(codex_home.join("managed_config.toml"))
+        );
     }
 
     #[cfg(feature = "ilhae")]

@@ -1865,6 +1865,18 @@ pub(crate) fn is_invoked_as_ilhae_cli() -> bool {
         .is_some_and(|name| matches!(name.as_str(), "ilhae" | "codex-ilhae" | "codex-ilhae-cli"))
 }
 
+pub(crate) fn product_title() -> &'static str {
+    product_title_for_invocation(is_invoked_as_ilhae_cli())
+}
+
+fn product_title_for_invocation(is_ilhae_cli: bool) -> &'static str {
+    if is_ilhae_cli {
+        "Ilhae"
+    } else {
+        "OpenAI Codex"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1946,6 +1958,15 @@ mod tests {
             /*is_ilhae_cli*/ false,
         ));
         Ok(())
+    }
+
+    #[test]
+    fn product_title_uses_ilhae_for_ilhae_invocation() {
+        assert_eq!(product_title_for_invocation(/*is_ilhae_cli*/ true), "Ilhae");
+        assert_eq!(
+            product_title_for_invocation(/*is_ilhae_cli*/ false),
+            "OpenAI Codex"
+        );
     }
 
     #[test]

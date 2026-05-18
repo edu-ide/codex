@@ -1469,6 +1469,26 @@ fn session_header_indicates_yolo_mode() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "snapshot path rendering differs on Windows"
+)]
+fn session_header_uses_ilhae_product_title() {
+    let cell = SessionHeaderHistoryCell::new_with_product_title(
+        "Ilhae",
+        "Qwen3.6-27B-UD-Q4_K_XL".to_string(),
+        ratatui::style::Style::default(),
+        /*reasoning_effort*/ None,
+        /*show_fast_status*/ false,
+        test_path_buf("/tmp/project").abs().to_path_buf(),
+        "test",
+    );
+
+    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+    insta::assert_snapshot!(rendered);
+}
+
+#[test]
 fn yolo_mode_includes_managed_full_access_profiles() {
     let permission_profile: PermissionProfile = PermissionProfile::Managed {
         network: NetworkSandboxPolicy::Enabled,

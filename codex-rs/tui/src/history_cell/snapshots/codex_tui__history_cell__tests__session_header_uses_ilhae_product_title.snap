@@ -1,0 +1,10 @@
+---
+source: tui/src/history_cell/tests.rs
+expression: rendered
+---
+╭──────────────────────────────────────────────────────╮
+│ >_ Ilhae (vtest)                                     │
+│                                                      │
+│ model:     Qwen3.6-27B-UD-Q4_K_XL   /model to change │
+│ directory: /tmp/project                              │
+╰──────────────────────────────────────────────────────╯

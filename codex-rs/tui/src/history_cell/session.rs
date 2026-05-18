@@ -239,6 +239,7 @@ pub(crate) fn has_yolo_permissions(
 }
 #[derive(Debug)]
 pub(crate) struct SessionHeaderHistoryCell {
+    product_title: &'static str,
     version: &'static str,
     model: String,
     model_style: Style,
@@ -274,7 +275,28 @@ impl SessionHeaderHistoryCell {
         directory: PathBuf,
         version: &'static str,
     ) -> Self {
+        Self::new_with_product_title(
+            crate::product_title(),
+            model,
+            model_style,
+            reasoning_effort,
+            show_fast_status,
+            directory,
+            version,
+        )
+    }
+
+    pub(crate) fn new_with_product_title(
+        product_title: &'static str,
+        model: String,
+        model_style: Style,
+        reasoning_effort: Option<ReasoningEffortConfig>,
+        show_fast_status: bool,
+        directory: PathBuf,
+        version: &'static str,
+    ) -> Self {
         Self {
+            product_title,
             version,
             model,
             model_style,
@@ -337,10 +359,10 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
 
-        // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
+        // Title line rendered inside the box, for example: ">_ OpenAI Codex (vX)"
         let title_spans: Vec<Span<'static>> = vec![
             Span::from(">_ ").dim(),
-            Span::from("OpenAI Codex").bold(),
+            Span::from(self.product_title).bold(),
             Span::from(" ").dim(),
             Span::from(format!("(v{})", self.version)).dim(),
         ];
@@ -407,7 +429,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         let mut lines = vec![
-            Line::from(format!("OpenAI Codex (v{})", self.version)),
+            Line::from(format!("{} (v{})", self.product_title, self.version)),
             Line::from(format!(
                 "model: {}{}",
                 self.model,
