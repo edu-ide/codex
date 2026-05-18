@@ -565,6 +565,7 @@ v2_enum_from_core! {
 #[ts(rename_all = "camelCase", export_to = "v2/")]
 pub enum ThreadGoalLoopPhase {
     KnowledgeLoop,
+    KairosLoop,
     SuperLoop,
     ImprovementLoop,
     CleanupLoop,

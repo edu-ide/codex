@@ -901,6 +901,48 @@ mod tests {
         );
         assert!(completed.loop_history[0].completed_at.is_some());
 
+        let kairos_started = runtime
+            .record_thread_goal_loop_event(
+                thread_id,
+                crate::ThreadGoalLoopEvent {
+                    id: "super_loop:kairos:2".to_string(),
+                    phase: crate::ThreadGoalLoopPhase::KairosLoop,
+                    status: crate::ThreadGoalLoopStatus::InProgress,
+                    title: "Running Kairos Loop".to_string(),
+                    summary: "Reviewing the active goal".to_string(),
+                    detail: None,
+                    error: None,
+                },
+            )
+            .await
+            .expect("kairos loop event should record")
+            .expect("goal should still exist");
+
+        let expected_kairos_state = crate::ThreadGoalLoopState {
+            cycle_number: 2,
+            phase: crate::ThreadGoalLoopPhase::KairosLoop,
+            status: crate::ThreadGoalLoopStatus::InProgress,
+            summary: "Reviewing the active goal".to_string(),
+            updated_at: kairos_started.loop_state.as_ref().unwrap().updated_at,
+        };
+        assert_eq!(Some(expected_kairos_state), kairos_started.loop_state);
+        assert_eq!(
+            Some(&crate::ThreadGoalLoopHistoryEntry {
+                id: "super_loop:kairos:2".to_string(),
+                cycle_number: 2,
+                phase: crate::ThreadGoalLoopPhase::KairosLoop,
+                status: crate::ThreadGoalLoopStatus::InProgress,
+                title: "Running Kairos Loop".to_string(),
+                summary: "Reviewing the active goal".to_string(),
+                detail: None,
+                error: None,
+                started_at: kairos_started.loop_history[0].started_at,
+                updated_at: kairos_started.loop_history[0].updated_at,
+                completed_at: None,
+            }),
+            kairos_started.loop_history.first()
+        );
+
         let replaced = runtime
             .replace_thread_goal(
                 thread_id,

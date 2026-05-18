@@ -169,6 +169,7 @@ fn goal_loop_history_lines(entry: &AppThreadGoalLoopHistoryEntry) -> Vec<Line<'s
 fn goal_loop_phase_label(phase: AppThreadGoalLoopPhase) -> &'static str {
     match phase {
         AppThreadGoalLoopPhase::KnowledgeLoop => "knowledge loop",
+        AppThreadGoalLoopPhase::KairosLoop => "kairos loop",
         AppThreadGoalLoopPhase::SuperLoop => "super loop",
         AppThreadGoalLoopPhase::ImprovementLoop => "improvement loop",
         AppThreadGoalLoopPhase::CleanupLoop => "cleanup loop",

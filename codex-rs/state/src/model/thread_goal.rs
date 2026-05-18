@@ -52,6 +52,7 @@ impl TryFrom<&str> for ThreadGoalStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadGoalLoopPhase {
     KnowledgeLoop,
+    KairosLoop,
     SuperLoop,
     ImprovementLoop,
     CleanupLoop,
@@ -63,6 +64,7 @@ impl ThreadGoalLoopPhase {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::KnowledgeLoop => "knowledge_loop",
+            Self::KairosLoop => "kairos_loop",
             Self::SuperLoop => "super_loop",
             Self::ImprovementLoop => "improvement_loop",
             Self::CleanupLoop => "cleanup_loop",
@@ -78,6 +80,7 @@ impl TryFrom<&str> for ThreadGoalLoopPhase {
     fn try_from(value: &str) -> Result<Self> {
         match value {
             "knowledge_loop" => Ok(Self::KnowledgeLoop),
+            "kairos_loop" => Ok(Self::KairosLoop),
             "super_loop" => Ok(Self::SuperLoop),
             "improvement_loop" => Ok(Self::ImprovementLoop),
             "cleanup_loop" => Ok(Self::CleanupLoop),

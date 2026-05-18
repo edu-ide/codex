@@ -466,6 +466,7 @@ fn thread_goal_loop_phase_from_state(
 ) -> ThreadGoalLoopPhase {
     match phase {
         codex_state::ThreadGoalLoopPhase::KnowledgeLoop => ThreadGoalLoopPhase::KnowledgeLoop,
+        codex_state::ThreadGoalLoopPhase::KairosLoop => ThreadGoalLoopPhase::KairosLoop,
         codex_state::ThreadGoalLoopPhase::SuperLoop => ThreadGoalLoopPhase::SuperLoop,
         codex_state::ThreadGoalLoopPhase::ImprovementLoop => ThreadGoalLoopPhase::ImprovementLoop,
         codex_state::ThreadGoalLoopPhase::CleanupLoop => ThreadGoalLoopPhase::CleanupLoop,

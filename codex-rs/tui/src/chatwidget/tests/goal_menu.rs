@@ -53,20 +53,20 @@ async fn goal_menu_loop_history_snapshot() {
     );
     goal.loop_state = Some(codex_app_server_protocol::ThreadGoalLoopState {
         cycle_number: 3,
-        phase: codex_app_server_protocol::ThreadGoalLoopPhase::SuperLoop,
+        phase: codex_app_server_protocol::ThreadGoalLoopPhase::KairosLoop,
         status: codex_app_server_protocol::ThreadGoalLoopStatus::Completed,
-        summary: "Super loop completed".to_string(),
+        summary: "Kairos loop completed".to_string(),
         updated_at: 1_776_272_470,
     });
     goal.loop_history = vec![
         codex_app_server_protocol::ThreadGoalLoopHistoryEntry {
-            id: "super_loop:worker:3".to_string(),
+            id: "super_loop:kairos:3".to_string(),
             cycle_number: 3,
-            phase: codex_app_server_protocol::ThreadGoalLoopPhase::SuperLoop,
+            phase: codex_app_server_protocol::ThreadGoalLoopPhase::KairosLoop,
             status: codex_app_server_protocol::ThreadGoalLoopStatus::Completed,
-            title: "Running Super Loop".to_string(),
-            summary: "Super loop completed".to_string(),
-            detail: Some("planned 2 actions from 3 findings".to_string()),
+            title: "Running Kairos Loop".to_string(),
+            summary: "Kairos loop completed".to_string(),
+            detail: Some("reviewed 2 goal follow-ups".to_string()),
             error: None,
             started_at: 1_776_272_460,
             updated_at: 1_776_272_470,

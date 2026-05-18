@@ -13541,6 +13541,7 @@
     "ThreadGoalLoopPhase": {
       "enum": [
         "knowledgeLoop",
+        "kairosLoop",
         "superLoop",
         "improvementLoop",
         "cleanupLoop",

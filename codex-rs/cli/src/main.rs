@@ -876,6 +876,9 @@ fn thread_goal_loop_phase_from_ilhae_parts(
 ) -> codex_state::ThreadGoalLoopPhase {
     let id = id.to_ascii_lowercase();
     let title = title.to_ascii_lowercase();
+    if id.contains("kairos") || title.contains("kairos") {
+        return codex_state::ThreadGoalLoopPhase::KairosLoop;
+    }
     if id.contains("knowledge_loop") || title.contains("knowledge") {
         return codex_state::ThreadGoalLoopPhase::KnowledgeLoop;
     }
@@ -3057,6 +3060,18 @@ args = ["--ctx-size", "131072"]
         assert_eq!(settings.agent.knowledge_mode, "both");
         assert_eq!(settings.agent.hygiene_mode, "both");
         assert!(ilhae_exec_should_run_foreground_loops(&settings));
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn ilhae_goal_loop_phase_marks_kairos_as_kairos_loop() {
+        let phase = thread_goal_loop_phase_from_ilhae_parts(
+            "super_loop:kairos:1779027374405",
+            "Running Super Loop",
+            codex_ilhae::LoopLifecycleKind::SuperLoop,
+        );
+
+        assert_eq!(phase, codex_state::ThreadGoalLoopPhase::KairosLoop);
     }
 
     #[test]

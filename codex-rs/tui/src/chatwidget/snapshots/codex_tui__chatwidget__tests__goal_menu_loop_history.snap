@@ -8,11 +8,11 @@ Objective: Keep improving the bare goal command until it feels calm and useful.
 Time used: 1m
 Tokens used: 12.5K
 Token budget: 80K
-Loop: cycle 3 - super loop - completed
-Last loop: Super loop completed
+Loop: cycle 3 - kairos loop - completed
+Last loop: Kairos loop completed
 Loop history
-  #3 super loop completed: Super loop completed
-    planned 2 actions from 3 findings
+  #3 kairos loop completed: Kairos loop completed
+    reviewed 2 goal follow-ups
   #2 improvement loop completed: Applied 1 improvement follow-up
 
 Commands: /goal edit, /goal pause, /goal clear
