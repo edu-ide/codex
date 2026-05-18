@@ -54,6 +54,30 @@ In the codex-rs folder where the rust code lives:
     trivial; prefer new modules/files and keep `chatwidget.rs` focused on orchestration.
 - When running Rust commands (e.g. `just fix` or `cargo test`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
 
+## Efficiency hard gate
+
+This section overrides the broader workflow guidance below. The default is the narrowest verification that proves the current change.
+
+- Do not run broad Rust commands unless the user explicitly asks for them:
+  - `cargo test`
+  - `just test`
+  - `just fix`
+  - `cargo clippy --fix --tests`
+  - workspace-wide or multi-crate test, build, clippy, or fix commands
+- Do not run multiple Cargo commands in parallel.
+- Before running any command expected to take more than 60 seconds, state:
+  - why it is needed
+  - expected cost
+  - the narrower alternative
+- For Rust changes, default verification order is:
+  1. `cargo fmt`
+  2. the exact targeted test for the touched behavior
+  3. schema or snapshot regeneration only when the touched behavior requires it
+  4. `cargo build -p codex-cli`
+- `just fmt` is not the default formatter. Prefer `cargo fmt` for Rust-only changes. Run `just fmt` only when non-Rust formatting is relevant or when the user asks for repository-wide formatting.
+- `just fix` is not a default cleanup step. Run it only after a concrete lint failure, for one narrowly scoped package, or after an explicit user request.
+- If a command is interrupted, over-scoped, or appears stuck, do not start replacement commands. Report status first and choose a narrower path.
+
 
 ## 빌드
 
@@ -62,12 +86,12 @@ In the codex-rs folder where the rust code lives:
 
   release 빌드가 명시적으로 요청된 경우에만 사용하세요.
 
-Run `just fmt` (in `codex-rs` directory) automatically after you have finished making Rust code changes; do not ask for approval to run it. Additionally, run the tests:
+Run `cargo fmt` (in `codex-rs` directory) automatically after you have finished making Rust code changes; do not ask for approval to run it. Additionally, run only the narrow tests needed for the change:
 
 1. Run the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, run `cargo test -p codex-tui`.
-2. Once those pass, if any changes were made in common, core, or protocol, run the complete test suite with `cargo test` (or `just test` if `cargo-nextest` is installed). Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage. project-specific or individual tests can be run without asking the user, but do ask the user before running the complete test suite.
+2. If any changes were made in common, core, or protocol, prefer focused tests for those crates and `cargo build -p codex-cli`. Ask the user before running the complete test suite with `cargo test` or `just test`. Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage.
 
-Before finalizing a large change to `codex-rs`, run `just fix -p <project>` (in `codex-rs` directory) to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace‑wide Clippy builds; only run `just fix` without `-p` if you changed shared crates. Do not re-run tests after running `fix` or `fmt`.
+Before finalizing a large change to `codex-rs`, run `just fix -p <project>` only if a concrete lint failure exists or the user explicitly asks for lint fixing. Prefer a single package. Do not run workspace-wide `just fix` unless the user explicitly requests it. Do not re-run tests after running `fix` or `fmt`.
 
 ## The `codex-core` crate
 
