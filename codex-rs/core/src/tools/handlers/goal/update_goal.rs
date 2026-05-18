@@ -58,6 +58,10 @@ impl ToolExecutor<ToolInvocation> for UpdateGoalHandler {
             ));
         }
         session
+            .validate_thread_goal_completion_allowed(turn.as_ref())
+            .await
+            .map_err(FunctionCallError::RespondToModel)?;
+        session
             .goal_runtime_apply(GoalRuntimeEvent::ToolCompletedGoal {
                 turn_context: turn.as_ref(),
             })

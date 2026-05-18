@@ -977,6 +977,26 @@ impl Session {
         }
     }
 
+    pub(crate) async fn validate_thread_goal_completion_allowed(
+        &self,
+        turn_context: &TurnContext,
+    ) -> Result<(), String> {
+        let continuation_turn = self.goal_runtime.continuation_turn.lock().await;
+        let Some(continuation_turn) = continuation_turn
+            .as_ref()
+            .filter(|continuation_turn| continuation_turn.turn_id == turn_context.sub_id)
+        else {
+            return Ok(());
+        };
+        if continuation_turn.phase == GoalContinuationPhase::Execution {
+            return Ok(());
+        }
+        Err(format!(
+            "update_goal cannot mark a superloop goal complete during the {}; only the execution loop may complete the goal. Leave the goal active so the remaining plan, research, decision, wiki, log, improvement, cleanup, and execution phases can run.",
+            continuation_turn.phase.id_part()
+        ))
+    }
+
     async fn clear_reserved_goal_continuation_turn(&self, turn_state: &Arc<Mutex<TurnState>>) {
         let mut active_turn_guard = self.active_turn.lock().await;
         if let Some(active_turn) = active_turn_guard.as_ref()
@@ -1822,7 +1842,8 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Break the objective into the next concrete loop-cycle plan.
 - Identify which facts are known, which facts need research, and which decisions are blocked.
 - Use tools if they are needed to inspect authoritative state.
-- End with a concise visible plan-loop status update. Keep the goal active unless the full objective is already proven complete."#
+- End with a concise visible plan-loop status update.
+- Do not call update_goal in this phase; leave the goal active for the research loop."#
         }
         GoalContinuationPhase::Research => {
             r#"You are now running the Research Loop as a foreground autonomous agent turn.
@@ -1830,7 +1851,8 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Gather or verify the facts needed for the current plan using authoritative local state, Brain/wiki memory, MCP tools, or web/search tools when they are relevant.
 - Prefer citations, file references, commands, and concrete observations over guesses.
 - Note unresolved uncertainties that the decision loop must handle.
-- End with a concise visible research-loop status update. Keep the goal active unless the full objective is already proven complete."#
+- End with a concise visible research-loop status update.
+- Do not call update_goal in this phase; leave the goal active for the decision loop."#
         }
         GoalContinuationPhase::Decision => {
             r#"You are now running the Decision Loop as a foreground autonomous agent turn.
@@ -1838,7 +1860,8 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Choose the next action based on the plan and research evidence.
 - Resolve tradeoffs explicitly: what to do now, what to defer, and what evidence would change the choice.
 - When GPU, MCP, ComfyUI, browser, shell, or external services are involved, choose the safest queue-aware path.
-- End with a concise visible decision-loop status update. Keep the goal active unless the full objective is already proven complete."#
+- End with a concise visible decision-loop status update.
+- Do not call update_goal in this phase; leave the goal active for the wiki loop."#
         }
         GoalContinuationPhase::Wiki => {
             r#"You are now running the Wiki Loop as a foreground autonomous agent turn.
@@ -1846,7 +1869,8 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Maintain the persistent knowledge layer: update Brain/wiki/index-style knowledge with reusable facts, links, contradictions, decisions, and procedures discovered so far.
 - Treat raw sources and tool observations as source of truth; the wiki is compiled knowledge that should be kept current.
 - Use tools if needed to read or write the knowledge store.
-- End with a concise visible wiki-loop status update. Keep the goal active unless the full objective is already proven complete."#
+- End with a concise visible wiki-loop status update.
+- Do not call update_goal in this phase; leave the goal active for the log loop."#
         }
         GoalContinuationPhase::Log => {
             r#"You are now running the Log Loop as a foreground autonomous agent turn.
@@ -1854,21 +1878,24 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Append or emit a chronological account of the loop cycle: what happened, what evidence was used, which decisions were made, and what remains.
 - Keep the log factual, compact, and useful for future sessions.
 - Use tools if needed to persist the log in Brain/wiki/project files.
-- End with a concise visible log-loop status update. Keep the goal active unless the full objective is already proven complete."#
+- End with a concise visible log-loop status update.
+- Do not call update_goal in this phase; leave the goal active for the improvement loop."#
         }
         GoalContinuationPhase::Improvement => {
             r#"You are now running the Improvement Loop as a foreground autonomous agent turn.
 - Speak visibly in this turn; do not stay silent.
 - Look for reusable knowledge, prompt/tooling improvements, missing skills, memory updates, or repeated failure patterns that matter for the active goal.
 - Use Brain or other tools when useful; prefer concrete evidence over speculation.
-- End with a concise visible improvement-loop status update. Keep the goal active for cleanup and execution unless the full objective is already proven complete."#
+- End with a concise visible improvement-loop status update.
+- Do not call update_goal in this phase; leave the goal active for the cleanup loop."#
         }
         GoalContinuationPhase::Cleanup => {
             r#"You are now running the Cleanup Loop as a foreground autonomous agent turn.
 - Speak visibly in this turn; do not stay silent.
 - Clean up or verify state that could confuse the next execution pass: stale assumptions, duplicate tasks, unresolved temporary artifacts, misleading context, or lightweight hygiene work.
 - Use tools if needed, but keep cleanup bounded to the active goal.
-- End with a concise visible cleanup-loop status update. Keep the goal active for the execution loop unless the full objective is already proven complete."#
+- End with a concise visible cleanup-loop status update.
+- Do not call update_goal in this phase; leave the goal active for the execution loop."#
         }
         GoalContinuationPhase::Execution => {
             r#"You are now running the Execution Loop as a foreground autonomous agent turn.
@@ -2350,6 +2377,38 @@ mod tests {
             assert!(prompt.contains("Speak visibly in this turn; do not stay silent."));
             assert!(prompt.contains("<goal_loop_phase>"));
         }
+    }
+
+    #[test]
+    fn non_execution_phase_prompts_forbid_update_goal() {
+        let goal = ThreadGoal {
+            thread_id: ThreadId::new(),
+            objective: "finish the stack".to_string(),
+            status: ThreadGoalStatus::Active,
+            token_budget: None,
+            superloop_enabled: true,
+            tokens_used: 0,
+            time_used_seconds: 0,
+            created_at: 1,
+            updated_at: 2,
+        };
+
+        for phase in [
+            GoalContinuationPhase::Plan,
+            GoalContinuationPhase::Research,
+            GoalContinuationPhase::Decision,
+            GoalContinuationPhase::Wiki,
+            GoalContinuationPhase::Log,
+            GoalContinuationPhase::Improvement,
+            GoalContinuationPhase::Cleanup,
+        ] {
+            let prompt = phase_continuation_prompt(&goal, phase);
+            assert!(prompt.contains("Do not call update_goal in this phase"));
+        }
+        assert!(
+            phase_continuation_prompt(&goal, GoalContinuationPhase::Execution)
+                .contains("call update_goal with status \"complete\"")
+        );
     }
 
     #[test]

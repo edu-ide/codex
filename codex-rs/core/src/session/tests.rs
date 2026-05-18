@@ -8515,6 +8515,108 @@ async fn superloop_goal_continuation_records_hook_events_before_plan_loop() -> a
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn superloop_plan_loop_cannot_mark_goal_complete() -> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_config(|config| {
+        config
+            .features
+            .enable(Feature::Goals)
+            .expect("goal mode should be enableable in tests");
+    });
+    let test = builder.build(&server).await?;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call(
+                    "call-complete-goal",
+                    "update_goal",
+                    r#"{"status":"complete"}"#,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-1", "Plan loop will leave the goal active."),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let thread_id = test.session_configured.thread_id;
+    let state_db = test
+        .codex
+        .state_db()
+        .expect("test codex should have a state db");
+    let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
+        thread_id,
+        test.config
+            .codex_home
+            .join("goal-test-rollout.jsonl")
+            .to_path_buf(),
+        chrono::Utc::now(),
+        SessionSource::Exec,
+    );
+    metadata_builder.cwd = test.config.cwd.to_path_buf();
+    metadata_builder.model_provider = Some(test.config.model_provider_id.clone());
+    state_db
+        .upsert_thread(&metadata_builder.build(test.config.model_provider_id.as_str()))
+        .await?;
+    let goal = state_db
+        .replace_thread_goal(
+            thread_id,
+            "exercise the super loop",
+            codex_state::ThreadGoalStatus::Active,
+            /*token_budget*/ None,
+        )
+        .await?;
+    state_db
+        .update_thread_goal(
+            thread_id,
+            codex_state::ThreadGoalUpdate {
+                objective: None,
+                status: None,
+                token_budget: None,
+                superloop_enabled: Some(true),
+                expected_goal_id: Some(goal.goal_id),
+            },
+        )
+        .await?
+        .expect("goal should still exist");
+
+    test.codex.continue_active_goal_if_idle().await?;
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        loop {
+            let event = test.codex.next_event().await?;
+            if matches!(event.msg, EventMsg::TurnComplete(_)) {
+                return anyhow::Ok(());
+            }
+        }
+    })
+    .await??;
+
+    let complete_output = responses
+        .function_call_output_text("call-complete-goal")
+        .expect("complete tool output should be sent to the model");
+    assert!(
+        complete_output.contains("only the execution loop may complete the goal"),
+        "unexpected update_goal rejection: {complete_output}"
+    );
+    let goal = state_db
+        .get_thread_goal(thread_id)
+        .await?
+        .expect("goal should remain persisted");
+    assert_eq!(codex_state::ThreadGoalStatus::Active, goal.status);
+    assert_eq!(
+        Some(codex_state::ThreadGoalLoopPhase::PlanLoop),
+        goal.loop_state.as_ref().map(|loop_state| loop_state.phase)
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pending_request_user_input_does_not_spawn_extra_goal_continuation() -> anyhow::Result<()> {
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(|config| {
