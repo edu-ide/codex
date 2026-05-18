@@ -72,9 +72,15 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::Registry;
 use tracing_subscriber::util::SubscriberInitExt;
 
-pub type AppServerTurnStartFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+pub type AppServerTurnStartFuture =
+    Pin<Box<dyn Future<Output = AppServerTurnStartHookResult> + Send + 'static>>;
 pub type AppServerTurnStartHook = Arc<dyn Fn() -> AppServerTurnStartFuture + Send + Sync>;
 pub type ExternalServerNotificationReceiver = mpsc::Receiver<ServerNotification>;
+
+#[derive(Clone, Debug, Default)]
+pub struct AppServerTurnStartHookResult {
+    pub thread_goal_loop_events: Vec<codex_state::ThreadGoalLoopEvent>,
+}
 
 #[derive(Clone, Default)]
 pub struct AppServerRuntimeHooks {

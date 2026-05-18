@@ -18,6 +18,7 @@ use crate::protocol::v2::ReasoningSummaryTextDeltaNotification;
 use crate::protocol::v2::ReasoningTextDeltaNotification;
 use crate::protocol::v2::TerminalInteractionNotification;
 use crate::protocol::v2::ThreadItem;
+use crate::protocol::v2::WebSearchAction;
 use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
 use codex_protocol::protocol::EventMsg;
 use std::collections::HashMap;
@@ -384,6 +385,30 @@ pub fn item_event_to_server_notification(
                 summary_index: event.summary_index,
             })
         }
+        EventMsg::WebSearchBegin(event) => {
+            ServerNotification::ItemStarted(ItemStartedNotification {
+                thread_id,
+                turn_id,
+                item: ThreadItem::WebSearch {
+                    id: event.call_id,
+                    query: String::new(),
+                    action: None,
+                },
+                started_at_ms: 0,
+            })
+        }
+        EventMsg::WebSearchEnd(event) => {
+            ServerNotification::ItemCompleted(ItemCompletedNotification {
+                thread_id,
+                turn_id,
+                item: ThreadItem::WebSearch {
+                    id: event.call_id,
+                    query: event.query,
+                    action: Some(WebSearchAction::from(event.action)),
+                },
+                completed_at_ms: 0,
+            })
+        }
         EventMsg::ItemStarted(item_started_event) => {
             ServerNotification::ItemStarted(ItemStartedNotification {
                 thread_id,
@@ -457,6 +482,8 @@ mod tests {
     use codex_protocol::protocol::CollabResumeEndEvent;
     use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
     use codex_protocol::protocol::ExecOutputStream;
+    use codex_protocol::protocol::WebSearchBeginEvent;
+    use codex_protocol::protocol::WebSearchEndEvent;
     use pretty_assertions::assert_eq;
 
     fn assert_item_started_server_notification(
@@ -489,6 +516,64 @@ mod tests {
             }
             other => panic!("expected command execution output delta, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn web_search_begin_maps_to_item_started() {
+        let notification = item_event_to_server_notification(
+            EventMsg::WebSearchBegin(WebSearchBeginEvent {
+                call_id: "search-1".to_string(),
+            }),
+            "thread-1",
+            "turn-1",
+        );
+
+        assert_item_started_server_notification(
+            notification,
+            ItemStartedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                started_at_ms: 0,
+                item: ThreadItem::WebSearch {
+                    id: "search-1".to_string(),
+                    query: String::new(),
+                    action: None,
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn web_search_end_maps_to_item_completed() {
+        let notification = item_event_to_server_notification(
+            EventMsg::WebSearchEnd(WebSearchEndEvent {
+                call_id: "search-1".to_string(),
+                query: "사과".to_string(),
+                action: codex_protocol::models::WebSearchAction::Search {
+                    query: Some("사과".to_string()),
+                    queries: None,
+                },
+            }),
+            "thread-1",
+            "turn-1",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                completed_at_ms: 0,
+                item: ThreadItem::WebSearch {
+                    id: "search-1".to_string(),
+                    query: "사과".to_string(),
+                    action: Some(WebSearchAction::Search {
+                        query: Some("사과".to_string()),
+                        queries: None,
+                    }),
+                },
+            },
+        );
     }
 
     #[test]

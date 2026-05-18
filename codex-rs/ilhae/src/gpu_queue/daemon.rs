@@ -1,5 +1,8 @@
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -11,12 +14,20 @@ use axum::Router;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::sse::Event;
+use axum::response::sse::KeepAlive;
+use axum::response::sse::Sse;
 use axum::routing::get;
 use axum::routing::post;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
+use tokio::sync::broadcast;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 
 use super::api::ErrorResponse;
+use super::api::GpuQueueRuntimeEvent;
+use super::api::GpuQueueRuntimeEventType;
 use super::api::HealthResponse;
 use super::api::LeaseInfo;
 use super::api::LeaseRequest;
@@ -38,19 +49,28 @@ struct GpuQueueDaemonInner {
     scheduler: Mutex<LeaseScheduler>,
     runtime: NativeLlmRuntime,
     notify: Notify,
+    event_tx: broadcast::Sender<GpuQueueRuntimeEvent>,
+    event_sequence: AtomicU64,
     started_at: Instant,
 }
 
 impl GpuQueueDaemon {
     pub fn new(runtime: NativeLlmRuntime) -> Self {
+        let (event_tx, _) = broadcast::channel(256);
         Self {
             inner: Arc::new(GpuQueueDaemonInner {
                 scheduler: Mutex::new(LeaseScheduler::new()),
                 runtime,
                 notify: Notify::new(),
+                event_tx,
+                event_sequence: AtomicU64::new(1),
                 started_at: Instant::now(),
             }),
         }
+    }
+
+    pub fn subscribe_events(&self) -> broadcast::Receiver<GpuQueueRuntimeEvent> {
+        self.inner.event_tx.subscribe()
     }
 
     pub async fn acquire_lease(&self, request: LeaseRequest) -> anyhow::Result<LeaseResponse> {
@@ -62,6 +82,12 @@ impl GpuQueueDaemon {
         };
 
         if lease.state == LeaseState::Pending {
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LeaseQueued,
+                format!("GPU queue queued {}", lease_summary(&lease)),
+                Some(lease.clone()),
+            )
+            .await;
             let Some(wait_timeout_seconds) = wait_timeout_seconds else {
                 return Ok(LeaseResponse::from(&lease));
             };
@@ -79,20 +105,60 @@ impl GpuQueueDaemon {
             scheduler.release_lease(lease_id, now_epoch_secs())?
         };
 
+        self.emit_runtime_event(
+            GpuQueueRuntimeEventType::LeaseReleased,
+            format!("GPU queue released {}", lease_summary(&outcome.released)),
+            Some(outcome.released.clone()),
+        )
+        .await;
+
         let mut promoted = outcome.promoted;
         let mut llm_restarted = false;
         if let Some(promoted_lease) = promoted.as_ref() {
             if outcome.released.llm_was_preempted && promoted_lease.preempt_llm {
-                promoted = Some(
-                    self.mark_llm_was_preempted(&promoted_lease.lease_id, true)
-                        .await?,
-                );
+                let promoted_lease = self
+                    .mark_llm_was_preempted(&promoted_lease.lease_id, true)
+                    .await?;
+                self.emit_runtime_event(
+                    GpuQueueRuntimeEventType::LeaseGranted,
+                    format!("GPU queue granted {}", lease_summary(&promoted_lease)),
+                    Some(promoted_lease.clone()),
+                )
+                .await;
+                promoted = Some(promoted_lease);
             } else if promoted_lease.preempt_llm {
                 promoted = Some(self.preempt_lease_by_id(&promoted_lease.lease_id).await?);
+            } else {
+                self.emit_runtime_event(
+                    GpuQueueRuntimeEventType::LeaseGranted,
+                    format!("GPU queue granted {}", lease_summary(promoted_lease)),
+                    Some(promoted_lease.clone()),
+                )
+                .await;
             }
         } else if outcome.released.llm_was_preempted {
-            self.inner.runtime.start().await?;
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LlmStarting,
+                "Restarting local LLM runtime after GPU lease release",
+                Some(outcome.released.clone()),
+            )
+            .await;
+            if let Err(err) = self.inner.runtime.start().await {
+                self.emit_runtime_event(
+                    GpuQueueRuntimeEventType::LlmStartFailed,
+                    "Failed to restart local LLM runtime after GPU lease release",
+                    Some(outcome.released.clone()),
+                )
+                .await;
+                return Err(err);
+            }
             llm_restarted = true;
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LlmRunning,
+                "Local LLM runtime is running after GPU lease release",
+                Some(outcome.released.clone()),
+            )
+            .await;
         }
         self.inner.notify.notify_waiters();
 
@@ -123,24 +189,62 @@ impl GpuQueueDaemon {
     }
 
     pub async fn llm_start(&self) -> anyhow::Result<LlmCommandResponse> {
-        self.inner.runtime.start().await?;
+        self.emit_runtime_event(
+            GpuQueueRuntimeEventType::LlmStarting,
+            "Starting local LLM runtime",
+            None,
+        )
+        .await;
+        if let Err(err) = self.inner.runtime.start().await {
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LlmStartFailed,
+                "Failed to start local LLM runtime",
+                None,
+            )
+            .await;
+            return Err(err);
+        }
+        self.emit_runtime_event(
+            GpuQueueRuntimeEventType::LlmRunning,
+            "Local LLM runtime is running",
+            None,
+        )
+        .await;
         Ok(LlmCommandResponse {
             state: self.inner.runtime.state().await,
         })
     }
 
     pub async fn llm_stop(&self) -> anyhow::Result<LlmCommandResponse> {
-        self.inner.runtime.stop().await?;
+        self.emit_runtime_event(
+            GpuQueueRuntimeEventType::LlmStopping,
+            "Stopping local LLM runtime",
+            None,
+        )
+        .await;
+        if let Err(err) = self.inner.runtime.stop().await {
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LlmStopFailed,
+                "Failed to stop local LLM runtime",
+                None,
+            )
+            .await;
+            return Err(err);
+        }
+        self.emit_runtime_event(
+            GpuQueueRuntimeEventType::LlmStopped,
+            "Local LLM runtime is stopped",
+            None,
+        )
+        .await;
         Ok(LlmCommandResponse {
             state: self.inner.runtime.state().await,
         })
     }
 
     pub async fn llm_restart(&self) -> anyhow::Result<LlmCommandResponse> {
-        self.inner.runtime.restart().await?;
-        Ok(LlmCommandResponse {
-            state: self.inner.runtime.state().await,
-        })
+        self.llm_stop().await?;
+        self.llm_start().await
     }
 
     async fn wait_for_pending_lease(
@@ -183,12 +287,36 @@ impl GpuQueueDaemon {
 
     async fn preempt_for_granted_lease(&self, lease: &LeaseInfo) -> anyhow::Result<LeaseResponse> {
         if !lease.preempt_llm {
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LeaseGranted,
+                format!("GPU queue granted {}", lease_summary(lease)),
+                Some(lease.clone()),
+            )
+            .await;
             return Ok(LeaseResponse::from(lease));
         }
 
         let was_running = self.inner.runtime.is_running().await?;
         if was_running {
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LlmStopping,
+                format!(
+                    "Stopping local LLM runtime before granting {}",
+                    lease_summary(lease)
+                ),
+                Some(lease.clone()),
+            )
+            .await;
             if let Err(err) = self.inner.runtime.stop().await {
+                self.emit_runtime_event(
+                    GpuQueueRuntimeEventType::LlmStopFailed,
+                    format!(
+                        "Failed to stop local LLM runtime before granting {}",
+                        lease_summary(lease)
+                    ),
+                    Some(lease.clone()),
+                )
+                .await;
                 let mut scheduler = self.inner.scheduler.lock().await;
                 let _ = scheduler.release_lease(&lease.lease_id, now_epoch_secs());
                 self.inner.notify.notify_waiters();
@@ -199,11 +327,28 @@ impl GpuQueueDaemon {
                     )
                 });
             }
-            return Ok(LeaseResponse::from(
-                &self.mark_llm_was_preempted(&lease.lease_id, true).await?,
-            ));
+            let lease = self.mark_llm_was_preempted(&lease.lease_id, true).await?;
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LlmStopped,
+                format!("Local LLM runtime stopped for {}", lease_summary(&lease)),
+                Some(lease.clone()),
+            )
+            .await;
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LeaseGranted,
+                format!("GPU queue granted {}", lease_summary(&lease)),
+                Some(lease.clone()),
+            )
+            .await;
+            return Ok(LeaseResponse::from(&lease));
         }
 
+        self.emit_runtime_event(
+            GpuQueueRuntimeEventType::LeaseGranted,
+            format!("GPU queue granted {}", lease_summary(lease)),
+            Some(lease.clone()),
+        )
+        .await;
         Ok(LeaseResponse::from(lease))
     }
 
@@ -252,6 +397,15 @@ impl GpuQueueDaemon {
             return;
         }
 
+        for lease in &expired {
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LeaseExpired,
+                format!("GPU queue expired {}", lease_summary(lease)),
+                Some(lease.clone()),
+            )
+            .await;
+        }
+
         let status = {
             let scheduler = self.inner.scheduler.lock().await;
             scheduler.status(now_epoch_secs())
@@ -264,9 +418,47 @@ impl GpuQueueDaemon {
             return;
         }
         if expired.iter().any(|lease| lease.llm_was_preempted) {
-            let _ = self.inner.runtime.start().await;
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LlmStarting,
+                "Restarting local LLM runtime after GPU lease expiration",
+                expired.first().cloned(),
+            )
+            .await;
+            if self.inner.runtime.start().await.is_ok() {
+                self.emit_runtime_event(
+                    GpuQueueRuntimeEventType::LlmRunning,
+                    "Local LLM runtime is running after GPU lease expiration",
+                    expired.first().cloned(),
+                )
+                .await;
+            } else {
+                self.emit_runtime_event(
+                    GpuQueueRuntimeEventType::LlmStartFailed,
+                    "Failed to restart local LLM runtime after GPU lease expiration",
+                    expired.first().cloned(),
+                )
+                .await;
+            }
         }
         self.inner.notify.notify_waiters();
+    }
+
+    async fn emit_runtime_event(
+        &self,
+        event_type: GpuQueueRuntimeEventType,
+        message: impl Into<String>,
+        lease: Option<LeaseInfo>,
+    ) {
+        let event_id = self.inner.event_sequence.fetch_add(1, Ordering::Relaxed);
+        let event = GpuQueueRuntimeEvent {
+            event_id: format!("gpu-{event_id}"),
+            created_at: now_epoch_secs(),
+            event_type,
+            message: message.into(),
+            llm_state: self.inner.runtime.state().await,
+            lease,
+        };
+        let _ = self.inner.event_tx.send(event);
     }
 }
 
@@ -274,6 +466,7 @@ pub fn router(daemon: GpuQueueDaemon) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/status", get(status))
+        .route("/events", get(events))
         .route("/leases", post(acquire_lease))
         .route("/leases/:lease_id/heartbeat", post(heartbeat_lease))
         .route("/leases/:lease_id/release", post(release_lease))
@@ -305,6 +498,20 @@ async fn health() -> Json<HealthResponse> {
 
 async fn status(State(daemon): State<GpuQueueDaemon>) -> Json<StatusResponse> {
     Json(daemon.status().await)
+}
+
+async fn events(
+    State(daemon): State<GpuQueueDaemon>,
+) -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
+    let stream = BroadcastStream::new(daemon.subscribe_events()).filter_map(|event| match event {
+        Ok(event) => Event::default()
+            .event("gpuQueueRuntimeEvent")
+            .json_data(event)
+            .ok()
+            .map(Ok),
+        Err(_) => None,
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn acquire_lease(
@@ -376,4 +583,8 @@ fn now_epoch_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn lease_summary(lease: &LeaseInfo) -> String {
+    format!("{} {} lease `{}`", lease.owner, lease.kind, lease.lease_id)
 }

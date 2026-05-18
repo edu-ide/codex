@@ -231,6 +231,14 @@ fn exec_stderr_env_filter() -> EnvFilter {
 }
 
 pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
+    run_main_with_external_notifications(cli, arg0_paths, /*external_notifications*/ None).await
+}
+
+pub async fn run_main_with_external_notifications(
+    cli: Cli,
+    arg0_paths: Arg0DispatchPaths,
+    external_notifications: Option<mpsc::Receiver<ServerNotification>>,
+) -> anyhow::Result<()> {
     #[allow(clippy::print_stderr)]
     if let Some(message) = cli.removed_full_auto_warning() {
         eprintln!("{message}");
@@ -544,6 +552,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         experimental_api: true,
         opt_out_notification_methods: Vec::new(),
+        external_notifications,
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
     };
     run_exec_session(ExecRunArgs {

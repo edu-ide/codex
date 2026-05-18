@@ -360,6 +360,10 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 }
                 CodexStatus::Running
             }
+            ServerNotification::GpuQueueRuntimeEvent(notification) => {
+                eprintln!("{} {}", "gpu queue:".style(self.bold), notification.message);
+                CodexStatus::Running
+            }
             ServerNotification::TurnStarted(_) => CodexStatus::Running,
             _ => CodexStatus::Running,
         }

@@ -1,0 +1,18 @@
+---
+source: tui/src/chatwidget/tests/goal_menu.rs
+expression: rendered_goal_summary(&mut rx)
+---
+Goal
+Status: active
+Objective: Keep improving the bare goal command until it feels calm and useful.
+Time used: 1m
+Tokens used: 12.5K
+Token budget: 80K
+Loop: cycle 3 - super loop - completed
+Last loop: Super loop completed
+Loop history
+  #3 super loop completed: Super loop completed
+    planned 2 actions from 3 findings
+  #2 improvement loop completed: Applied 1 improvement follow-up
+
+Commands: /goal edit, /goal pause, /goal clear

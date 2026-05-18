@@ -511,7 +511,9 @@ Use `thread/goal/set` to create or update the current goal for a materialized th
     "tokensUsed": 0,
     "timeUsedSeconds": 0,
     "createdAt": 1776272400,
-    "updatedAt": 1776272400
+    "updatedAt": 1776272400,
+    "loopState": null,
+    "loopHistory": []
 } } }
 { "method": "thread/goal/updated", "params": { "threadId": "thr_123", "goal": {
     "threadId": "thr_123",
@@ -521,7 +523,9 @@ Use `thread/goal/set` to create or update the current goal for a materialized th
     "tokensUsed": 0,
     "timeUsedSeconds": 0,
     "createdAt": 1776272400,
-    "updatedAt": 1776272400
+    "updatedAt": 1776272400,
+    "loopState": null,
+    "loopHistory": []
 } } }
 ```
 
@@ -538,7 +542,11 @@ Use `thread/goal/set` to create or update the current goal for a materialized th
     "tokensUsed": 10000,
     "timeUsedSeconds": 60,
     "createdAt": 1776272400,
-    "updatedAt": 1776272460
+    "updatedAt": 1776272460,
+    "loopState": { "cycleNumber": 2, "phase": "improvementLoop", "status": "completed", "summary": "Validated the latest change", "updatedAt": 1776272460 },
+    "loopHistory": [
+        { "id": "loop-2-improvement", "cycleNumber": 2, "phase": "improvementLoop", "status": "completed", "title": "Improvement loop", "summary": "Validated the latest change", "detail": null, "error": null, "startedAt": 1776272440, "updatedAt": 1776272460, "completedAt": 1776272460 }
+    ]
 } } }
 ```
 
@@ -1160,6 +1168,8 @@ Thread realtime uses a separate thread-scoped notification surface. `thread/real
 Recoverable configuration and initialization warnings use the existing `configWarning` notification: `{ summary, details?, path?, range? }`. App-server may emit it during initialization for config parsing and related setup diagnostics.
 
 Generic runtime warnings use the `warning` notification: `{ threadId?, message }`. App-server emits this for non-fatal warnings from the core event stream, including cases where not all enabled skills are included in the model-visible skills list for a session.
+
+Ilhae builds may emit `gpuQueue/runtimeEvent` when the local GPU queue grants or releases a lease, stops the local LLM runtime for a GPU job, or starts it again afterward. The notification includes `{ eventId, createdAt, eventType, message, llmState, lease }` and is global rather than thread-scoped.
 
 ### Notification opt-out
 

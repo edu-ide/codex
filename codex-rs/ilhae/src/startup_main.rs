@@ -1136,6 +1136,17 @@ pub async fn run_active_foreground_loop_cycle() -> anyhow::Result<bool> {
         .await
 }
 
+pub async fn run_active_foreground_loop_cycle_collecting_lifecycle()
+-> anyhow::Result<Vec<crate::IlhaeLoopLifecycleNotification>> {
+    let mut lifecycle_rx = subscribe_native_loop_lifecycle();
+    run_active_foreground_loop_cycle().await?;
+    let mut notifications = Vec::new();
+    while let Ok(notification) = lifecycle_rx.try_recv() {
+        notifications.push(notification);
+    }
+    Ok(notifications)
+}
+
 pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)

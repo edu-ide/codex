@@ -15,6 +15,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_list_state_permit: Arc<Semaphore>,
     skills_watcher: Arc<SkillsWatcher>,
     runtime_hooks: crate::AppServerRuntimeHooks,
+    state_db: Option<StateDbHandle>,
 }
 
 fn resolve_runtime_workspace_roots(
@@ -47,6 +48,7 @@ impl TurnRequestProcessor {
         thread_list_state_permit: Arc<Semaphore>,
         skills_watcher: Arc<SkillsWatcher>,
         runtime_hooks: crate::AppServerRuntimeHooks,
+        state_db: Option<StateDbHandle>,
     ) -> Self {
         Self {
             auth_manager,
@@ -62,6 +64,7 @@ impl TurnRequestProcessor {
             thread_list_state_permit,
             skills_watcher,
             runtime_hooks,
+            state_db,
         }
     }
 
@@ -360,7 +363,9 @@ impl TurnRequestProcessor {
             self.track_error_response(&request_id, error, /*error_type*/ None);
         })?;
         if let Some(before_turn_start) = self.runtime_hooks.before_turn_start.as_ref() {
-            before_turn_start().await;
+            let result = before_turn_start().await;
+            self.record_thread_goal_loop_events(thread_id, result.thread_goal_loop_events)
+                .await;
         }
 
         let collaboration_mode = params
@@ -576,6 +581,41 @@ impl TurnRequestProcessor {
         };
 
         Ok(TurnStartResponse { turn })
+    }
+
+    async fn record_thread_goal_loop_events(
+        &self,
+        thread_id: ThreadId,
+        events: Vec<codex_state::ThreadGoalLoopEvent>,
+    ) {
+        if events.is_empty() {
+            return;
+        }
+        let Some(state_db) = self.state_db.as_ref() else {
+            return;
+        };
+        for event in events {
+            match state_db
+                .record_thread_goal_loop_event(thread_id, event)
+                .await
+            {
+                Ok(Some(goal)) => {
+                    self.outgoing
+                        .send_server_notification(ServerNotification::ThreadGoalUpdated(
+                            ThreadGoalUpdatedNotification {
+                                thread_id: thread_id.to_string(),
+                                turn_id: None,
+                                goal: api_thread_goal_from_state(goal),
+                            },
+                        ))
+                        .await;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    warn!("failed to record thread goal loop event for {thread_id}: {err}");
+                }
+            }
+        }
     }
 
     async fn thread_inject_items_response_inner(

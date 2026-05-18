@@ -560,6 +560,61 @@ v2_enum_from_core! {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub enum ThreadGoalLoopPhase {
+    KnowledgeLoop,
+    SuperLoop,
+    ImprovementLoop,
+    CleanupLoop,
+    ExecutionLoop,
+    ContextInjection,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub enum ThreadGoalLoopStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadGoalLoopState {
+    #[ts(type = "number")]
+    pub cycle_number: i64,
+    pub phase: ThreadGoalLoopPhase,
+    pub status: ThreadGoalLoopStatus,
+    pub summary: String,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadGoalLoopHistoryEntry {
+    pub id: String,
+    #[ts(type = "number")]
+    pub cycle_number: i64,
+    pub phase: ThreadGoalLoopPhase,
+    pub status: ThreadGoalLoopStatus,
+    pub title: String,
+    pub summary: String,
+    pub detail: Option<String>,
+    pub error: Option<String>,
+    #[ts(type = "number")]
+    pub started_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+    #[ts(type = "number | null")]
+    pub completed_at: Option<i64>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -577,6 +632,8 @@ pub struct ThreadGoal {
     pub created_at: i64,
     #[ts(type = "number")]
     pub updated_at: i64,
+    pub loop_state: Option<ThreadGoalLoopState>,
+    pub loop_history: Vec<ThreadGoalLoopHistoryEntry>,
 }
 
 impl From<codex_protocol::protocol::ThreadGoal> for ThreadGoal {
@@ -590,6 +647,8 @@ impl From<codex_protocol::protocol::ThreadGoal> for ThreadGoal {
             time_used_seconds: value.time_used_seconds,
             created_at: value.created_at,
             updated_at: value.updated_at,
+            loop_state: None,
+            loop_history: Vec::new(),
         }
     }
 }

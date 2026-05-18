@@ -18,6 +18,7 @@ use crate::apply_rollout_item;
 use crate::migrations::runtime_logs_migrator;
 use crate::migrations::runtime_state_migrator;
 use crate::model::AgentJobRow;
+use crate::model::ThreadGoalLoopHistoryRow;
 use crate::model::ThreadGoalRow;
 use crate::model::ThreadRow;
 use crate::model::anchor_from_item;

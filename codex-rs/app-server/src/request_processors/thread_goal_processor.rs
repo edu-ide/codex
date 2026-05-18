@@ -461,7 +461,56 @@ fn thread_goal_status_from_state(status: codex_state::ThreadGoalStatus) -> Threa
     }
 }
 
+fn thread_goal_loop_phase_from_state(
+    phase: codex_state::ThreadGoalLoopPhase,
+) -> ThreadGoalLoopPhase {
+    match phase {
+        codex_state::ThreadGoalLoopPhase::KnowledgeLoop => ThreadGoalLoopPhase::KnowledgeLoop,
+        codex_state::ThreadGoalLoopPhase::SuperLoop => ThreadGoalLoopPhase::SuperLoop,
+        codex_state::ThreadGoalLoopPhase::ImprovementLoop => ThreadGoalLoopPhase::ImprovementLoop,
+        codex_state::ThreadGoalLoopPhase::CleanupLoop => ThreadGoalLoopPhase::CleanupLoop,
+        codex_state::ThreadGoalLoopPhase::ExecutionLoop => ThreadGoalLoopPhase::ExecutionLoop,
+        codex_state::ThreadGoalLoopPhase::ContextInjection => ThreadGoalLoopPhase::ContextInjection,
+    }
+}
+
+fn thread_goal_loop_status_from_state(
+    status: codex_state::ThreadGoalLoopStatus,
+) -> ThreadGoalLoopStatus {
+    match status {
+        codex_state::ThreadGoalLoopStatus::InProgress => ThreadGoalLoopStatus::InProgress,
+        codex_state::ThreadGoalLoopStatus::Completed => ThreadGoalLoopStatus::Completed,
+        codex_state::ThreadGoalLoopStatus::Failed => ThreadGoalLoopStatus::Failed,
+    }
+}
+
 pub(super) fn api_thread_goal_from_state(goal: codex_state::ThreadGoal) -> ThreadGoal {
+    let loop_state = goal.loop_state.map(|loop_state| ThreadGoalLoopState {
+        cycle_number: loop_state.cycle_number,
+        phase: thread_goal_loop_phase_from_state(loop_state.phase),
+        status: thread_goal_loop_status_from_state(loop_state.status),
+        summary: loop_state.summary,
+        updated_at: loop_state.updated_at.timestamp(),
+    });
+    let loop_history = goal
+        .loop_history
+        .into_iter()
+        .map(|entry| ThreadGoalLoopHistoryEntry {
+            id: entry.id,
+            cycle_number: entry.cycle_number,
+            phase: thread_goal_loop_phase_from_state(entry.phase),
+            status: thread_goal_loop_status_from_state(entry.status),
+            title: entry.title,
+            summary: entry.summary,
+            detail: entry.detail,
+            error: entry.error,
+            started_at: entry.started_at.timestamp(),
+            updated_at: entry.updated_at.timestamp(),
+            completed_at: entry
+                .completed_at
+                .map(|completed_at| completed_at.timestamp()),
+        })
+        .collect();
     ThreadGoal {
         thread_id: goal.thread_id.to_string(),
         objective: goal.objective,
@@ -471,6 +520,8 @@ pub(super) fn api_thread_goal_from_state(goal: codex_state::ThreadGoal) -> Threa
         time_used_seconds: goal.time_used_seconds,
         created_at: goal.created_at.timestamp(),
         updated_at: goal.updated_at.timestamp(),
+        loop_state,
+        loop_history,
     }
 }
 

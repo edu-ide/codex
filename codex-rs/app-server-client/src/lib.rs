@@ -181,6 +181,7 @@ pub(crate) fn server_notification_requires_delivery(notification: &ServerNotific
             | ServerNotification::PlanDelta(_)
             | ServerNotification::ReasoningSummaryTextDelta(_)
             | ServerNotification::ReasoningTextDelta(_)
+            | ServerNotification::GpuQueueRuntimeEvent(_)
     )
 }
 
@@ -326,7 +327,6 @@ impl Error for TypedRequestError {
     }
 }
 
-#[derive(Clone)]
 pub struct InProcessClientStartArgs {
     /// Resolved argv0 dispatch paths used by command execution internals.
     pub arg0_paths: Arg0DispatchPaths,
@@ -362,6 +362,8 @@ pub struct InProcessClientStartArgs {
     pub experimental_api: bool,
     /// Notification methods this client opts out of receiving.
     pub opt_out_notification_methods: Vec<String>,
+    /// Extra server notifications from local runtime side channels.
+    pub external_notifications: Option<mpsc::Receiver<ServerNotification>>,
     /// Queue capacity for command/event channels (clamped to at least 1).
     pub channel_capacity: usize,
 }
@@ -488,7 +490,9 @@ impl InProcessAppServerClient {
     /// internal event queue is saturated later, server requests are rejected
     /// with overload error instead of being silently dropped.
     pub async fn start(args: InProcessClientStartArgs) -> IoResult<Self> {
+        let mut args = args;
         let channel_capacity = args.channel_capacity.max(1);
+        let mut external_notifications = args.external_notifications.take();
         let mut handle =
             codex_app_server::in_process::start(args.into_runtime_start_args()).await?;
         let request_sender = handle.sender();
@@ -575,6 +579,40 @@ impl InProcessAppServerClient {
                             &event_tx,
                             &mut skipped_events,
                             event,
+                            |request| {
+                                let _ = request_sender.fail_server_request(
+                                    request.id().clone(),
+                                    JSONRPCErrorError {
+                                        code: -32001,
+                                        message: "in-process app-server event queue is full"
+                                            .to_string(),
+                                        data: None,
+                                    },
+                                );
+                            },
+                        )
+                        .await
+                        {
+                            ForwardEventResult::Continue => {}
+                            ForwardEventResult::DisableStream => {
+                                event_stream_enabled = false;
+                            }
+                        }
+                    }
+                    notification = async {
+                        match external_notifications.as_mut() {
+                            Some(receiver) => receiver.recv().await,
+                            None => None,
+                        }
+                    }, if event_stream_enabled && external_notifications.is_some() => {
+                        let Some(notification) = notification else {
+                            external_notifications = None;
+                            continue;
+                        };
+                        match forward_in_process_event(
+                            &event_tx,
+                            &mut skipped_events,
+                            InProcessServerEvent::ServerNotification(notification),
                             |request| {
                                 let _ = request_sender.fail_server_request(
                                     request.id().clone(),
@@ -963,6 +1001,7 @@ mod tests {
     use futures::StreamExt;
     use pretty_assertions::assert_eq;
     use std::ops::Deref;
+    use std::ops::DerefMut;
     use std::path::Path;
     use tempfile::TempDir;
     use tokio::net::TcpListener;
@@ -1013,6 +1052,12 @@ mod tests {
         }
     }
 
+    impl DerefMut for TestClient {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.client
+        }
+    }
+
     impl TestClient {
         async fn shutdown(self) -> IoResult<()> {
             self.client.shutdown().await
@@ -1022,6 +1067,19 @@ mod tests {
     async fn start_test_client_with_capacity(
         session_source: SessionSource,
         channel_capacity: usize,
+    ) -> TestClient {
+        start_test_client_with_capacity_and_external(
+            session_source,
+            channel_capacity,
+            /*external_notifications*/ None,
+        )
+        .await
+    }
+
+    async fn start_test_client_with_capacity_and_external(
+        session_source: SessionSource,
+        channel_capacity: usize,
+        external_notifications: Option<mpsc::Receiver<ServerNotification>>,
     ) -> TestClient {
         let codex_home = TempDir::new().expect("temp dir");
         let config = Arc::new(build_test_config_for_codex_home(codex_home.path()).await);
@@ -1046,6 +1104,7 @@ mod tests {
             client_version: "0.0.0-test".to_string(),
             experimental_api: true,
             opt_out_notification_methods: Vec::new(),
+            external_notifications,
             channel_capacity,
         })
         .await
@@ -2105,6 +2164,39 @@ mod tests {
         client.shutdown().await.expect("shutdown should complete");
     }
 
+    #[tokio::test]
+    async fn external_notifications_are_forwarded_by_in_process_client() {
+        let (external_tx, external_rx) = mpsc::channel(1);
+        let mut client = start_test_client_with_capacity_and_external(
+            SessionSource::Exec,
+            DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+            Some(external_rx),
+        )
+        .await;
+
+        external_tx
+            .send(ServerNotification::Warning(
+                codex_app_server_protocol::WarningNotification {
+                    thread_id: None,
+                    message: "GPU queue stopped the local LLM runtime".to_string(),
+                },
+            ))
+            .await
+            .expect("external notification should send");
+
+        let event = timeout(Duration::from_secs(2), client.next_event())
+            .await
+            .expect("external notification should arrive before timeout")
+            .expect("event stream should stay open");
+        assert!(matches!(
+            event,
+            InProcessServerEvent::ServerNotification(ServerNotification::Warning(notification))
+                if notification.message == "GPU queue stopped the local LLM runtime"
+        ));
+
+        client.shutdown().await.expect("shutdown should complete");
+    }
+
     #[test]
     fn event_requires_delivery_marks_transcript_and_terminal_events() {
         assert!(event_requires_delivery(
@@ -2151,6 +2243,20 @@ mod tests {
                             phase: None,
                             memory_citation: None,
                         },
+                    }
+                )
+            )
+        ));
+        assert!(event_requires_delivery(
+            &InProcessServerEvent::ServerNotification(
+                codex_app_server_protocol::ServerNotification::GpuQueueRuntimeEvent(
+                    codex_app_server_protocol::GpuQueueRuntimeEventNotification {
+                        event_id: "gpu-1".to_string(),
+                        created_at: 1,
+                        event_type: codex_app_server_protocol::GpuQueueRuntimeEventType::LlmStopped,
+                        message: "Local LLM runtime stopped".to_string(),
+                        llm_state: codex_app_server_protocol::GpuQueueLlmRuntimeState::Stopped,
+                        lease: None,
                     }
                 )
             )
@@ -2205,6 +2311,7 @@ mod tests {
             client_version: "0.0.0-test".to_string(),
             experimental_api: true,
             opt_out_notification_methods: Vec::new(),
+            external_notifications: None,
             channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
         }
         .into_runtime_start_args();
@@ -2246,6 +2353,7 @@ mod tests {
             client_version: "0.0.0-test".to_string(),
             experimental_api: true,
             opt_out_notification_methods: Vec::new(),
+            external_notifications: None,
             channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
         }
         .into_runtime_start_args();

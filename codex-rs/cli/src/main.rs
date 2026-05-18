@@ -826,6 +826,87 @@ fn is_invoked_as_ilhae_cli() -> bool {
 }
 
 #[cfg(feature = "ilhae")]
+fn thread_goal_loop_event_from_ilhae_lifecycle(
+    notification: codex_ilhae::IlhaeLoopLifecycleNotification,
+) -> codex_state::ThreadGoalLoopEvent {
+    match notification {
+        codex_ilhae::IlhaeLoopLifecycleNotification::Started { item, .. }
+        | codex_ilhae::IlhaeLoopLifecycleNotification::Completed { item, .. }
+        | codex_ilhae::IlhaeLoopLifecycleNotification::Failed { item, .. } => {
+            thread_goal_loop_event_from_ilhae_item(item)
+        }
+        codex_ilhae::IlhaeLoopLifecycleNotification::Progress {
+            item_id,
+            kind,
+            summary,
+            detail,
+            ..
+        } => codex_state::ThreadGoalLoopEvent {
+            id: item_id.clone(),
+            phase: thread_goal_loop_phase_from_ilhae_parts(&item_id, "", kind),
+            status: codex_state::ThreadGoalLoopStatus::InProgress,
+            title: "Loop progress".to_string(),
+            summary,
+            detail,
+            error: None,
+        },
+    }
+}
+
+#[cfg(feature = "ilhae")]
+fn thread_goal_loop_event_from_ilhae_item(
+    item: codex_ilhae::LoopLifecycleItem,
+) -> codex_state::ThreadGoalLoopEvent {
+    codex_state::ThreadGoalLoopEvent {
+        id: item.id.clone(),
+        phase: thread_goal_loop_phase_from_ilhae_parts(&item.id, &item.title, item.kind),
+        status: thread_goal_loop_status_from_ilhae(item.status),
+        title: item.title,
+        summary: item.summary,
+        detail: item.detail,
+        error: item.error,
+    }
+}
+
+#[cfg(feature = "ilhae")]
+fn thread_goal_loop_phase_from_ilhae_parts(
+    id: &str,
+    title: &str,
+    kind: codex_ilhae::LoopLifecycleKind,
+) -> codex_state::ThreadGoalLoopPhase {
+    let id = id.to_ascii_lowercase();
+    let title = title.to_ascii_lowercase();
+    if id.contains("knowledge_loop") || title.contains("knowledge") {
+        return codex_state::ThreadGoalLoopPhase::KnowledgeLoop;
+    }
+    if id.contains("cleanup") || title.contains("cleanup") || title.contains("hygiene") {
+        return codex_state::ThreadGoalLoopPhase::CleanupLoop;
+    }
+    match kind {
+        codex_ilhae::LoopLifecycleKind::SuperLoop => codex_state::ThreadGoalLoopPhase::SuperLoop,
+        codex_ilhae::LoopLifecycleKind::ImprovementLoop => {
+            codex_state::ThreadGoalLoopPhase::ImprovementLoop
+        }
+        codex_ilhae::LoopLifecycleKind::ContextInjection => {
+            codex_state::ThreadGoalLoopPhase::ContextInjection
+        }
+    }
+}
+
+#[cfg(feature = "ilhae")]
+fn thread_goal_loop_status_from_ilhae(
+    status: codex_ilhae::LoopLifecycleStatus,
+) -> codex_state::ThreadGoalLoopStatus {
+    match status {
+        codex_ilhae::LoopLifecycleStatus::InProgress => {
+            codex_state::ThreadGoalLoopStatus::InProgress
+        }
+        codex_ilhae::LoopLifecycleStatus::Completed => codex_state::ThreadGoalLoopStatus::Completed,
+        codex_ilhae::LoopLifecycleStatus::Failed => codex_state::ThreadGoalLoopStatus::Failed,
+    }
+}
+
+#[cfg(feature = "ilhae")]
 fn prepare_ilhae_cli_environment_if_needed() -> anyhow::Result<Option<std::path::PathBuf>> {
     if !is_invoked_as_ilhae_cli() {
         return Ok(None);
@@ -1126,6 +1207,10 @@ enum GpuSubcommand {
 
     /// Control the local LLM runtime through the GPU queue daemon.
     Llm(GpuLlmCommand),
+
+    /// Run a GPU-queued ComfyUI API proxy.
+    #[clap(name = "comfy-proxy", visible_alias = "comfy-gateway")]
+    ComfyProxy(GpuComfyProxyCommand),
 }
 
 #[cfg(feature = "ilhae")]
@@ -1205,6 +1290,65 @@ struct GpuRunCommand {
 struct GpuLlmCommand {
     #[command(subcommand)]
     subcommand: GpuLlmSubcommand,
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, Parser)]
+struct GpuComfyProxyCommand {
+    /// Listen address for the ComfyUI API proxy.
+    #[arg(long = "listen", value_name = "ADDR")]
+    listen: Option<String>,
+
+    /// Actual ComfyUI backend URL.
+    #[arg(long = "backend-url", value_name = "URL")]
+    backend_url: Option<String>,
+
+    /// ComfyUI root directory for serving /view files while the backend is stopped.
+    #[arg(long = "comfy-root", value_name = "PATH")]
+    comfy_root: Option<PathBuf>,
+
+    /// Lease owner label.
+    #[arg(long)]
+    owner: Option<String>,
+
+    /// Shell command used to start the actual ComfyUI backend.
+    #[arg(long = "start-command", value_name = "COMMAND")]
+    start_command: Option<String>,
+
+    /// Shell command used to stop the actual ComfyUI backend after a prompt finishes.
+    #[arg(long = "stop-command", value_name = "COMMAND")]
+    stop_command: Option<String>,
+
+    /// Lease TTL in seconds.
+    #[arg(long = "ttl-seconds")]
+    ttl_seconds: Option<u64>,
+
+    /// Wait for a pending lease for this many seconds.
+    #[arg(long = "wait-timeout-seconds")]
+    wait_timeout_seconds: Option<u64>,
+
+    /// Poll interval for ComfyUI /history/{prompt_id}.
+    #[arg(long = "prompt-poll-interval-ms")]
+    prompt_poll_interval_ms: Option<u64>,
+
+    /// Maximum seconds to hold a prompt lease while waiting for completion.
+    #[arg(long = "prompt-timeout-seconds")]
+    prompt_timeout_seconds: Option<u64>,
+
+    /// Keep ComfyUI running after prompt completion.
+    #[arg(long = "no-stop-after-prompt")]
+    no_stop_after_prompt: bool,
+
+    /// Auto-start ComfyUI for non-/prompt passthrough API calls.
+    #[arg(
+        long = "start-backend-for-passthrough",
+        conflicts_with = "no_start_backend_for_passthrough"
+    )]
+    start_backend_for_passthrough: bool,
+
+    /// Do not auto-start ComfyUI for non-/prompt passthrough API calls.
+    #[arg(long = "no-start-backend-for-passthrough")]
+    no_start_backend_for_passthrough: bool,
 }
 
 #[cfg(feature = "ilhae")]
@@ -1295,6 +1439,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             {
                 let runtime_settings =
                     ilhae_exec_runtime_settings_from_overrides(&exec_cli.config_overrides);
+                let external_notifications = is_invoked_as_ilhae_cli()
+                    .then(codex_ilhae::spawn_app_server_external_notification_bridge);
                 if let Some(settings) = runtime_settings.clone()
                     && ilhae_exec_should_run_foreground_loops(&settings)
                 {
@@ -1309,7 +1455,12 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         }
                     });
                 }
-                codex_exec::run_main(exec_cli, arg0_paths.clone()).await?;
+                codex_exec::run_main_with_external_notifications(
+                    exec_cli,
+                    arg0_paths.clone(),
+                    external_notifications,
+                )
+                .await?;
             }
             #[cfg(not(feature = "ilhae"))]
             codex_exec::run_main(exec_cli, arg0_paths.clone()).await?;
@@ -1421,19 +1572,35 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     let mut loader_overrides = codex_config::LoaderOverrides::default();
                     #[cfg(feature = "ilhae")]
                     let is_ilhae_app_server = is_invoked_as_ilhae_cli();
+                    #[cfg(feature = "ilhae")]
+                    let external_notifications = if is_ilhae_app_server {
+                        Some(codex_ilhae::spawn_app_server_external_notification_bridge())
+                    } else {
+                        None
+                    };
+                    #[cfg(not(feature = "ilhae"))]
                     let external_notifications = None;
                     #[cfg(feature = "ilhae")]
                     let runtime_hooks = if is_ilhae_app_server {
                         codex_app_server::AppServerRuntimeHooks {
                             before_turn_start: Some(Arc::new(|| {
                                 Box::pin(async {
-                                    if let Err(err) =
-                                        codex_ilhae::run_active_foreground_loop_cycle().await
-                                    {
-                                        tracing::warn!(
-                                            error = ?err,
-                                            "ilhae foreground loop cycle failed before app-server turn"
-                                        );
+                                    let thread_goal_loop_events =
+                                        match codex_ilhae::run_active_foreground_loop_cycle_collecting_lifecycle().await {
+                                            Ok(notifications) => notifications
+                                                .into_iter()
+                                                .map(thread_goal_loop_event_from_ilhae_lifecycle)
+                                                .collect(),
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    error = ?err,
+                                                    "ilhae foreground loop cycle failed before app-server turn"
+                                                );
+                                                Vec::new()
+                                            }
+                                        };
+                                    codex_app_server::AppServerTurnStartHookResult {
+                                        thread_goal_loop_events,
                                     }
                                 })
                             })),
@@ -1955,8 +2122,9 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
 
 #[cfg(feature = "ilhae")]
 async fn run_gpu_command(cmd: GpuCommand, profile_id: Option<&str>) -> anyhow::Result<()> {
-    let addr = cmd
-        .addr
+    let addr_override = cmd.addr;
+    let addr = addr_override
+        .clone()
         .unwrap_or_else(codex_ilhae::gpu_queue::api::default_listen_addr);
     match cmd.subcommand {
         GpuSubcommand::Daemon(daemon) => {
@@ -2026,8 +2194,45 @@ async fn run_gpu_command(cmd: GpuCommand, profile_id: Option<&str>) -> anyhow::R
             };
             println!("LLM: {:?}", response.state);
         }
+        GpuSubcommand::ComfyProxy(proxy) => {
+            let overrides = comfy_proxy_overrides(proxy, addr_override);
+            let config = codex_ilhae::gpu_queue::comfy_proxy::ComfyProxyConfig::from_sources(
+                None, overrides,
+            );
+            codex_ilhae::gpu_queue::comfy_proxy::run(config).await?;
+        }
     }
     Ok(())
+}
+
+#[cfg(feature = "ilhae")]
+fn comfy_proxy_overrides(
+    proxy: GpuComfyProxyCommand,
+    addr_override: Option<String>,
+) -> codex_ilhae::gpu_queue::comfy_proxy::ComfyProxyConfigOverrides {
+    let start_backend_for_passthrough = if proxy.start_backend_for_passthrough {
+        Some(true)
+    } else if proxy.no_start_backend_for_passthrough {
+        Some(false)
+    } else {
+        None
+    };
+
+    codex_ilhae::gpu_queue::comfy_proxy::ComfyProxyConfigOverrides {
+        listen: proxy.listen,
+        backend_url: proxy.backend_url,
+        comfy_root: proxy.comfy_root,
+        gpu_queue_addr: addr_override,
+        owner: proxy.owner,
+        start_command: proxy.start_command,
+        stop_command: proxy.stop_command,
+        ttl_seconds: proxy.ttl_seconds,
+        wait_timeout_seconds: proxy.wait_timeout_seconds,
+        prompt_poll_interval_ms: proxy.prompt_poll_interval_ms,
+        prompt_timeout_seconds: proxy.prompt_timeout_seconds,
+        stop_after_prompt: proxy.no_stop_after_prompt.then_some(false),
+        start_backend_for_passthrough,
+    }
 }
 
 #[cfg(feature = "ilhae")]
@@ -2525,11 +2730,17 @@ async fn run_interactive_tui(
             }
         }
     }
+    #[cfg(feature = "ilhae")]
+    let external_notifications =
+        is_invoked_as_ilhae_cli().then(codex_ilhae::spawn_app_server_external_notification_bridge);
+    #[cfg(not(feature = "ilhae"))]
+    let external_notifications = None;
     codex_tui::run_main(
         interactive,
         arg0_paths,
         codex_config::LoaderOverrides::default(),
         normalized_remote,
+        external_notifications,
     )
     .await
 }
@@ -3699,6 +3910,41 @@ args = ["--ctx-size", "131072"]
         else {
             panic!("expected gpu llm restart subcommand");
         };
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn gpu_comfy_proxy_parses() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "gpu",
+            "--addr",
+            "127.0.0.1:43290",
+            "comfy-proxy",
+            "--listen",
+            "127.0.0.1:8189",
+            "--backend-url",
+            "http://127.0.0.1:8188",
+            "--comfy-root",
+            "/tmp/comfy",
+            "--no-stop-after-prompt",
+            "--start-backend-for-passthrough",
+        ])
+        .expect("parse should succeed");
+        let Some(Subcommand::Gpu(GpuCommand {
+            addr,
+            subcommand: GpuSubcommand::ComfyProxy(cmd),
+        })) = cli.subcommand
+        else {
+            panic!("expected gpu comfy-proxy subcommand");
+        };
+
+        assert_eq!(addr.as_deref(), Some("127.0.0.1:43290"));
+        assert_eq!(cmd.listen.as_deref(), Some("127.0.0.1:8189"));
+        assert_eq!(cmd.backend_url.as_deref(), Some("http://127.0.0.1:8188"));
+        assert_eq!(cmd.comfy_root, Some(PathBuf::from("/tmp/comfy")));
+        assert!(cmd.no_stop_after_prompt);
+        assert!(cmd.start_backend_for_passthrough);
     }
 
     #[test]

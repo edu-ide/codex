@@ -43,6 +43,56 @@ async fn goal_menu_budget_limited_snapshot() {
 }
 
 #[tokio::test]
+async fn goal_menu_loop_history_snapshot() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    let mut goal = test_goal(
+        thread_id,
+        AppThreadGoalStatus::Active,
+        /*token_budget*/ Some(80_000),
+    );
+    goal.loop_state = Some(codex_app_server_protocol::ThreadGoalLoopState {
+        cycle_number: 3,
+        phase: codex_app_server_protocol::ThreadGoalLoopPhase::SuperLoop,
+        status: codex_app_server_protocol::ThreadGoalLoopStatus::Completed,
+        summary: "Super loop completed".to_string(),
+        updated_at: 1_776_272_470,
+    });
+    goal.loop_history = vec![
+        codex_app_server_protocol::ThreadGoalLoopHistoryEntry {
+            id: "super_loop:worker:3".to_string(),
+            cycle_number: 3,
+            phase: codex_app_server_protocol::ThreadGoalLoopPhase::SuperLoop,
+            status: codex_app_server_protocol::ThreadGoalLoopStatus::Completed,
+            title: "Running Super Loop".to_string(),
+            summary: "Super loop completed".to_string(),
+            detail: Some("planned 2 actions from 3 findings".to_string()),
+            error: None,
+            started_at: 1_776_272_460,
+            updated_at: 1_776_272_470,
+            completed_at: Some(1_776_272_470),
+        },
+        codex_app_server_protocol::ThreadGoalLoopHistoryEntry {
+            id: "improvement_loop:worker:2".to_string(),
+            cycle_number: 2,
+            phase: codex_app_server_protocol::ThreadGoalLoopPhase::ImprovementLoop,
+            status: codex_app_server_protocol::ThreadGoalLoopStatus::Completed,
+            title: "Reviewing Improvement Loop".to_string(),
+            summary: "Applied 1 improvement follow-up".to_string(),
+            detail: None,
+            error: None,
+            started_at: 1_776_272_430,
+            updated_at: 1_776_272_440,
+            completed_at: Some(1_776_272_440),
+        },
+    ];
+
+    chat.show_goal_summary(goal);
+
+    assert_chatwidget_snapshot!("goal_menu_loop_history", rendered_goal_summary(&mut rx));
+}
+
+#[tokio::test]
 async fn resume_paused_goal_prompt_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let thread_id = ThreadId::new();
@@ -204,6 +254,8 @@ fn test_goal(
         time_used_seconds: 90,
         created_at: 1_776_272_400,
         updated_at: 1_776_272_460,
+        loop_state: None,
+        loop_history: Vec::new(),
     }
 }
 

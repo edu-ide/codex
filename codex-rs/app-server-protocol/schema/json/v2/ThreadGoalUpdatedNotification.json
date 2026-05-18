@@ -7,6 +7,22 @@
           "format": "int64",
           "type": "integer"
         },
+        "loopHistory": {
+          "items": {
+            "$ref": "#/definitions/ThreadGoalLoopHistoryEntry"
+          },
+          "type": "array"
+        },
+        "loopState": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadGoalLoopState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "objective": {
           "type": "string"
         },
@@ -38,6 +54,7 @@
       },
       "required": [
         "createdAt",
+        "loopHistory",
         "objective",
         "status",
         "threadId",
@@ -46,6 +63,115 @@
         "updatedAt"
       ],
       "type": "object"
+    },
+    "ThreadGoalLoopHistoryEntry": {
+      "properties": {
+        "completedAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cycleNumber": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/definitions/ThreadGoalLoopPhase"
+        },
+        "startedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/definitions/ThreadGoalLoopStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cycleNumber",
+        "id",
+        "phase",
+        "startedAt",
+        "status",
+        "summary",
+        "title",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalLoopPhase": {
+      "enum": [
+        "knowledgeLoop",
+        "superLoop",
+        "improvementLoop",
+        "cleanupLoop",
+        "executionLoop",
+        "contextInjection"
+      ],
+      "type": "string"
+    },
+    "ThreadGoalLoopState": {
+      "properties": {
+        "cycleNumber": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "phase": {
+          "$ref": "#/definitions/ThreadGoalLoopPhase"
+        },
+        "status": {
+          "$ref": "#/definitions/ThreadGoalLoopStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cycleNumber",
+        "phase",
+        "status",
+        "summary",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalLoopStatus": {
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
     },
     "ThreadGoalStatus": {
       "enum": [

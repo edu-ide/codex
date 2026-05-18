@@ -1491,6 +1491,7 @@ server_notification_definitions! {
     FileChangePatchUpdated => "item/fileChange/patchUpdated" (v2::FileChangePatchUpdatedNotification),
     ServerRequestResolved => "serverRequest/resolved" (v2::ServerRequestResolvedNotification),
     McpToolCallProgress => "item/mcpToolCall/progress" (v2::McpToolCallProgressNotification),
+    GpuQueueRuntimeEvent => "gpuQueue/runtimeEvent" (v2::GpuQueueRuntimeEventNotification),
     McpServerOauthLoginCompleted => "mcpServer/oauthLogin/completed" (v2::McpServerOauthLoginCompletedNotification),
     McpServerStatusUpdated => "mcpServer/startupStatus/updated" (v2::McpServerStatusUpdatedNotification),
     AccountUpdated => "account/updated" (v2::AccountUpdatedNotification),
@@ -3028,6 +3029,8 @@ mod tests {
             time_used_seconds: 45,
             created_at: 1_700_000_000,
             updated_at: 1_700_000_123,
+            loop_state: None,
+            loop_history: Vec::new(),
         };
         let updated = ServerNotification::ThreadGoalUpdated(v2::ThreadGoalUpdatedNotification {
             thread_id: "thr_123".to_string(),

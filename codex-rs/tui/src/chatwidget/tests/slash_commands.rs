@@ -1517,6 +1517,8 @@ async fn active_goal_without_follow_up_suppresses_agent_turn_complete_notificati
                     time_used_seconds: 0,
                     created_at: 1,
                     updated_at: 1,
+                    loop_state: None,
+                    loop_history: Vec::new(),
                 },
             },
         ),

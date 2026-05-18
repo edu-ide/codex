@@ -56,6 +56,7 @@ fn main() -> anyhow::Result<()> {
             arg0_paths,
             LoaderOverrides::default(),
             /*explicit_remote_endpoint*/ None,
+            /*external_notifications*/ None,
         )
         .await?;
         match exit_info.exit_reason {

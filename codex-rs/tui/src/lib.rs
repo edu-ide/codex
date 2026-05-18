@@ -292,6 +292,9 @@ async fn start_embedded_app_server(
     log_db: Option<log_db::LogDbLayer>,
     state_db: Option<StateDbHandle>,
     environment_manager: Arc<EnvironmentManager>,
+    external_notifications: Option<
+        tokio::sync::mpsc::Receiver<codex_app_server_protocol::ServerNotification>,
+    >,
 ) -> color_eyre::Result<InProcessAppServerClient> {
     start_embedded_app_server_with(
         arg0_paths,
@@ -304,6 +307,7 @@ async fn start_embedded_app_server(
         log_db,
         state_db,
         environment_manager,
+        external_notifications,
         InProcessAppServerClient::start,
     )
     .await
@@ -480,6 +484,9 @@ async fn start_app_server(
     log_db: Option<log_db::LogDbLayer>,
     state_db: Option<StateDbHandle>,
     environment_manager: Arc<EnvironmentManager>,
+    external_notifications: Option<
+        tokio::sync::mpsc::Receiver<codex_app_server_protocol::ServerNotification>,
+    >,
 ) -> color_eyre::Result<AppServerClient> {
     match target {
         AppServerTarget::Embedded => start_embedded_app_server(
@@ -493,6 +500,7 @@ async fn start_app_server(
             log_db,
             state_db,
             environment_manager,
+            external_notifications,
         )
         .await
         .map(AppServerClient::InProcess),
@@ -518,6 +526,7 @@ pub(crate) async fn start_app_server_for_picker(
         /*log_db*/ None,
         state_db,
         environment_manager,
+        /*external_notifications*/ None,
     )
     .await?;
     Ok(AppServerSession::new(app_server))
@@ -549,6 +558,9 @@ async fn start_embedded_app_server_with<F, Fut>(
     log_db: Option<log_db::LogDbLayer>,
     state_db: Option<StateDbHandle>,
     environment_manager: Arc<EnvironmentManager>,
+    external_notifications: Option<
+        tokio::sync::mpsc::Receiver<codex_app_server_protocol::ServerNotification>,
+    >,
     start_client: F,
 ) -> color_eyre::Result<InProcessAppServerClient>
 where
@@ -584,6 +596,7 @@ where
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         experimental_api: true,
         opt_out_notification_methods: Vec::new(),
+        external_notifications,
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
     })
     .await
@@ -784,6 +797,9 @@ pub async fn run_main(
     arg0_paths: Arg0DispatchPaths,
     loader_overrides: LoaderOverrides,
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
+    external_notifications: Option<
+        tokio::sync::mpsc::Receiver<codex_app_server_protocol::ServerNotification>,
+    >,
 ) -> std::io::Result<AppExitInfo> {
     let strict_config = cli.strict_config;
     let (sandbox_mode, approval_policy) = if cli.dangerously_bypass_approvals_and_sandbox {
@@ -1182,6 +1198,7 @@ pub async fn run_main(
         state_db,
         remote_endpoint,
         environment_manager,
+        external_notifications,
     )
     .await
     .map_err(|err| std::io::Error::other(err.to_string()))
@@ -1204,6 +1221,9 @@ async fn run_ratatui_app(
     state_db: Option<StateDbHandle>,
     remote_endpoint: Option<RemoteAppServerEndpoint>,
     environment_manager: Arc<EnvironmentManager>,
+    mut external_notifications: Option<
+        tokio::sync::mpsc::Receiver<codex_app_server_protocol::ServerNotification>,
+    >,
 ) -> color_eyre::Result<AppExitInfo> {
     let remote_mode = matches!(&app_server_target, AppServerTarget::Remote { .. });
     color_eyre::install()?;
@@ -1262,6 +1282,7 @@ async fn run_ratatui_app(
         log_db.clone(),
         state_db.clone(),
         environment_manager.clone(),
+        external_notifications.take(),
     )
     .await
     {
@@ -1608,6 +1629,7 @@ async fn run_ratatui_app(
             log_db.clone(),
             state_db.clone(),
             environment_manager.clone(),
+            external_notifications.take(),
         )
         .await
         {
@@ -1851,6 +1873,7 @@ mod tests {
             /*log_db*/ None,
             state_db,
             Arc::new(EnvironmentManager::default_for_tests()),
+            /*external_notifications*/ None,
         )
         .await
     }
@@ -2417,6 +2440,7 @@ mod tests {
             /*log_db*/ None,
             /*state_db*/ None,
             Arc::new(EnvironmentManager::default_for_tests()),
+            /*external_notifications*/ None,
             |_args| async { Err(std::io::Error::other("boom")) },
         )
         .await;

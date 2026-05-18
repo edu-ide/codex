@@ -37,7 +37,12 @@ SELECT
     tokens_used,
     time_used_seconds,
     created_at_ms,
-    updated_at_ms
+    updated_at_ms,
+    loop_cycle_number,
+    loop_phase,
+    loop_status,
+    loop_summary,
+    loop_updated_at_ms
 FROM thread_goals
 WHERE thread_id = ?
             "#,
@@ -46,7 +51,10 @@ WHERE thread_id = ?
         .fetch_optional(self.pool.as_ref())
         .await?;
 
-        row.map(|row| thread_goal_from_row(&row)).transpose()
+        match row {
+            Some(row) => self.thread_goal_from_row_with_history(&row).await.map(Some),
+            None => Ok(None),
+        }
     }
 
     pub async fn replace_thread_goal(
@@ -80,7 +88,12 @@ ON CONFLICT(thread_id) DO UPDATE SET
     tokens_used = 0,
     time_used_seconds = 0,
     created_at_ms = excluded.created_at_ms,
-    updated_at_ms = excluded.updated_at_ms
+    updated_at_ms = excluded.updated_at_ms,
+    loop_cycle_number = 0,
+    loop_phase = NULL,
+    loop_status = NULL,
+    loop_summary = NULL,
+    loop_updated_at_ms = NULL
 RETURNING
     thread_id,
     goal_id,
@@ -90,7 +103,12 @@ RETURNING
     tokens_used,
     time_used_seconds,
     created_at_ms,
-    updated_at_ms
+    updated_at_ms,
+    loop_cycle_number,
+    loop_phase,
+    loop_status,
+    loop_summary,
+    loop_updated_at_ms
             "#,
         )
         .bind(thread_id.to_string())
@@ -101,6 +119,16 @@ RETURNING
         .bind(now_ms)
         .bind(now_ms)
         .fetch_one(self.pool.as_ref())
+        .await?;
+
+        sqlx::query(
+            r#"
+DELETE FROM thread_goal_loop_history
+WHERE thread_id = ?
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .execute(self.pool.as_ref())
         .await?;
 
         self.set_thread_preview_if_empty(thread_id, objective)
@@ -141,7 +169,12 @@ RETURNING
     tokens_used,
     time_used_seconds,
     created_at_ms,
-    updated_at_ms
+    updated_at_ms,
+    loop_cycle_number,
+    loop_phase,
+    loop_status,
+    loop_summary,
+    loop_updated_at_ms
             "#,
         )
         .bind(thread_id.to_string())
@@ -437,7 +470,12 @@ RETURNING
     tokens_used,
     time_used_seconds,
     created_at_ms,
-    updated_at_ms
+    updated_at_ms,
+    loop_cycle_number,
+    loop_phase,
+    loop_status,
+    loop_summary,
+    loop_updated_at_ms
             "#,
         );
 
@@ -460,8 +498,156 @@ RETURNING
             ));
         };
 
-        let updated = thread_goal_from_row(&row)?;
+        let updated = self.thread_goal_from_row_with_history(&row).await?;
         Ok(ThreadGoalAccountingOutcome::Updated(updated))
+    }
+
+    pub async fn record_thread_goal_loop_event(
+        &self,
+        thread_id: ThreadId,
+        event: crate::ThreadGoalLoopEvent,
+    ) -> anyhow::Result<Option<crate::ThreadGoal>> {
+        let Some(goal) = self.get_thread_goal(thread_id).await? else {
+            return Ok(None);
+        };
+
+        let now_ms = datetime_to_epoch_millis(Utc::now());
+        let existing = sqlx::query(
+            r#"
+SELECT cycle_number, started_at_ms
+FROM thread_goal_loop_history
+WHERE thread_id = ? AND goal_id = ? AND id = ?
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .bind(&goal.goal_id)
+        .bind(&event.id)
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+        let (cycle_number, started_at_ms) = match existing {
+            Some(row) => (row.try_get("cycle_number")?, row.try_get("started_at_ms")?),
+            None => {
+                let previous_cycle_number = goal
+                    .loop_state
+                    .as_ref()
+                    .map(|loop_state| loop_state.cycle_number)
+                    .unwrap_or(0);
+                let cycle_number = if event.status == crate::ThreadGoalLoopStatus::InProgress {
+                    previous_cycle_number.saturating_add(1)
+                } else {
+                    previous_cycle_number.max(1)
+                };
+                (cycle_number, now_ms)
+            }
+        };
+        let completed_at_ms = event.status.is_terminal().then_some(now_ms);
+
+        sqlx::query(
+            r#"
+INSERT INTO thread_goal_loop_history (
+    thread_id,
+    goal_id,
+    id,
+    cycle_number,
+    phase,
+    status,
+    title,
+    summary,
+    detail,
+    error,
+    started_at_ms,
+    updated_at_ms,
+    completed_at_ms
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(thread_id, goal_id, id) DO UPDATE SET
+    phase = excluded.phase,
+    status = excluded.status,
+    title = excluded.title,
+    summary = excluded.summary,
+    detail = excluded.detail,
+    error = excluded.error,
+    updated_at_ms = excluded.updated_at_ms,
+    completed_at_ms = COALESCE(excluded.completed_at_ms, thread_goal_loop_history.completed_at_ms)
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .bind(&goal.goal_id)
+        .bind(&event.id)
+        .bind(cycle_number)
+        .bind(event.phase.as_str())
+        .bind(event.status.as_str())
+        .bind(&event.title)
+        .bind(&event.summary)
+        .bind(&event.detail)
+        .bind(&event.error)
+        .bind(started_at_ms)
+        .bind(now_ms)
+        .bind(completed_at_ms)
+        .execute(self.pool.as_ref())
+        .await?;
+
+        sqlx::query(
+            r#"
+UPDATE thread_goals
+SET
+    loop_cycle_number = ?,
+    loop_phase = ?,
+    loop_status = ?,
+    loop_summary = ?,
+    loop_updated_at_ms = ?,
+    updated_at_ms = ?
+WHERE thread_id = ? AND goal_id = ?
+            "#,
+        )
+        .bind(cycle_number)
+        .bind(event.phase.as_str())
+        .bind(event.status.as_str())
+        .bind(&event.summary)
+        .bind(now_ms)
+        .bind(now_ms)
+        .bind(thread_id.to_string())
+        .bind(&goal.goal_id)
+        .execute(self.pool.as_ref())
+        .await?;
+
+        self.get_thread_goal(thread_id).await
+    }
+
+    async fn thread_goal_from_row_with_history(
+        &self,
+        row: &sqlx::sqlite::SqliteRow,
+    ) -> anyhow::Result<crate::ThreadGoal> {
+        let mut goal = thread_goal_from_row(row)?;
+        let history_rows = sqlx::query(
+            r#"
+SELECT
+    id,
+    cycle_number,
+    phase,
+    status,
+    title,
+    summary,
+    detail,
+    error,
+    started_at_ms,
+    updated_at_ms,
+    completed_at_ms
+FROM thread_goal_loop_history
+WHERE thread_id = ? AND goal_id = ?
+ORDER BY cycle_number DESC, updated_at_ms DESC
+LIMIT 20
+            "#,
+        )
+        .bind(goal.thread_id.to_string())
+        .bind(&goal.goal_id)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        goal.loop_history = history_rows
+            .iter()
+            .map(ThreadGoalLoopHistoryRow::try_from_row)
+            .map(|row| row.and_then(crate::ThreadGoalLoopHistoryEntry::try_from))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(goal)
     }
 }
 
@@ -612,6 +798,123 @@ mod tests {
             .expect("thread should exist");
         assert_eq!(metadata.preview.as_deref(), Some("optimize the benchmark"));
         assert_eq!(metadata.first_user_message, None);
+    }
+
+    #[tokio::test]
+    async fn thread_goal_loop_events_update_current_state_and_history() {
+        let runtime = test_runtime().await;
+        let thread_id = test_thread_id();
+        upsert_test_thread(&runtime, thread_id).await;
+
+        runtime
+            .replace_thread_goal(
+                thread_id,
+                "ship the autonomous workflow",
+                crate::ThreadGoalStatus::Active,
+                /*token_budget*/ None,
+            )
+            .await
+            .expect("goal replacement should succeed");
+
+        let started = runtime
+            .record_thread_goal_loop_event(
+                thread_id,
+                crate::ThreadGoalLoopEvent {
+                    id: "super_loop:worker:1".to_string(),
+                    phase: crate::ThreadGoalLoopPhase::SuperLoop,
+                    status: crate::ThreadGoalLoopStatus::InProgress,
+                    title: "Running Super Loop".to_string(),
+                    summary: "Scanning background follow-ups".to_string(),
+                    detail: None,
+                    error: None,
+                },
+            )
+            .await
+            .expect("loop event should record")
+            .expect("goal should still exist");
+
+        let expected_started_state = crate::ThreadGoalLoopState {
+            cycle_number: 1,
+            phase: crate::ThreadGoalLoopPhase::SuperLoop,
+            status: crate::ThreadGoalLoopStatus::InProgress,
+            summary: "Scanning background follow-ups".to_string(),
+            updated_at: started.loop_state.as_ref().unwrap().updated_at,
+        };
+        assert_eq!(Some(expected_started_state), started.loop_state);
+        assert_eq!(
+            vec![crate::ThreadGoalLoopHistoryEntry {
+                id: "super_loop:worker:1".to_string(),
+                cycle_number: 1,
+                phase: crate::ThreadGoalLoopPhase::SuperLoop,
+                status: crate::ThreadGoalLoopStatus::InProgress,
+                title: "Running Super Loop".to_string(),
+                summary: "Scanning background follow-ups".to_string(),
+                detail: None,
+                error: None,
+                started_at: started.loop_history[0].started_at,
+                updated_at: started.loop_history[0].updated_at,
+                completed_at: None,
+            }],
+            started.loop_history
+        );
+
+        let completed = runtime
+            .record_thread_goal_loop_event(
+                thread_id,
+                crate::ThreadGoalLoopEvent {
+                    id: "super_loop:worker:1".to_string(),
+                    phase: crate::ThreadGoalLoopPhase::SuperLoop,
+                    status: crate::ThreadGoalLoopStatus::Completed,
+                    title: "Running Super Loop".to_string(),
+                    summary: "Super loop completed".to_string(),
+                    detail: Some("planned 2 actions from 3 findings".to_string()),
+                    error: None,
+                },
+            )
+            .await
+            .expect("loop completion should record")
+            .expect("goal should still exist");
+
+        let expected_completed_state = crate::ThreadGoalLoopState {
+            cycle_number: 1,
+            phase: crate::ThreadGoalLoopPhase::SuperLoop,
+            status: crate::ThreadGoalLoopStatus::Completed,
+            summary: "Super loop completed".to_string(),
+            updated_at: completed.loop_state.as_ref().unwrap().updated_at,
+        };
+        assert_eq!(Some(expected_completed_state), completed.loop_state);
+        assert_eq!(
+            vec![crate::ThreadGoalLoopHistoryEntry {
+                id: "super_loop:worker:1".to_string(),
+                cycle_number: 1,
+                phase: crate::ThreadGoalLoopPhase::SuperLoop,
+                status: crate::ThreadGoalLoopStatus::Completed,
+                title: "Running Super Loop".to_string(),
+                summary: "Super loop completed".to_string(),
+                detail: Some("planned 2 actions from 3 findings".to_string()),
+                error: None,
+                started_at: completed.loop_history[0].started_at,
+                updated_at: completed.loop_history[0].updated_at,
+                completed_at: completed.loop_history[0].completed_at,
+            }],
+            completed.loop_history
+        );
+        assert!(completed.loop_history[0].completed_at.is_some());
+
+        let replaced = runtime
+            .replace_thread_goal(
+                thread_id,
+                "start a fresh workflow",
+                crate::ThreadGoalStatus::Active,
+                /*token_budget*/ None,
+            )
+            .await
+            .expect("goal replacement should succeed");
+        assert_eq!(None, replaced.loop_state);
+        assert_eq!(
+            Vec::<crate::ThreadGoalLoopHistoryEntry>::new(),
+            replaced.loop_history
+        );
     }
 
     #[tokio::test]

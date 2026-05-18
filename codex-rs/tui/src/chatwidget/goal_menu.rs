@@ -3,6 +3,9 @@
 use super::*;
 use crate::goal_display::format_goal_elapsed_seconds;
 use crate::status::format_tokens_compact;
+use codex_app_server_protocol::ThreadGoalLoopHistoryEntry as AppThreadGoalLoopHistoryEntry;
+use codex_app_server_protocol::ThreadGoalLoopPhase as AppThreadGoalLoopPhase;
+use codex_app_server_protocol::ThreadGoalLoopStatus as AppThreadGoalLoopStatus;
 
 impl ChatWidget {
     pub(crate) fn show_goal_summary(&mut self, goal: AppThreadGoal) {
@@ -101,6 +104,28 @@ fn goal_summary_lines(goal: &AppThreadGoal) -> Vec<Line<'static>> {
             format_tokens_compact(token_budget).into(),
         ]));
     }
+    if let Some(loop_state) = goal.loop_state.as_ref() {
+        lines.push(Line::from(vec![
+            "Loop: ".dim(),
+            format!(
+                "cycle {} - {} - {}",
+                loop_state.cycle_number,
+                goal_loop_phase_label(loop_state.phase),
+                goal_loop_status_label(loop_state.status)
+            )
+            .into(),
+        ]));
+        lines.push(Line::from(vec![
+            "Last loop: ".dim(),
+            loop_state.summary.clone().into(),
+        ]));
+    }
+    if !goal.loop_history.is_empty() {
+        lines.push(Line::from("Loop history".bold()));
+        for entry in goal.loop_history.iter().take(3) {
+            lines.extend(goal_loop_history_lines(entry));
+        }
+    }
     let command_hint = match goal.status {
         AppThreadGoalStatus::Active => "Commands: /goal edit, /goal pause, /goal clear",
         AppThreadGoalStatus::Paused => "Commands: /goal edit, /goal resume, /goal clear",
@@ -111,6 +136,53 @@ fn goal_summary_lines(goal: &AppThreadGoal) -> Vec<Line<'static>> {
     lines.push(Line::default());
     lines.push(Line::from(command_hint.dim()));
     lines
+}
+
+fn goal_loop_history_lines(entry: &AppThreadGoalLoopHistoryEntry) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![
+        format!(
+            "  #{} {} {}: ",
+            entry.cycle_number,
+            goal_loop_phase_label(entry.phase),
+            goal_loop_status_label(entry.status)
+        )
+        .dim(),
+        entry.summary.clone().into(),
+    ])];
+    if let Some(detail) = entry
+        .detail
+        .as_ref()
+        .filter(|detail| !detail.trim().is_empty())
+    {
+        lines.push(Line::from(vec!["    ".dim(), detail.clone().dim()]));
+    }
+    if let Some(error) = entry
+        .error
+        .as_ref()
+        .filter(|error| !error.trim().is_empty())
+    {
+        lines.push(Line::from(vec!["    Error: ".red(), error.clone().red()]));
+    }
+    lines
+}
+
+fn goal_loop_phase_label(phase: AppThreadGoalLoopPhase) -> &'static str {
+    match phase {
+        AppThreadGoalLoopPhase::KnowledgeLoop => "knowledge loop",
+        AppThreadGoalLoopPhase::SuperLoop => "super loop",
+        AppThreadGoalLoopPhase::ImprovementLoop => "improvement loop",
+        AppThreadGoalLoopPhase::CleanupLoop => "cleanup loop",
+        AppThreadGoalLoopPhase::ExecutionLoop => "execution loop",
+        AppThreadGoalLoopPhase::ContextInjection => "context injection",
+    }
+}
+
+fn goal_loop_status_label(status: AppThreadGoalLoopStatus) -> &'static str {
+    match status {
+        AppThreadGoalLoopStatus::InProgress => "in progress",
+        AppThreadGoalLoopStatus::Completed => "completed",
+        AppThreadGoalLoopStatus::Failed => "failed",
+    }
 }
 
 fn goal_status_label(status: AppThreadGoalStatus) -> &'static str {

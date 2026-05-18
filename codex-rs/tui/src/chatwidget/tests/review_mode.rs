@@ -1238,6 +1238,8 @@ async fn interrupted_turn_after_goal_budget_limited_uses_budget_message_snapshot
                     time_used_seconds: 0,
                     created_at: 0,
                     updated_at: 1,
+                    loop_state: None,
+                    loop_history: Vec::new(),
                 },
             },
         ),

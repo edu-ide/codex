@@ -1255,17 +1255,7 @@ fn codex_profile_table_for_ilhae_profile(
 }
 
 fn user_mcp_servers_for_managed_config() -> toml::value::Table {
-    let Ok(config_str) = std::fs::read_to_string(resolve_ilhae_config_toml_path()) else {
-        return toml::value::Table::new();
-    };
-    let Ok(config) = config_str.parse::<toml::Value>() else {
-        return toml::value::Table::new();
-    };
-    let mut servers = config
-        .get("mcp_servers")
-        .and_then(toml::Value::as_table)
-        .cloned()
-        .unwrap_or_default();
+    let mut servers = user_table_for_managed_config("mcp_servers");
 
     disable_duplicate_legacy_fortune_mcp_server(&mut servers);
     servers
@@ -1302,17 +1292,42 @@ fn disable_duplicate_legacy_fortune_mcp_server(servers: &mut toml::value::Table)
 }
 
 fn user_model_providers_for_managed_config() -> toml::value::Table {
+    user_table_for_managed_config("model_providers")
+}
+
+fn user_features_for_managed_config() -> toml::value::Table {
+    user_table_for_managed_config("features")
+}
+
+fn user_web_search_for_managed_config() -> Option<toml::Value> {
+    user_config_value_for_managed_config("web_search")
+}
+
+fn user_tools_for_managed_config() -> toml::value::Table {
+    let user_tools = user_table_for_managed_config("tools");
+    let mut tools = toml::value::Table::new();
+    for key in ["web_search", "view_image"] {
+        if let Some(value) = user_tools.get(key).cloned() {
+            tools.insert(key.to_string(), value);
+        }
+    }
+    tools
+}
+
+fn user_table_for_managed_config(key: &str) -> toml::value::Table {
+    user_config_value_for_managed_config(key)
+        .and_then(|value| value.as_table().cloned())
+        .unwrap_or_default()
+}
+
+fn user_config_value_for_managed_config(key: &str) -> Option<toml::Value> {
     let Ok(config_str) = std::fs::read_to_string(resolve_ilhae_config_toml_path()) else {
-        return toml::value::Table::new();
+        return None;
     };
     let Ok(config) = config_str.parse::<toml::Value>() else {
-        return toml::value::Table::new();
+        return None;
     };
-    config
-        .get("model_providers")
-        .and_then(toml::Value::as_table)
-        .cloned()
-        .unwrap_or_default()
+    config.get(key).cloned()
 }
 
 fn default_ilhae_codex_home_table() -> toml::value::Table {
@@ -1346,6 +1361,13 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
         "sandbox_mode".to_string(),
         toml::Value::String("danger-full-access".to_string()),
     );
+    if let Some(web_search) = user_web_search_for_managed_config() {
+        root.insert("web_search".to_string(), web_search);
+    }
+    let user_tools = user_tools_for_managed_config();
+    if !user_tools.is_empty() {
+        root.insert("tools".to_string(), toml::Value::Table(user_tools));
+    }
 
     let mut agent = toml::value::Table::new();
     agent.insert(
@@ -1438,6 +1460,9 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
     );
     features.insert("fast_mode".to_string(), toml::Value::Boolean(true));
     features.insert("multi_agent".to_string(), toml::Value::Boolean(true));
+    for (key, value) in user_features_for_managed_config() {
+        features.insert(key, value);
+    }
     root.insert("features".to_string(), toml::Value::Table(features));
     root.insert(
         "mcp_oauth_credentials_store".to_string(),
@@ -2367,6 +2392,102 @@ trust_level = "untrusted"
         assert_eq!(
             untrusted.get("trust_level").and_then(toml::Value::as_str),
             Some("untrusted")
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_carries_web_search_into_managed_config() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let config_toml = r#"
+web_search = "live"
+
+[tools.web_search]
+engine = "duckduckgo"
+use_duckduckgo_fallback = true
+
+[profile]
+active = "qwen-local"
+
+[profiles.qwen-local.agent]
+engine = "ilhae"
+command = "ilhae"
+"#;
+        std::fs::write(tmp.path().join("config.toml"), config_toml).expect("write config");
+
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
+            .expect("read managed config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        assert_eq!(
+            parsed.get("web_search").and_then(toml::Value::as_str),
+            Some("live")
+        );
+
+        let web_search = parsed
+            .get("tools")
+            .and_then(toml::Value::as_table)
+            .and_then(|tools| tools.get("web_search"))
+            .and_then(toml::Value::as_table)
+            .expect("tools.web_search table");
+        assert_eq!(
+            web_search.get("engine").and_then(toml::Value::as_str),
+            Some("duckduckgo")
+        );
+        assert_eq!(
+            web_search
+                .get("use_duckduckgo_fallback")
+                .and_then(toml::Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_carries_features_into_managed_config() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let config_toml = r#"
+[features]
+goals = true
+fast_mode = false
+
+[profile]
+active = "qwen-local"
+
+[profiles.qwen-local.agent]
+engine = "ilhae"
+command = "ilhae"
+"#;
+        std::fs::write(tmp.path().join("config.toml"), config_toml).expect("write config");
+
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
+            .expect("read managed config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let features = parsed
+            .get("features")
+            .and_then(toml::Value::as_table)
+            .expect("features table");
+
+        assert_eq!(
+            features.get("goals").and_then(toml::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            features.get("fast_mode").and_then(toml::Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            features
+                .get("apply_patch_freeform")
+                .and_then(toml::Value::as_bool),
+            Some(true)
         );
     }
 

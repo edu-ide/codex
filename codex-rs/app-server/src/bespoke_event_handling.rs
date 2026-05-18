@@ -838,7 +838,9 @@ pub(crate) async fn apply_bespoke_event_handling(
         | EventMsg::PlanDelta(_)
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
-        | EventMsg::AgentReasoningSectionBreak(_)) => {
+        | EventMsg::AgentReasoningSectionBreak(_)
+        | EventMsg::WebSearchBegin(_)
+        | EventMsg::WebSearchEnd(_)) => {
             let notification = item_event_to_server_notification(
                 msg,
                 &conversation_id.to_string(),
@@ -2095,6 +2097,8 @@ mod tests {
     use codex_protocol::protocol::TokenUsage;
     use codex_protocol::protocol::TokenUsageInfo;
     use codex_protocol::protocol::UserMessageEvent;
+    use codex_protocol::protocol::WebSearchBeginEvent;
+    use codex_protocol::protocol::WebSearchEndEvent;
     use codex_thread_store::StoredThread;
     use codex_thread_store::StoredThreadHistory;
     use codex_utils_absolute_path::AbsolutePathBuf;
@@ -2445,6 +2449,113 @@ mod tests {
             }
             other => panic!("unexpected notification: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn web_search_events_are_fanned_out_to_app_server_clients() -> Result<()> {
+        let codex_home = TempDir::new()?;
+        let config = load_default_config_for_test(&codex_home).await;
+        let thread_manager = Arc::new(
+            codex_core::test_support::thread_manager_with_models_provider_and_home(
+                CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+                config.model_provider.clone(),
+                config.codex_home.to_path_buf(),
+                Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+            ),
+        );
+        let codex_core::NewThread {
+            thread_id: conversation_id,
+            thread: conversation,
+            ..
+        } = thread_manager.start_thread(config).await?;
+        let thread_state = new_thread_state();
+        let thread_watch_manager = ThreadWatchManager::new();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(1)],
+            conversation_id,
+        );
+        let turn_id = "turn-web-search";
+
+        for msg in [
+            EventMsg::WebSearchBegin(WebSearchBeginEvent {
+                call_id: "search-1".to_string(),
+            }),
+            EventMsg::WebSearchEnd(WebSearchEndEvent {
+                call_id: "search-1".to_string(),
+                query: "사과".to_string(),
+                action: codex_protocol::models::WebSearchAction::Search {
+                    query: Some("사과".to_string()),
+                    queries: None,
+                },
+            }),
+        ] {
+            apply_bespoke_event_handling(
+                Event {
+                    id: turn_id.to_string(),
+                    msg,
+                },
+                conversation_id,
+                conversation.clone(),
+                thread_manager.clone(),
+                outgoing.clone(),
+                thread_state.clone(),
+                thread_watch_manager.clone(),
+                Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+                "test-provider".to_string(),
+            )
+            .await;
+        }
+
+        let first = recv_broadcast_message(&mut rx).await?;
+        match first {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
+                assert_eq!(
+                    payload,
+                    ItemStartedNotification {
+                        thread_id: conversation_id.to_string(),
+                        turn_id: turn_id.to_string(),
+                        started_at_ms: 0,
+                        item: ThreadItem::WebSearch {
+                            id: "search-1".to_string(),
+                            query: "사과".to_string(),
+                            action: None,
+                        },
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        let second = recv_broadcast_message(&mut rx).await?;
+        match second {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
+                assert_eq!(
+                    payload,
+                    ItemCompletedNotification {
+                        thread_id: conversation_id.to_string(),
+                        turn_id: turn_id.to_string(),
+                        completed_at_ms: 0,
+                        item: ThreadItem::WebSearch {
+                            id: "search-1".to_string(),
+                            query: "사과".to_string(),
+                            action: Some(codex_app_server_protocol::WebSearchAction::Search {
+                                query: Some("사과".to_string()),
+                                queries: None,
+                            }),
+                        },
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        Ok(())
     }
 
     #[tokio::test]

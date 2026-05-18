@@ -581,6 +581,7 @@ impl EventProcessorWithJsonOutput {
                 events.push(ThreadEvent::TurnStarted(TurnStartedEvent {}));
                 CodexStatus::Running
             }
+            ServerNotification::GpuQueueRuntimeEvent(_) => CodexStatus::Running,
             _ => CodexStatus::Running,
         };
 

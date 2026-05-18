@@ -416,7 +416,7 @@ impl MessageProcessor {
             thread_watch_manager.clone(),
             Arc::clone(&thread_list_state_permit),
             thread_goal_processor.clone(),
-            state_db,
+            state_db.clone(),
             Arc::clone(&skills_watcher),
         );
         let turn_processor = TurnRequestProcessor::new(
@@ -433,6 +433,7 @@ impl MessageProcessor {
             thread_list_state_permit,
             Arc::clone(&skills_watcher),
             runtime_hooks,
+            state_db,
         );
         if matches!(plugin_startup_tasks, crate::PluginStartupTasks::Start) {
             // Keep plugin startup warmups aligned at app-server startup.

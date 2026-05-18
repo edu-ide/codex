@@ -28,6 +28,8 @@ fn thread_goal_updated_notification() -> ServerNotification {
             time_used_seconds: 0,
             created_at: 1,
             updated_at: 1,
+            loop_state: None,
+            loop_history: Vec::new(),
         },
     })
 }

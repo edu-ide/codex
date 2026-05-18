@@ -88,7 +88,9 @@ pub mod a2a_persistence;
 // pub mod team_orchestration;
 
 // ── Native CLI entry point ──
+mod app_server_notifications;
 pub mod startup_main;
+pub use app_server_notifications::spawn_app_server_external_notification_bridge;
 pub use startup_main::BootstrappedIlhaeRuntime;
 pub use startup_main::bootstrap_ilhae_runtime;
 pub use startup_main::current_native_backend_capability_profile;
@@ -101,6 +103,7 @@ pub use startup_main::native_runtime_healthcheck;
 pub use startup_main::prepare_native_turn_inputs;
 pub use startup_main::prepare_session_turn_inputs;
 pub use startup_main::run_active_foreground_loop_cycle;
+pub use startup_main::run_active_foreground_loop_cycle_collecting_lifecycle;
 pub use startup_main::run_exec_foreground_loop_cycle;
 pub use startup_main::run_ilhae_proxy;
 pub use startup_main::spawn_native_runtime_server;

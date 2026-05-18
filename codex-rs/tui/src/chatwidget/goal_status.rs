@@ -219,6 +219,8 @@ mod tests {
                 time_used_seconds,
                 created_at: 1,
                 updated_at: 1,
+                loop_state: None,
+                loop_history: Vec::new(),
             },
             observed_at,
         )

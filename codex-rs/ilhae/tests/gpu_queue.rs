@@ -1,6 +1,9 @@
+use codex_ilhae::gpu_queue::api::GpuQueueRuntimeEventType;
 use codex_ilhae::gpu_queue::api::LeaseMode;
 use codex_ilhae::gpu_queue::api::LeaseRequest;
 use codex_ilhae::gpu_queue::api::LeaseState;
+use codex_ilhae::gpu_queue::daemon::GpuQueueDaemon;
+use codex_ilhae::gpu_queue::runtime::NativeLlmRuntime;
 use codex_ilhae::gpu_queue::scheduler::LeaseScheduler;
 
 fn exclusive_request(owner: &str, kind: &str, ttl_seconds: u64) -> LeaseRequest {
@@ -89,5 +92,44 @@ fn expired_active_lease_is_released_and_pending_lease_is_promoted() {
             .as_ref()
             .and_then(|lease| lease.expires_at),
         Some(271)
+    );
+}
+
+#[tokio::test]
+async fn daemon_emits_runtime_events_for_granted_and_released_leases() {
+    let daemon = GpuQueueDaemon::new(NativeLlmRuntime::new(Some(
+        "missing-test-profile".to_string(),
+    )));
+    let mut events = daemon.subscribe_events();
+
+    let response = daemon
+        .acquire_lease(LeaseRequest {
+            owner: "videoeditor".to_string(),
+            kind: "image".to_string(),
+            mode: LeaseMode::Exclusive,
+            preempt_llm: false,
+            ttl_seconds: 60,
+            wait_timeout_seconds: None,
+        })
+        .await
+        .expect("lease should be granted");
+    assert_eq!(response.state, LeaseState::Granted);
+
+    let granted = events.recv().await.expect("granted event");
+    assert_eq!(granted.event_type, GpuQueueRuntimeEventType::LeaseGranted);
+    assert_eq!(
+        granted.lease.as_ref().map(|lease| lease.owner.as_str()),
+        Some("videoeditor")
+    );
+
+    daemon
+        .release_lease(&response.lease_id)
+        .await
+        .expect("lease should release");
+    let released = events.recv().await.expect("released event");
+    assert_eq!(released.event_type, GpuQueueRuntimeEventType::LeaseReleased);
+    assert_eq!(
+        released.lease.as_ref().map(|lease| lease.lease_id.as_str()),
+        Some(response.lease_id.as_str())
     );
 }

@@ -1078,6 +1078,7 @@ mod tests {
             client_version: "test".to_string(),
             experimental_api: true,
             opt_out_notification_methods: Vec::new(),
+            external_notifications: None,
             channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
         })
         .await

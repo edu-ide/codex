@@ -31,6 +31,21 @@ pub enum LlmRuntimeState {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GpuQueueRuntimeEventType {
+    LeaseQueued,
+    LeaseGranted,
+    LeaseReleased,
+    LeaseExpired,
+    LlmStopping,
+    LlmStopped,
+    LlmStarting,
+    LlmRunning,
+    LlmStopFailed,
+    LlmStartFailed,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LeaseRequest {
@@ -91,6 +106,17 @@ pub struct StatusResponse {
     pub llm_state: LlmRuntimeState,
     pub active_lease: Option<LeaseInfo>,
     pub pending_leases: Vec<LeaseInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuQueueRuntimeEvent {
+    pub event_id: String,
+    pub created_at: u64,
+    pub event_type: GpuQueueRuntimeEventType,
+    pub message: String,
+    pub llm_state: LlmRuntimeState,
+    pub lease: Option<LeaseInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

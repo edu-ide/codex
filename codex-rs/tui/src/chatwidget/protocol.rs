@@ -141,6 +141,9 @@ impl ChatWidget {
             ServerNotification::ModelVerification(notification) => {
                 self.on_app_server_model_verification(&notification.verifications)
             }
+            ServerNotification::GpuQueueRuntimeEvent(notification) => {
+                self.add_info_message(notification.message, /*hint*/ None)
+            }
             ServerNotification::Warning(notification) => self.on_warning(notification.message),
             ServerNotification::GuardianWarning(notification) => {
                 self.on_warning(notification.message)

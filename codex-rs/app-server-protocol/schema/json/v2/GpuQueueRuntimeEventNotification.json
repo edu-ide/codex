@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "GpuQueueLeaseMode": {
+      "enum": [
+        "exclusive",
+        "shared"
+      ],
+      "type": "string"
+    },
+    "GpuQueueLeaseSnapshot": {
+      "properties": {
+        "expiresAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "grantedAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "leaseId": {
+          "type": "string"
+        },
+        "llmWasPreempted": {
+          "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/definitions/GpuQueueLeaseMode"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "preemptLlm": {
+          "type": "boolean"
+        },
+        "queuedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/definitions/GpuQueueLeaseState"
+        }
+      },
+      "required": [
+        "kind",
+        "leaseId",
+        "llmWasPreempted",
+        "mode",
+        "owner",
+        "preemptLlm",
+        "queuedAt",
+        "state"
+      ],
+      "type": "object"
+    },
+    "GpuQueueLeaseState": {
+      "enum": [
+        "granted",
+        "pending"
+      ],
+      "type": "string"
+    },
+    "GpuQueueLlmRuntimeState": {
+      "enum": [
+        "running",
+        "stopped",
+        "starting",
+        "stopping",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "GpuQueueRuntimeEventType": {
+      "enum": [
+        "leaseQueued",
+        "leaseGranted",
+        "leaseReleased",
+        "leaseExpired",
+        "llmStopping",
+        "llmStopped",
+        "llmStarting",
+        "llmRunning",
+        "llmStopFailed",
+        "llmStartFailed"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "createdAt": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "eventId": {
+      "type": "string"
+    },
+    "eventType": {
+      "$ref": "#/definitions/GpuQueueRuntimeEventType"
+    },
+    "lease": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/GpuQueueLeaseSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "llmState": {
+      "$ref": "#/definitions/GpuQueueLlmRuntimeState"
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "createdAt",
+    "eventId",
+    "eventType",
+    "llmState",
+    "message"
+  ],
+  "title": "GpuQueueRuntimeEventNotification",
+  "type": "object"
+}

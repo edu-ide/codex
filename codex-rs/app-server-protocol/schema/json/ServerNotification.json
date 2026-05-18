@@ -1421,6 +1421,137 @@
       },
       "type": "object"
     },
+    "GpuQueueLeaseMode": {
+      "enum": [
+        "exclusive",
+        "shared"
+      ],
+      "type": "string"
+    },
+    "GpuQueueLeaseSnapshot": {
+      "properties": {
+        "expiresAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "grantedAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "leaseId": {
+          "type": "string"
+        },
+        "llmWasPreempted": {
+          "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/definitions/GpuQueueLeaseMode"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "preemptLlm": {
+          "type": "boolean"
+        },
+        "queuedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/definitions/GpuQueueLeaseState"
+        }
+      },
+      "required": [
+        "kind",
+        "leaseId",
+        "llmWasPreempted",
+        "mode",
+        "owner",
+        "preemptLlm",
+        "queuedAt",
+        "state"
+      ],
+      "type": "object"
+    },
+    "GpuQueueLeaseState": {
+      "enum": [
+        "granted",
+        "pending"
+      ],
+      "type": "string"
+    },
+    "GpuQueueLlmRuntimeState": {
+      "enum": [
+        "running",
+        "stopped",
+        "starting",
+        "stopping",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "GpuQueueRuntimeEventNotification": {
+      "properties": {
+        "createdAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "eventType": {
+          "$ref": "#/definitions/GpuQueueRuntimeEventType"
+        },
+        "lease": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GpuQueueLeaseSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "llmState": {
+          "$ref": "#/definitions/GpuQueueLlmRuntimeState"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "createdAt",
+        "eventId",
+        "eventType",
+        "llmState",
+        "message"
+      ],
+      "type": "object"
+    },
+    "GpuQueueRuntimeEventType": {
+      "enum": [
+        "leaseQueued",
+        "leaseGranted",
+        "leaseReleased",
+        "leaseExpired",
+        "llmStopping",
+        "llmStopped",
+        "llmStarting",
+        "llmRunning",
+        "llmStopFailed",
+        "llmStartFailed"
+      ],
+      "type": "string"
+    },
     "GuardianApprovalReview": {
       "description": "[UNSTABLE] Temporary approval auto-review payload used by `item/autoApprovalReview/*` notifications. This shape is expected to change soon.",
       "properties": {
@@ -3202,6 +3333,22 @@
           "format": "int64",
           "type": "integer"
         },
+        "loopHistory": {
+          "items": {
+            "$ref": "#/definitions/ThreadGoalLoopHistoryEntry"
+          },
+          "type": "array"
+        },
+        "loopState": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadGoalLoopState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "objective": {
           "type": "string"
         },
@@ -3233,6 +3380,7 @@
       },
       "required": [
         "createdAt",
+        "loopHistory",
         "objective",
         "status",
         "threadId",
@@ -3252,6 +3400,115 @@
         "threadId"
       ],
       "type": "object"
+    },
+    "ThreadGoalLoopHistoryEntry": {
+      "properties": {
+        "completedAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cycleNumber": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/definitions/ThreadGoalLoopPhase"
+        },
+        "startedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/definitions/ThreadGoalLoopStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cycleNumber",
+        "id",
+        "phase",
+        "startedAt",
+        "status",
+        "summary",
+        "title",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalLoopPhase": {
+      "enum": [
+        "knowledgeLoop",
+        "superLoop",
+        "improvementLoop",
+        "cleanupLoop",
+        "executionLoop",
+        "contextInjection"
+      ],
+      "type": "string"
+    },
+    "ThreadGoalLoopState": {
+      "properties": {
+        "cycleNumber": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "phase": {
+          "$ref": "#/definitions/ThreadGoalLoopPhase"
+        },
+        "status": {
+          "$ref": "#/definitions/ThreadGoalLoopStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cycleNumber",
+        "phase",
+        "status",
+        "summary",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalLoopStatus": {
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
     },
     "ThreadGoalStatus": {
       "enum": [
@@ -5529,6 +5786,26 @@
         "params"
       ],
       "title": "Item/mcpToolCall/progressNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "gpuQueue/runtimeEvent"
+          ],
+          "title": "GpuQueue/runtimeEventNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/GpuQueueRuntimeEventNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "GpuQueue/runtimeEventNotification",
       "type": "object"
     },
     {

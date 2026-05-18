@@ -279,6 +279,37 @@ async fn live_app_server_warning_notification_renders_message() {
 }
 
 #[tokio::test]
+async fn live_app_server_gpu_queue_runtime_event_renders_message() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_server_notification(
+        ServerNotification::GpuQueueRuntimeEvent(
+            codex_app_server_protocol::GpuQueueRuntimeEventNotification {
+                event_id: "gpu-1".to_string(),
+                created_at: 1,
+                event_type: codex_app_server_protocol::GpuQueueRuntimeEventType::LlmStopped,
+                message: "Local LLM runtime stopped for comfyui video lease `lease-1`".to_string(),
+                llm_state: codex_app_server_protocol::GpuQueueLlmRuntimeState::Stopped,
+                lease: None,
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1, "expected one GPU queue history cell");
+    let rendered = lines_to_single_string(&cells[0]);
+    insta::assert_snapshot!(
+        rendered,
+        @"• Local LLM runtime stopped for comfyui video lease `lease-1`"
+    );
+    assert!(
+        rendered.contains("Local LLM runtime stopped for comfyui video lease `lease-1`"),
+        "expected GPU queue runtime message, got {rendered}"
+    );
+}
+
+#[tokio::test]
 async fn live_app_server_guardian_warning_notification_renders_message() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
