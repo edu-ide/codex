@@ -1826,6 +1826,18 @@ fn should_show_onboarding(
 }
 
 fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool {
+    should_show_login_screen_for_invocation(login_status, config, is_invoked_as_ilhae_cli())
+}
+
+fn should_show_login_screen_for_invocation(
+    login_status: LoginStatus,
+    config: &Config,
+    is_ilhae_cli: bool,
+) -> bool {
+    if is_ilhae_cli {
+        return false;
+    }
+
     // Only show the login screen for providers that actually require OpenAI auth
     // (OpenAI or equivalents). For OSS/other providers, skip login entirely.
     if !config.model_provider.requires_openai_auth {
@@ -1833,6 +1845,24 @@ fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool 
     }
 
     login_status == LoginStatus::NotAuthenticated
+}
+
+pub(crate) fn is_invoked_as_ilhae_cli() -> bool {
+    if std::env::var("ILHAE_APP_SERVER").ok().as_deref() == Some("1")
+        || std::env::var("ILHAE_RUNTIME").ok().as_deref() == Some("1")
+    {
+        return true;
+    }
+
+    std::env::args_os()
+        .next()
+        .and_then(|arg0| {
+            std::path::Path::new(&arg0)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .is_some_and(|name| matches!(name.as_str(), "ilhae" | "codex-ilhae" | "codex-ilhae-cli"))
 }
 
 #[cfg(test)]
@@ -1896,6 +1926,26 @@ mod tests {
             /*no_alt_screen*/ true,
             AltScreenMode::Auto,
         ));
+    }
+
+    #[tokio::test]
+    async fn should_show_login_screen_skips_openai_prompt_for_ilhae_invocation()
+    -> std::io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let mut config = build_config(&temp_dir).await?;
+        config.model_provider.requires_openai_auth = true;
+
+        assert!(!should_show_login_screen_for_invocation(
+            LoginStatus::NotAuthenticated,
+            &config,
+            /*is_ilhae_cli*/ true,
+        ));
+        assert!(should_show_login_screen_for_invocation(
+            LoginStatus::NotAuthenticated,
+            &config,
+            /*is_ilhae_cli*/ false,
+        ));
+        Ok(())
     }
 
     #[test]

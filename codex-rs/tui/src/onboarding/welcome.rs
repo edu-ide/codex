@@ -23,12 +23,19 @@ use super::onboarding_screen::StepState;
 const MIN_ANIMATION_HEIGHT: u16 = 37;
 const MIN_ANIMATION_WIDTH: u16 = 60;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WelcomeBrand {
+    Codex,
+    Ilhae,
+}
+
 pub(crate) struct WelcomeWidget {
     pub is_logged_in: bool,
     animation: AsciiAnimation,
     animations_enabled: bool,
     animations_suppressed: Cell<bool>,
     layout_area: Cell<Option<Rect>>,
+    brand: WelcomeBrand,
 }
 
 impl KeyboardHandler for WelcomeWidget {
@@ -52,6 +59,7 @@ impl WelcomeWidget {
         is_logged_in: bool,
         request_frame: FrameRequester,
         animations_enabled: bool,
+        brand: WelcomeBrand,
     ) -> Self {
         Self {
             is_logged_in,
@@ -59,6 +67,7 @@ impl WelcomeWidget {
             animations_enabled,
             animations_suppressed: Cell::new(false),
             layout_area: Cell::new(None),
+            brand,
         }
     }
 
@@ -91,16 +100,28 @@ impl WidgetRef for &WelcomeWidget {
             lines.extend(frame.lines().map(Into::into));
             lines.push("".into());
         }
-        lines.push(Line::from(vec![
-            "  ".into(),
-            "Welcome to ".into(),
-            "Codex".bold(),
-            ", OpenAI's command-line coding agent".into(),
-        ]));
+        lines.push(welcome_line(self.brand));
 
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .render(area, buf);
+    }
+}
+
+fn welcome_line(brand: WelcomeBrand) -> Line<'static> {
+    match brand {
+        WelcomeBrand::Codex => Line::from(vec![
+            "  ".into(),
+            "Welcome to ".into(),
+            "Codex".bold(),
+            ", OpenAI's command-line coding agent".into(),
+        ]),
+        WelcomeBrand::Ilhae => Line::from(vec![
+            "  ".into(),
+            "Welcome to ".into(),
+            "Ilhae".bold(),
+            ", your local agent workspace".into(),
+        ]),
     }
 }
 
@@ -142,6 +163,7 @@ mod tests {
             /*is_logged_in*/ false,
             FrameRequester::test_dummy(),
             /*animations_enabled*/ true,
+            WelcomeBrand::Codex,
         );
         let area = Rect::new(0, 0, MIN_ANIMATION_WIDTH, MIN_ANIMATION_HEIGHT);
         let mut buf = Buffer::empty(area);
@@ -158,6 +180,7 @@ mod tests {
             /*is_logged_in*/ false,
             FrameRequester::test_dummy(),
             /*animations_enabled*/ true,
+            WelcomeBrand::Codex,
         );
         let area = Rect::new(0, 0, MIN_ANIMATION_WIDTH, MIN_ANIMATION_HEIGHT - 1);
         let mut buf = Buffer::empty(area);
@@ -179,6 +202,7 @@ mod tests {
             animations_enabled: true,
             animations_suppressed: Cell::new(false),
             layout_area: Cell::new(None),
+            brand: WelcomeBrand::Codex,
         };
 
         let before = widget.animation.current_frame();
@@ -203,6 +227,7 @@ mod tests {
             animations_enabled: true,
             animations_suppressed: Cell::new(false),
             layout_area: Cell::new(None),
+            brand: WelcomeBrand::Codex,
         };
 
         let before = widget.animation.current_frame();
@@ -216,5 +241,39 @@ mod tests {
             before, after,
             "expected ctrl+shift+. to switch welcome animation variant"
         );
+    }
+
+    #[test]
+    fn welcome_renders_ilhae_brand_snapshot() {
+        let widget = WelcomeWidget::new(
+            /*is_logged_in*/ false,
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ false,
+            WelcomeBrand::Ilhae,
+        );
+        let area = Rect::new(0, 0, 80, 3);
+        let mut buf = Buffer::empty(area);
+        (&widget).render(area, &mut buf);
+
+        insta::assert_snapshot!(buffer_to_string(&buf), @r"
+          Welcome to Ilhae, your local agent workspace
+
+
+        ");
+    }
+
+    fn buffer_to_string(buf: &Buffer) -> String {
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            if y > 0 {
+                out.push('\n');
+            }
+            let line_start = out.len();
+            for x in 0..buf.area.width {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.truncate(out[line_start..].trim_end().len() + line_start);
+        }
+        out
     }
 }

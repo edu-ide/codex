@@ -15,6 +15,7 @@ pub mod ports;
 // ── Core domain modules ──
 pub mod admin_builtins;
 pub mod admin_proxy;
+pub mod auth;
 pub mod capabilities;
 pub mod context_proxy;
 pub mod engine_env;

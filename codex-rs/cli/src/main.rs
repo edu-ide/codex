@@ -146,6 +146,10 @@ enum Subcommand {
     #[cfg(feature = "ilhae")]
     Profile(ProfileCommand),
 
+    /// Manage Ilhae identity authentication.
+    #[cfg(feature = "ilhae")]
+    Auth(IlhaeAuthCommand),
+
     /// Manage the local model server.
     #[cfg(feature = "ilhae")]
     #[clap(subcommand)]
@@ -439,6 +443,48 @@ enum LoginSubcommand {
 struct LogoutCommand {
     #[clap(skip)]
     config_overrides: CliConfigOverrides,
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, Parser)]
+struct IlhaeAuthCommand {
+    #[command(subcommand)]
+    subcommand: IlhaeAuthSubcommand,
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, clap::Subcommand)]
+enum IlhaeAuthSubcommand {
+    /// Sign in with the Ilhae identity server.
+    Login {
+        /// Identity issuer URL. Defaults to https://auth.ugot.uk.
+        #[arg(long)]
+        issuer: Option<String>,
+
+        /// OAuth client id. Defaults to ilhae-cli.
+        #[arg(long = "client-id")]
+        client_id: Option<String>,
+
+        /// Print the login URL instead of opening a browser.
+        #[arg(long = "no-browser", default_value_t = false)]
+        no_browser: bool,
+
+        /// Print machine-readable status after login.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show Ilhae identity login status.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Remove stored Ilhae identity credentials.
+    Logout {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Parser)]
@@ -1166,6 +1212,124 @@ async fn run_ilhae_profile_command(cmd: ProfileCommand) -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "ilhae")]
+async fn run_ilhae_auth_command(cmd: IlhaeAuthCommand) -> anyhow::Result<()> {
+    match cmd.subcommand {
+        IlhaeAuthSubcommand::Login {
+            issuer,
+            client_id,
+            no_browser,
+            json,
+        } => {
+            let status = run_ilhae_identity_login(issuer, client_id, !no_browser).await?;
+            print_ilhae_auth_status(&status, json)?;
+        }
+        IlhaeAuthSubcommand::Status { json } => {
+            let status = codex_ilhae::auth::status()?;
+            print_ilhae_auth_status(&status, json)?;
+        }
+        IlhaeAuthSubcommand::Logout { json } => {
+            let removed = codex_ilhae::auth::logout()?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": true,
+                        "removed": removed,
+                    }))?
+                );
+            } else if removed {
+                println!("Signed out of Ilhae identity.");
+            } else {
+                println!("No Ilhae identity credentials were stored.");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "ilhae")]
+async fn run_ilhae_login_compat_command(login_cli: LoginCommand) -> anyhow::Result<()> {
+    if login_cli.with_api_key
+        || login_cli.with_access_token
+        || login_cli.api_key.is_some()
+        || login_cli.use_device_code
+    {
+        anyhow::bail!(
+            "Ilhae login uses the identity server. Use `codex login` for OpenAI credentials."
+        );
+    }
+
+    match login_cli.action {
+        Some(LoginSubcommand::Status) => {
+            let status = codex_ilhae::auth::status()?;
+            print_ilhae_auth_status(&status, /*json*/ false)?;
+        }
+        None => {
+            let status = run_ilhae_identity_login(
+                login_cli.issuer_base_url,
+                login_cli.client_id,
+                /*open_browser*/ true,
+            )
+            .await?;
+            print_ilhae_auth_status(&status, /*json*/ false)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "ilhae")]
+async fn run_ilhae_identity_login(
+    issuer: Option<String>,
+    client_id: Option<String>,
+    open_browser: bool,
+) -> anyhow::Result<codex_ilhae::auth::IdentityAuthStatus> {
+    codex_ilhae::auth::login(codex_ilhae::auth::IdentityLoginOptions {
+        issuer: issuer.unwrap_or_else(|| codex_ilhae::auth::DEFAULT_ISSUER.to_string()),
+        client_id: client_id.unwrap_or_else(|| codex_ilhae::auth::DEFAULT_CLIENT_ID.to_string()),
+        open_browser,
+    })
+    .await
+}
+
+#[cfg(feature = "ilhae")]
+fn print_ilhae_auth_status(
+    status: &codex_ilhae::auth::IdentityAuthStatus,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(status)?);
+        return Ok(());
+    }
+
+    if !status.authenticated {
+        println!(
+            "Not signed in to Ilhae identity. Run `ilhae auth login` or `ilhae login` to sign in."
+        );
+        return Ok(());
+    }
+
+    let account = status
+        .email
+        .as_deref()
+        .or(status.preferred_username.as_deref())
+        .or(status.name.as_deref())
+        .or(status.subject.as_deref())
+        .unwrap_or("unknown account");
+    let issuer = status
+        .issuer
+        .as_deref()
+        .unwrap_or(codex_ilhae::auth::DEFAULT_ISSUER);
+    let expired_suffix = if status.expired { " (expired)" } else { "" };
+    println!("Signed in to Ilhae identity as {account}{expired_suffix}");
+    println!("Issuer: {issuer}");
+    println!("Auth file: {}", status.auth_file.display());
+
+    Ok(())
+}
+
+#[cfg(feature = "ilhae")]
 #[derive(Debug, clap::Subcommand)]
 enum LocalServerCommand {
     /// Start the local model server.
@@ -1411,6 +1575,15 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         #[cfg(feature = "ilhae")]
         Some(Subcommand::Profile(profile_cli)) => {
             run_ilhae_profile_command(profile_cli).await?;
+        }
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Auth(auth_cli)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "auth",
+            )?;
+            run_ilhae_auth_command(auth_cli).await?;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -1808,40 +1981,51 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "login",
             )?;
-            prepend_config_flags(
-                &mut login_cli.config_overrides,
-                root_config_overrides.clone(),
-            );
-            match login_cli.action {
-                Some(LoginSubcommand::Status) => {
-                    run_login_status(login_cli.config_overrides).await;
-                }
-                None => {
-                    if login_cli.with_api_key && login_cli.with_access_token {
-                        eprintln!(
-                            "Choose one login credential source: --with-api-key or --with-access-token."
-                        );
-                        std::process::exit(1);
-                    } else if login_cli.use_device_code {
-                        run_login_with_device_code(
-                            login_cli.config_overrides,
-                            login_cli.issuer_base_url,
-                            login_cli.client_id,
-                        )
-                        .await;
-                    } else if login_cli.api_key.is_some() {
-                        eprintln!(
-                            "The --api-key flag is no longer supported. Pipe the key instead, e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`."
-                        );
-                        std::process::exit(1);
-                    } else if login_cli.with_api_key {
-                        let api_key = read_api_key_from_stdin();
-                        run_login_with_api_key(login_cli.config_overrides, api_key).await;
-                    } else if login_cli.with_access_token {
-                        let access_token = read_access_token_from_stdin();
-                        run_login_with_access_token(login_cli.config_overrides, access_token).await;
-                    } else {
-                        run_login_with_chatgpt(login_cli.config_overrides).await;
+            #[cfg(feature = "ilhae")]
+            let use_ilhae_identity_login = is_invoked_as_ilhae_cli();
+            #[cfg(not(feature = "ilhae"))]
+            let use_ilhae_identity_login = false;
+
+            if use_ilhae_identity_login {
+                #[cfg(feature = "ilhae")]
+                run_ilhae_login_compat_command(login_cli).await?;
+            } else {
+                prepend_config_flags(
+                    &mut login_cli.config_overrides,
+                    root_config_overrides.clone(),
+                );
+                match login_cli.action {
+                    Some(LoginSubcommand::Status) => {
+                        run_login_status(login_cli.config_overrides).await;
+                    }
+                    None => {
+                        if login_cli.with_api_key && login_cli.with_access_token {
+                            eprintln!(
+                                "Choose one login credential source: --with-api-key or --with-access-token."
+                            );
+                            std::process::exit(1);
+                        } else if login_cli.use_device_code {
+                            run_login_with_device_code(
+                                login_cli.config_overrides,
+                                login_cli.issuer_base_url,
+                                login_cli.client_id,
+                            )
+                            .await;
+                        } else if login_cli.api_key.is_some() {
+                            eprintln!(
+                                "The --api-key flag is no longer supported. Pipe the key instead, e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`."
+                            );
+                            std::process::exit(1);
+                        } else if login_cli.with_api_key {
+                            let api_key = read_api_key_from_stdin();
+                            run_login_with_api_key(login_cli.config_overrides, api_key).await;
+                        } else if login_cli.with_access_token {
+                            let access_token = read_access_token_from_stdin();
+                            run_login_with_access_token(login_cli.config_overrides, access_token)
+                                .await;
+                        } else {
+                            run_login_with_chatgpt(login_cli.config_overrides).await;
+                        }
                     }
                 }
             }
@@ -1852,11 +2036,24 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "logout",
             )?;
-            prepend_config_flags(
-                &mut logout_cli.config_overrides,
-                root_config_overrides.clone(),
-            );
-            run_logout(logout_cli.config_overrides).await;
+            #[cfg(feature = "ilhae")]
+            let use_ilhae_identity_logout = is_invoked_as_ilhae_cli();
+            #[cfg(not(feature = "ilhae"))]
+            let use_ilhae_identity_logout = false;
+
+            if use_ilhae_identity_logout {
+                #[cfg(feature = "ilhae")]
+                run_ilhae_auth_command(IlhaeAuthCommand {
+                    subcommand: IlhaeAuthSubcommand::Logout { json: false },
+                })
+                .await?;
+            } else {
+                prepend_config_flags(
+                    &mut logout_cli.config_overrides,
+                    root_config_overrides.clone(),
+                );
+                run_logout(logout_cli.config_overrides).await;
+            }
         }
         Some(Subcommand::Completion(completion_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -3659,6 +3856,53 @@ args = ["--ctx-size", "131072"]
         )
         .expect_err("non-interactive app-server subcommands should reject --remote-auth-token-env");
         assert!(err.to_string().contains("generate-internal-json-schema"));
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn ilhae_auth_status_subcommand_parses() {
+        let cli = MultitoolCli::try_parse_from(["codex", "auth", "status", "--json"])
+            .expect("auth status parses");
+
+        assert!(matches!(
+            cli.subcommand,
+            Some(Subcommand::Auth(IlhaeAuthCommand {
+                subcommand: IlhaeAuthSubcommand::Status { json: true }
+            }))
+        ));
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn ilhae_auth_login_subcommand_parses() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "auth",
+            "login",
+            "--issuer",
+            "https://auth.example.test",
+            "--client-id",
+            "custom-cli",
+            "--no-browser",
+        ])
+        .expect("auth login parses");
+
+        let Some(Subcommand::Auth(IlhaeAuthCommand {
+            subcommand:
+                IlhaeAuthSubcommand::Login {
+                    issuer,
+                    client_id,
+                    no_browser,
+                    json,
+                },
+        })) = cli.subcommand
+        else {
+            panic!("expected auth login subcommand");
+        };
+        assert_eq!(issuer.as_deref(), Some("https://auth.example.test"));
+        assert_eq!(client_id.as_deref(), Some("custom-cli"));
+        assert!(no_browser);
+        assert!(!json);
     }
 
     #[test]

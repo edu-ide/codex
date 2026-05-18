@@ -42,6 +42,7 @@ use crate::onboarding::auth::SignInState;
 use crate::onboarding::keys;
 use crate::onboarding::trust_directory::TrustDirectorySelection;
 use crate::onboarding::trust_directory::TrustDirectoryWidget;
+use crate::onboarding::welcome::WelcomeBrand;
 use crate::onboarding::welcome::WelcomeWidget;
 use crate::tui::FrameRequester;
 use crate::tui::Tui;
@@ -113,11 +114,17 @@ impl OnboardingScreen {
         let cwd = config.cwd.to_path_buf();
         let codex_home = config.codex_home.to_path_buf();
         let forced_login_method = config.forced_login_method;
+        let welcome_brand = if crate::is_invoked_as_ilhae_cli() {
+            WelcomeBrand::Ilhae
+        } else {
+            WelcomeBrand::Codex
+        };
         let mut steps: Vec<Step> = Vec::new();
         steps.push(Step::Welcome(WelcomeWidget::new(
             !matches!(login_status, LoginStatus::NotAuthenticated),
             tui.frame_requester(),
             config.animations,
+            welcome_brand,
         )));
         if show_login_screen {
             let highlighted_mode = match forced_login_method {
