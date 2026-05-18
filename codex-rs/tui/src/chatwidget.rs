@@ -166,7 +166,6 @@ use codex_terminal_detection::TerminalInfo;
 use codex_terminal_detection::TerminalName;
 use codex_terminal_detection::terminal_info;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_cli::resume_command;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -1436,8 +1435,8 @@ impl ChatWidget {
     }
 
     fn rename_confirmation_cell(name: &str, thread_id: Option<ThreadId>) -> PlainHistoryCell {
-        let resume_cmd =
-            resume_command(Some(name), thread_id).unwrap_or_else(|| format!("codex resume {name}"));
+        let resume_cmd = crate::resume_command_for_invocation(Some(name), thread_id)
+            .unwrap_or_else(|| format!("{} resume {name}", crate::resume_binary_for_invocation()));
         let name = name.to_string();
         let line = vec![
             "• ".into(),

@@ -34,7 +34,7 @@ use codex_tui::ExitReason;
 use codex_tui::UpdateAction;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
-use codex_utils_cli::resume_command;
+use codex_utils_cli::resume_command_for_binary;
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -644,7 +644,19 @@ fn parse_socket_path(raw: &str) -> Result<AbsolutePathBuf, String> {
         .map_err(|err| format!("failed to resolve socket path `{raw}`: {err}"))
 }
 
-fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<String> {
+fn resume_binary_for_invocation() -> &'static str {
+    #[cfg(feature = "ilhae")]
+    if is_invoked_as_ilhae_cli() {
+        return "ilhae";
+    }
+    "codex"
+}
+
+fn format_exit_messages(
+    exit_info: AppExitInfo,
+    color_enabled: bool,
+    resume_binary: &str,
+) -> Vec<String> {
     let AppExitInfo {
         token_usage,
         thread_id: conversation_id,
@@ -656,7 +668,9 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
         lines.push(token_usage.to_string());
     }
 
-    if let Some(resume_cmd) = resume_command(/*thread_name*/ None, conversation_id) {
+    if let Some(resume_cmd) =
+        resume_command_for_binary(resume_binary, /*thread_name*/ None, conversation_id)
+    {
         let command = if color_enabled {
             resume_cmd.cyan().to_string()
         } else {
@@ -680,7 +694,7 @@ fn handle_app_exit(exit_info: AppExitInfo) -> anyhow::Result<()> {
 
     let update_action = exit_info.update_action;
     let color_enabled = supports_color::on(Stream::Stdout).is_some();
-    for line in format_exit_messages(exit_info, color_enabled) {
+    for line in format_exit_messages(exit_info, color_enabled, resume_binary_for_invocation()) {
         println!("{line}");
     }
     if let Some(action) = update_action {
@@ -3616,7 +3630,7 @@ args = ["--ctx-size", "131072"]
             update_action: None,
             exit_reason: ExitReason::UserRequested,
         };
-        let lines = format_exit_messages(exit_info, /*color_enabled*/ false);
+        let lines = format_exit_messages(exit_info, /*color_enabled*/ false, "codex");
         assert!(lines.is_empty());
     }
 
@@ -3626,7 +3640,7 @@ args = ["--ctx-size", "131072"]
             Some("123e4567-e89b-12d3-a456-426614174000"),
             /*thread_name*/ None,
         );
-        let lines = format_exit_messages(exit_info, /*color_enabled*/ false);
+        let lines = format_exit_messages(exit_info, /*color_enabled*/ false, "codex");
         assert_eq!(
             lines,
             vec![
@@ -3638,12 +3652,29 @@ args = ["--ctx-size", "131072"]
     }
 
     #[test]
+    fn format_exit_messages_uses_requested_resume_binary() {
+        let exit_info = sample_exit_info(
+            Some("123e4567-e89b-12d3-a456-426614174000"),
+            /*thread_name*/ None,
+        );
+        let lines = format_exit_messages(exit_info, /*color_enabled*/ false, "ilhae");
+        assert_eq!(
+            lines,
+            vec![
+                "Token usage: total=2 input=0 output=2".to_string(),
+                "To continue this session, run ilhae resume 123e4567-e89b-12d3-a456-426614174000"
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn format_exit_messages_applies_color_when_enabled() {
         let exit_info = sample_exit_info(
             Some("123e4567-e89b-12d3-a456-426614174000"),
             /*thread_name*/ None,
         );
-        let lines = format_exit_messages(exit_info, /*color_enabled*/ true);
+        let lines = format_exit_messages(exit_info, /*color_enabled*/ true, "codex");
         assert_eq!(lines.len(), 2);
         assert!(lines[1].contains("\u{1b}[36m"));
     }
@@ -3654,7 +3685,7 @@ args = ["--ctx-size", "131072"]
             Some("123e4567-e89b-12d3-a456-426614174000"),
             Some("my-thread"),
         );
-        let lines = format_exit_messages(exit_info, /*color_enabled*/ false);
+        let lines = format_exit_messages(exit_info, /*color_enabled*/ false, "codex");
         assert_eq!(
             lines,
             vec![

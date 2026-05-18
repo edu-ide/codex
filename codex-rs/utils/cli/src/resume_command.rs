@@ -1,9 +1,17 @@
-//! Shared formatting for user-facing `codex resume` command hints.
+//! Shared formatting for user-facing resume command hints.
 
 use codex_protocol::ThreadId;
 use codex_shell_command::parse_command::shlex_join;
 
 pub fn resume_command(thread_name: Option<&str>, thread_id: Option<ThreadId>) -> Option<String> {
+    resume_command_for_binary("codex", thread_name, thread_id)
+}
+
+pub fn resume_command_for_binary(
+    binary: &str,
+    thread_name: Option<&str>,
+    thread_id: Option<ThreadId>,
+) -> Option<String> {
     let resume_target = thread_name
         .filter(|name| !name.is_empty())
         .map(str::to_string)
@@ -12,9 +20,9 @@ pub fn resume_command(thread_name: Option<&str>, thread_id: Option<ThreadId>) ->
         let needs_double_dash = target.starts_with('-');
         let escaped = shlex_join(&[target]);
         if needs_double_dash {
-            format!("codex resume -- {escaped}")
+            format!("{binary} resume -- {escaped}")
         } else {
-            format!("codex resume {escaped}")
+            format!("{binary} resume {escaped}")
         }
     })
 }
@@ -60,5 +68,16 @@ mod tests {
 
         let command = resume_command(Some("quote'case"), /*thread_id*/ None);
         assert_eq!(command, Some("codex resume \"quote'case\"".to_string()));
+    }
+
+    #[test]
+    fn formats_custom_binary() {
+        let thread_id = ThreadId::from_string("123e4567-e89b-12d3-a456-426614174000").unwrap();
+        let command =
+            resume_command_for_binary("ilhae", /*thread_name*/ None, Some(thread_id));
+        assert_eq!(
+            command,
+            Some("ilhae resume 123e4567-e89b-12d3-a456-426614174000".to_string())
+        );
     }
 }

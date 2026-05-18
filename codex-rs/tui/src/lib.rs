@@ -1882,6 +1882,25 @@ pub(crate) fn product_title() -> &'static str {
     product_title_for_invocation(is_invoked_as_ilhae_cli())
 }
 
+pub(crate) fn resume_binary_for_invocation() -> &'static str {
+    if is_invoked_as_ilhae_cli() {
+        "ilhae"
+    } else {
+        "codex"
+    }
+}
+
+pub(crate) fn resume_command_for_invocation(
+    thread_name: Option<&str>,
+    thread_id: Option<ThreadId>,
+) -> Option<String> {
+    codex_utils_cli::resume_command_for_binary(
+        resume_binary_for_invocation(),
+        thread_name,
+        thread_id,
+    )
+}
+
 fn product_title_for_invocation(is_ilhae_cli: bool) -> &'static str {
     if is_ilhae_cli {
         "Ilhae"
