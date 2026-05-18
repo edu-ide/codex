@@ -135,6 +135,7 @@ use core_test_support::PathExt;
 use core_test_support::context_snapshot;
 use core_test_support::context_snapshot::ContextSnapshotOptions;
 use core_test_support::context_snapshot::ContextSnapshotRenderMode;
+use core_test_support::responses::ev_apply_patch_custom_tool_call;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_completed_with_tokens;
@@ -8636,6 +8637,254 @@ async fn superloop_plan_loop_cannot_mark_goal_complete() -> anyhow::Result<()> {
         Some(codex_state::ThreadGoalLoopPhase::PlanLoop),
         goal.loop_state.as_ref().map(|loop_state| loop_state.phase)
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn superloop_plan_loop_cannot_run_execution_tools() -> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_config(|config| {
+        config
+            .features
+            .enable(Feature::Goals)
+            .expect("goal mode should be enableable in tests");
+    });
+    let test = builder.build(&server).await?;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call("call-exec", "exec_command", r#"{"cmd":"mkdir -p demo"}"#),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-1", "Plan loop will only plan the work."),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let thread_id = test.session_configured.thread_id;
+    let state_db = test
+        .codex
+        .state_db()
+        .expect("test codex should have a state db");
+    let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
+        thread_id,
+        test.config
+            .codex_home
+            .join("goal-test-rollout.jsonl")
+            .to_path_buf(),
+        chrono::Utc::now(),
+        SessionSource::Exec,
+    );
+    metadata_builder.cwd = test.config.cwd.to_path_buf();
+    metadata_builder.model_provider = Some(test.config.model_provider_id.clone());
+    state_db
+        .upsert_thread(&metadata_builder.build(test.config.model_provider_id.as_str()))
+        .await?;
+    let goal = state_db
+        .replace_thread_goal(
+            thread_id,
+            "create a chat ui demo project",
+            codex_state::ThreadGoalStatus::Active,
+            /*token_budget*/ None,
+        )
+        .await?;
+    state_db
+        .update_thread_goal(
+            thread_id,
+            codex_state::ThreadGoalUpdate {
+                objective: None,
+                status: None,
+                token_budget: None,
+                superloop_enabled: Some(true),
+                expected_goal_id: Some(goal.goal_id),
+            },
+        )
+        .await?
+        .expect("goal should still exist");
+
+    test.codex.continue_active_goal_if_idle().await?;
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        loop {
+            let event = test.codex.next_event().await?;
+            if matches!(event.msg, EventMsg::TurnComplete(_)) {
+                return anyhow::Ok(());
+            }
+        }
+    })
+    .await??;
+
+    let requests = responses.requests();
+    let plan_request = requests
+        .first()
+        .expect("plan loop request should be captured");
+    let plan_request_body = plan_request.body_json();
+    let tools = plan_request_body["tools"]
+        .as_array()
+        .expect("request should include a tools array");
+    let exposes_execution_tool = tools.iter().any(|tool| {
+        matches!(
+            tool.get("name").and_then(serde_json::Value::as_str),
+            Some("exec_command" | "shell_command" | "write_stdin")
+        ) || tool
+            .get("tools")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|children| {
+                children.iter().any(|child| {
+                    matches!(
+                        child.get("name").and_then(serde_json::Value::as_str),
+                        Some("exec_command" | "shell_command" | "write_stdin")
+                    )
+                })
+            })
+    });
+    assert!(
+        !exposes_execution_tool,
+        "plan loop should not expose workspace execution tools: {tools:?}"
+    );
+    let exposes_apply_patch = tools.iter().any(|tool| {
+        tool.get("name").and_then(serde_json::Value::as_str) == Some("apply_patch")
+            || tool
+                .get("tools")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|children| {
+                    children.iter().any(|child| {
+                        child.get("name").and_then(serde_json::Value::as_str) == Some("apply_patch")
+                    })
+                })
+    });
+    assert!(
+        exposes_apply_patch,
+        "plan loop should expose apply_patch for Brain/Wiki vault notes: {tools:?}"
+    );
+
+    let exec_output = responses
+        .function_call_output_text("call-exec")
+        .expect("exec tool output should be sent to the model");
+    assert!(
+        exec_output.contains("only the execution loop may call"),
+        "unexpected exec rejection: {exec_output}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn superloop_plan_loop_rejects_deliverable_apply_patch() -> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_config(|config| {
+        config
+            .features
+            .enable(Feature::Goals)
+            .expect("goal mode should be enableable in tests");
+    });
+    let test = builder.build(&server).await?;
+    let deliverable_patch = r#"*** Begin Patch
+*** Add File: demo/package.json
++{}
+*** End Patch"#;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_apply_patch_custom_tool_call("call-deliverable-patch", deliverable_patch),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-1", "Plan loop will leave deliverable files alone."),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let thread_id = test.session_configured.thread_id;
+    let state_db = test
+        .codex
+        .state_db()
+        .expect("test codex should have a state db");
+    let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
+        thread_id,
+        test.config
+            .codex_home
+            .join("goal-test-rollout.jsonl")
+            .to_path_buf(),
+        chrono::Utc::now(),
+        SessionSource::Exec,
+    );
+    metadata_builder.cwd = test.config.cwd.to_path_buf();
+    metadata_builder.model_provider = Some(test.config.model_provider_id.clone());
+    state_db
+        .upsert_thread(&metadata_builder.build(test.config.model_provider_id.as_str()))
+        .await?;
+    let goal = state_db
+        .replace_thread_goal(
+            thread_id,
+            "create a chat ui demo project",
+            codex_state::ThreadGoalStatus::Active,
+            /*token_budget*/ None,
+        )
+        .await?;
+    state_db
+        .update_thread_goal(
+            thread_id,
+            codex_state::ThreadGoalUpdate {
+                objective: None,
+                status: None,
+                token_budget: None,
+                superloop_enabled: Some(true),
+                expected_goal_id: Some(goal.goal_id),
+            },
+        )
+        .await?
+        .expect("goal should still exist");
+
+    test.codex.continue_active_goal_if_idle().await?;
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        loop {
+            let event = test.codex.next_event().await?;
+            if matches!(event.msg, EventMsg::TurnComplete(_)) {
+                return anyhow::Ok(());
+            }
+        }
+    })
+    .await??;
+
+    let patch_output = responses
+        .requests()
+        .iter()
+        .flat_map(core_test_support::responses::ResponsesRequest::input)
+        .find_map(|item| {
+            (item.get("type").and_then(serde_json::Value::as_str)
+                == Some("custom_tool_call_output")
+                && item.get("call_id").and_then(serde_json::Value::as_str)
+                    == Some("call-deliverable-patch"))
+            .then(|| item.get("output").cloned())
+            .flatten()
+        })
+        .and_then(|output| match output {
+            serde_json::Value::String(text) => Some(text),
+            serde_json::Value::Object(object) => object
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            serde_json::Value::Array(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Null => None,
+        })
+        .expect("apply_patch output should be sent to the model");
+    assert!(
+        patch_output.contains("non-execution loops may only write Brain/Wiki vault files"),
+        "unexpected apply_patch rejection: {patch_output}"
+    );
+    assert!(!test.config.cwd.join("demo").join("package.json").exists());
 
     Ok(())
 }

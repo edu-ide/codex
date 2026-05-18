@@ -359,6 +359,31 @@ impl ToolRegistry {
             }
         };
 
+        if let Err(message) = invocation
+            .session
+            .validate_thread_goal_tool_allowed(
+                invocation.turn.as_ref(),
+                &tool_name,
+                &invocation.payload,
+            )
+            .await
+        {
+            let log_payload = invocation.payload.log_payload();
+            otel.tool_result_with_tags(
+                tool_name_flat.as_ref(),
+                &call_id_owned,
+                log_payload.as_ref(),
+                Duration::ZERO,
+                /*success*/ false,
+                &message,
+                &base_tool_result_tags,
+                /*extra_trace_fields*/ &[],
+            );
+            let err = FunctionCallError::RespondToModel(message);
+            dispatch_trace.record_failed(&err);
+            return Err(err);
+        }
+
         let telemetry_tags = tool.telemetry_tags(&invocation).await;
         let mut tool_result_tags =
             Vec::with_capacity(base_tool_result_tags.len() + telemetry_tags.len());

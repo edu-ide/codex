@@ -12,8 +12,10 @@ use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
 use crate::state::TurnState;
 use crate::tasks::RegularTask;
+use crate::tools::context::ToolPayload;
 use crate::tools::handlers::goal_spec::UPDATE_GOAL_TOOL_NAME;
 use anyhow::Context;
+use codex_apply_patch::Hunk;
 use codex_features::Feature;
 use codex_otel::GOAL_BUDGET_LIMITED_METRIC;
 use codex_otel::GOAL_COMPLETED_METRIC;
@@ -33,9 +35,13 @@ use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::validate_thread_goal_objective;
 use codex_rollout::state_db::reconcile_rollout;
 use codex_thread_store::LocalThreadStore;
+use codex_tools::ResponsesApiNamespaceTool;
+use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_template::Template;
 use futures::future::BoxFuture;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -292,6 +298,320 @@ impl GoalContinuationPhase {
             Self::Cleanup => "Cleanup loop agent turn aborted",
             Self::Execution => "Goal execution loop turn aborted",
         }
+    }
+
+    fn is_execution(self) -> bool {
+        self == Self::Execution
+    }
+
+    fn phase_contract(self) -> &'static str {
+        match self {
+            Self::Plan => {
+                r#"This is a non-execution planning loop.
+- You may inspect evidence and write planning notes to Brain/Wiki vaults.
+- You must not implement the user's deliverable in this phase.
+- You may create, modify, or delete files only inside Brain/Wiki vaults: project docs/wiki, project .ilhae/wiki, project .ilhae/brain, global ~/.ilhae/wiki, or global ~/.ilhae/brain.
+- You must not create, modify, or delete deliverable/project files outside those vaults.
+- You must not run shell, exec, write_stdin, build, install, server, GPU, media-generation, or project-generation tools.
+- Use apply_patch only for Brain/Wiki vault notes.
+- You must not call update_goal with status "complete".
+- Hand concrete work to the Execution Loop."#
+            }
+            Self::Research => {
+                r#"This is a non-execution research loop.
+- You may gather facts from read-only local state, search, web, MCP, Brain, or wiki sources.
+- You may write research notes to Brain/Wiki vaults.
+- You must not implement the user's deliverable in this phase.
+- You may create, modify, or delete files only inside Brain/Wiki vaults: project docs/wiki, project .ilhae/wiki, project .ilhae/brain, global ~/.ilhae/wiki, or global ~/.ilhae/brain.
+- You must not create, modify, or delete deliverable/project files outside those vaults.
+- You must not run shell, exec, write_stdin, build, install, server, GPU, media-generation, or project-generation tools.
+- Use apply_patch only for Brain/Wiki vault notes.
+- You must not call update_goal with status "complete".
+- Hand concrete work to the Execution Loop."#
+            }
+            Self::Decision => {
+                r#"This is a non-execution decision loop.
+- You may choose the next action and document the tradeoff.
+- You may write decision records to Brain/Wiki vaults.
+- You must not implement the user's deliverable in this phase.
+- You may create, modify, or delete files only inside Brain/Wiki vaults: project docs/wiki, project .ilhae/wiki, project .ilhae/brain, global ~/.ilhae/wiki, or global ~/.ilhae/brain.
+- You must not create, modify, or delete deliverable/project files outside those vaults.
+- You must not run shell, exec, write_stdin, build, install, server, GPU, media-generation, or project-generation tools.
+- Use apply_patch only for Brain/Wiki vault notes.
+- You must not call update_goal with status "complete".
+- Hand concrete work to the Execution Loop."#
+            }
+            Self::Wiki => {
+                r#"This is a non-execution knowledge loop.
+- You may maintain Brain/wiki-style knowledge for reusable facts, decisions, and procedures.
+- You must not implement the user's deliverable in this phase.
+- You may create, modify, or delete files only inside Brain/Wiki vaults: project docs/wiki, project .ilhae/wiki, project .ilhae/brain, global ~/.ilhae/wiki, or global ~/.ilhae/brain.
+- You must not create, modify, or delete deliverable/project files outside those vaults.
+- You must not run shell, exec, write_stdin, build, install, server, GPU, media-generation, or project-generation tools.
+- Use apply_patch only for Brain/Wiki vault notes.
+- You must not call update_goal with status "complete".
+- Hand concrete work to the Execution Loop."#
+            }
+            Self::Log => {
+                r#"This is a non-execution log loop.
+- You may record a compact chronological account of the current cycle.
+- You must not implement the user's deliverable in this phase.
+- You may create, modify, or delete files only inside Brain/Wiki vaults: project docs/wiki, project .ilhae/wiki, project .ilhae/brain, global ~/.ilhae/wiki, or global ~/.ilhae/brain.
+- You must not create, modify, or delete deliverable/project files outside those vaults.
+- You must not run shell, exec, write_stdin, build, install, server, GPU, media-generation, or project-generation tools.
+- Use apply_patch only for Brain/Wiki vault notes.
+- You must not call update_goal with status "complete".
+- Hand concrete work to the Execution Loop."#
+            }
+            Self::Improvement => {
+                r#"This is a non-execution improvement loop.
+- You may identify reusable process, prompt, skill, or memory improvements.
+- You may write improvement notes to Brain/Wiki vaults.
+- You must not implement the user's deliverable in this phase.
+- You may create, modify, or delete files only inside Brain/Wiki vaults: project docs/wiki, project .ilhae/wiki, project .ilhae/brain, global ~/.ilhae/wiki, or global ~/.ilhae/brain.
+- You must not create, modify, or delete deliverable/project files outside those vaults.
+- You must not run shell, exec, write_stdin, build, install, server, GPU, media-generation, or project-generation tools.
+- Use apply_patch only for Brain/Wiki vault notes.
+- You must not call update_goal with status "complete".
+- Hand concrete work to the Execution Loop."#
+            }
+            Self::Cleanup => {
+                r#"This is a non-execution cleanup loop.
+- You may clean up assumptions, duplicate tasks, misleading context, or lightweight goal metadata.
+- You may write cleanup notes to Brain/Wiki vaults.
+- You must not implement the user's deliverable in this phase.
+- You may create, modify, or delete files only inside Brain/Wiki vaults: project docs/wiki, project .ilhae/wiki, project .ilhae/brain, global ~/.ilhae/wiki, or global ~/.ilhae/brain.
+- You must not create, modify, or delete deliverable/project files outside those vaults.
+- You must not run shell, exec, write_stdin, build, install, server, GPU, media-generation, or project-generation tools.
+- Use apply_patch only for Brain/Wiki vault notes.
+- You must not call update_goal with status "complete".
+- Hand concrete work to the Execution Loop."#
+            }
+            Self::Execution => {
+                r#"This is the only execution loop.
+- You may implement the user's deliverable in this phase.
+- This is the only phase that may create, modify, or delete files or directories.
+- This is the only phase that may call shell, exec, apply_patch, write_stdin, build, install, server, GPU, media-generation, or project-generation tools.
+- This is the only phase that may call update_goal with status "complete", and only after the objective is actually complete."#
+            }
+        }
+    }
+}
+
+fn expose_tool_in_non_execution_goal_phase(
+    phase: GoalContinuationPhase,
+    tool: &mut ToolSpec,
+) -> bool {
+    match tool {
+        ToolSpec::Function(tool) => {
+            let tool_name = ToolName::plain(tool.name.clone());
+            !is_blocked_in_non_execution_goal_phase(phase, &tool_name)
+        }
+        ToolSpec::Namespace(namespace) => {
+            let namespace_name = namespace.name.clone();
+            namespace.tools.retain(|tool| match tool {
+                ResponsesApiNamespaceTool::Function(tool) => {
+                    let tool_name = ToolName::namespaced(namespace_name.clone(), tool.name.clone());
+                    !is_blocked_in_non_execution_goal_phase(phase, &tool_name)
+                }
+            });
+            !namespace.tools.is_empty()
+        }
+        ToolSpec::ToolSearch { .. } | ToolSpec::WebSearch { .. } => true,
+        ToolSpec::ImageGeneration { .. } => false,
+        ToolSpec::Freeform(tool) => {
+            if tool.name == "apply_patch" {
+                return true;
+            }
+            let tool_name = ToolName::plain(tool.name.clone());
+            !is_blocked_in_non_execution_goal_phase(phase, &tool_name)
+        }
+    }
+}
+
+fn is_blocked_in_non_execution_goal_phase(
+    phase: GoalContinuationPhase,
+    tool_name: &ToolName,
+) -> bool {
+    if tool_name.namespace.is_none() && tool_name.name == "apply_patch" {
+        return false;
+    }
+    if is_allowed_non_execution_goal_tool(tool_name.name.as_str()) {
+        return false;
+    }
+    if is_explicitly_blocked_non_execution_goal_tool(tool_name.name.as_str()) {
+        return true;
+    }
+    let lower_name = tool_name.name.to_ascii_lowercase();
+    if phase_allows_knowledge_writes(phase)
+        && tool_name
+            .namespace
+            .as_deref()
+            .is_some_and(is_goal_knowledge_namespace)
+        && is_allowed_knowledge_write_tool_name(lower_name.as_str())
+    {
+        return false;
+    }
+    is_mutating_goal_tool_name(lower_name.as_str())
+}
+
+fn is_allowed_non_execution_goal_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "get_goal"
+            | "list_mcp_resources"
+            | "list_mcp_resource_templates"
+            | "read_mcp_resource"
+            | "request_user_input"
+            | "tool_search"
+            | "update_plan"
+            | "view_image"
+            | "web_search"
+    )
+}
+
+fn is_explicitly_blocked_non_execution_goal_tool(name: &str) -> bool {
+    matches!(
+        name,
+        UPDATE_GOAL_TOOL_NAME
+            | "close_agent"
+            | "create_goal"
+            | "exec"
+            | "exec_command"
+            | "image_generation"
+            | "request_permissions"
+            | "resume_agent"
+            | "send_input"
+            | "shell_command"
+            | "spawn_agent"
+            | "spawn_agents_on_csv"
+            | "wait_agent"
+            | "write_stdin"
+    )
+}
+
+fn phase_allows_knowledge_writes(phase: GoalContinuationPhase) -> bool {
+    !phase.is_execution()
+}
+
+fn is_goal_knowledge_namespace(namespace: &str) -> bool {
+    let namespace = namespace.to_ascii_lowercase();
+    namespace.contains("brain")
+        || namespace.contains("knowledge")
+        || namespace.contains("log")
+        || namespace.contains("memories")
+        || namespace.contains("memory")
+        || namespace.contains("wiki")
+}
+
+fn is_allowed_knowledge_write_tool_name(name: &str) -> bool {
+    [
+        "add", "append", "create", "record", "remember", "save", "store", "upsert", "update",
+        "write",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
+}
+
+fn is_mutating_goal_tool_name(name: &str) -> bool {
+    [
+        "apply", "append", "build", "close", "commit", "compile", "create", "delete", "edit",
+        "exec", "generate", "install", "kill", "move", "patch", "render", "restart", "resume",
+        "run", "save", "send", "set", "spawn", "start", "stop", "submit", "update", "upload",
+        "write",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
+}
+
+fn validate_non_execution_apply_patch_payload(
+    payload: &ToolPayload,
+    cwd: &AbsolutePathBuf,
+) -> Result<(), String> {
+    let ToolPayload::Custom { input } = payload else {
+        return Err(
+            "apply_patch cannot run during a non-execution goal loop without patch input"
+                .to_string(),
+        );
+    };
+    let args = codex_apply_patch::parse_patch(input).map_err(|err| {
+        format!("apply_patch cannot run during a non-execution goal loop: invalid patch: {err}")
+    })?;
+    let patch_cwd = args
+        .workdir
+        .as_deref()
+        .map(|workdir| AbsolutePathBuf::resolve_path_against_base(workdir, cwd.as_path()))
+        .unwrap_or_else(|| cwd.clone());
+    let roots = goal_knowledge_vault_roots(cwd);
+    let affected_paths = affected_apply_patch_paths(&args.hunks, &patch_cwd);
+    let blocked_path = affected_paths
+        .iter()
+        .find(|path| !path_is_in_goal_knowledge_vault(path.as_path(), &roots));
+    match blocked_path {
+        Some(path) => Err(format!(
+            "apply_patch cannot write {} during a non-execution goal loop; non-execution loops may only write Brain/Wiki vault files under project docs/wiki, project .ilhae/wiki, project .ilhae/brain, global ~/.ilhae/wiki, or global ~/.ilhae/brain.",
+            path.display()
+        )),
+        None => Ok(()),
+    }
+}
+
+fn affected_apply_patch_paths(hunks: &[Hunk], patch_cwd: &AbsolutePathBuf) -> Vec<AbsolutePathBuf> {
+    let mut paths = Vec::new();
+    for hunk in hunks {
+        match hunk {
+            Hunk::AddFile { path, .. } | Hunk::DeleteFile { path } => {
+                paths.push(AbsolutePathBuf::resolve_path_against_base(
+                    path,
+                    patch_cwd.as_path(),
+                ));
+            }
+            Hunk::UpdateFile {
+                path, move_path, ..
+            } => {
+                paths.push(AbsolutePathBuf::resolve_path_against_base(
+                    path,
+                    patch_cwd.as_path(),
+                ));
+                if let Some(move_path) = move_path {
+                    paths.push(AbsolutePathBuf::resolve_path_against_base(
+                        move_path,
+                        patch_cwd.as_path(),
+                    ));
+                }
+            }
+        }
+    }
+    paths
+}
+
+fn goal_knowledge_vault_roots(cwd: &AbsolutePathBuf) -> Vec<AbsolutePathBuf> {
+    let mut roots = vec![
+        AbsolutePathBuf::resolve_path_against_base("docs/wiki", cwd.as_path()),
+        AbsolutePathBuf::resolve_path_against_base(".ilhae/wiki", cwd.as_path()),
+        AbsolutePathBuf::resolve_path_against_base(".ilhae/brain", cwd.as_path()),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        roots.push(AbsolutePathBuf::resolve_path_against_base(
+            ".ilhae/wiki",
+            &home,
+        ));
+        roots.push(AbsolutePathBuf::resolve_path_against_base(
+            ".ilhae/brain",
+            home,
+        ));
+    }
+    roots
+}
+
+fn path_is_in_goal_knowledge_vault(path: &Path, roots: &[AbsolutePathBuf]) -> bool {
+    roots.iter().any(|root| path.starts_with(root.as_path()))
+}
+
+fn format_goal_policy_tool_name(tool_name: &ToolName) -> String {
+    match &tool_name.namespace {
+        Some(namespace) => format!("{namespace}.{}", tool_name.name),
+        None => tool_name.name.clone(),
     }
 }
 
@@ -989,11 +1309,49 @@ impl Session {
         else {
             return Ok(());
         };
-        if continuation_turn.phase == GoalContinuationPhase::Execution {
+        if continuation_turn.phase.is_execution() {
             return Ok(());
         }
         Err(format!(
             "update_goal cannot mark a superloop goal complete during the {}; only the execution loop may complete the goal. Leave the goal active so the remaining plan, research, decision, wiki, log, improvement, cleanup, and execution phases can run.",
+            continuation_turn.phase.id_part()
+        ))
+    }
+
+    pub(crate) async fn validate_thread_goal_tool_allowed(
+        &self,
+        turn_context: &TurnContext,
+        tool_name: &ToolName,
+        payload: &ToolPayload,
+    ) -> Result<(), String> {
+        let continuation_turn = self.goal_runtime.continuation_turn.lock().await;
+        let Some(continuation_turn) = continuation_turn
+            .as_ref()
+            .filter(|continuation_turn| continuation_turn.turn_id == turn_context.sub_id)
+        else {
+            return Ok(());
+        };
+        if continuation_turn.phase.is_execution() {
+            return Ok(());
+        }
+        if tool_name.namespace.is_none() && tool_name.name == UPDATE_GOAL_TOOL_NAME {
+            return Ok(());
+        }
+        if tool_name.namespace.is_none() && tool_name.name == "apply_patch" {
+            let Some(turn_environment) = turn_context.environments.primary() else {
+                return Err(
+                    "apply_patch cannot run during a non-execution goal loop without an active environment"
+                        .to_string(),
+                );
+            };
+            return validate_non_execution_apply_patch_payload(payload, &turn_environment.cwd);
+        }
+        if !is_blocked_in_non_execution_goal_phase(continuation_turn.phase, tool_name) {
+            return Ok(());
+        }
+        Err(format!(
+            "tool {} cannot run during the {}; only the execution loop may call tools that create, modify, delete, execute, build, spawn, or generate deliverables. Leave concrete work for the execution loop.",
+            format_goal_policy_tool_name(tool_name),
             continuation_turn.phase.id_part()
         ))
     }
@@ -1010,10 +1368,12 @@ impl Session {
         else {
             return;
         };
-        if continuation_turn.phase == GoalContinuationPhase::Execution {
+        if continuation_turn.phase.is_execution() {
             return;
         }
-        tools.retain(|tool| tool.name() != UPDATE_GOAL_TOOL_NAME);
+        tools.retain_mut(|tool| {
+            expose_tool_in_non_execution_goal_phase(continuation_turn.phase, tool)
+        });
     }
 
     async fn clear_reserved_goal_continuation_turn(&self, turn_state: &Arc<Mutex<TurnState>>) {
@@ -1860,7 +2220,7 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Review the active goal, current worktree/runtime evidence, and any injected Brain/runtime loop context.
 - Break the objective into the next concrete loop-cycle plan.
 - Identify which facts are known, which facts need research, and which decisions are blocked.
-- Use tools if they are needed to inspect authoritative state.
+- Persist the plan to a Brain/Wiki vault when it would help future loop turns.
 - End with a concise visible plan-loop status update.
 - Do not call update_goal in this phase; leave the goal active for the research loop."#
         }
@@ -1870,6 +2230,7 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Gather or verify the facts needed for the current plan using authoritative local state, Brain/wiki memory, MCP tools, or web/search tools when they are relevant.
 - Prefer citations, file references, commands, and concrete observations over guesses.
 - Note unresolved uncertainties that the decision loop must handle.
+- Persist research notes to a Brain/Wiki vault when they would help future loop turns.
 - End with a concise visible research-loop status update.
 - Do not call update_goal in this phase; leave the goal active for the decision loop."#
         }
@@ -1879,6 +2240,8 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Choose the next action based on the plan and research evidence.
 - Resolve tradeoffs explicitly: what to do now, what to defer, and what evidence would change the choice.
 - When GPU, MCP, ComfyUI, browser, shell, or external services are involved, choose the safest queue-aware path.
+- Persist the decision record to a Brain/Wiki vault when it would help future loop turns.
+- Do not execute the chosen action in this phase.
 - End with a concise visible decision-loop status update.
 - Do not call update_goal in this phase; leave the goal active for the wiki loop."#
         }
@@ -1887,7 +2250,7 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Speak visibly in this turn; do not stay silent.
 - Maintain the persistent knowledge layer: update Brain/wiki/index-style knowledge with reusable facts, links, contradictions, decisions, and procedures discovered so far.
 - Treat raw sources and tool observations as source of truth; the wiki is compiled knowledge that should be kept current.
-- Use tools if needed to read or write the knowledge store.
+- Use tools only to read or write the knowledge store; do not work on the deliverable itself.
 - End with a concise visible wiki-loop status update.
 - Do not call update_goal in this phase; leave the goal active for the log loop."#
         }
@@ -1896,7 +2259,7 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Speak visibly in this turn; do not stay silent.
 - Append or emit a chronological account of the loop cycle: what happened, what evidence was used, which decisions were made, and what remains.
 - Keep the log factual, compact, and useful for future sessions.
-- Use tools if needed to persist the log in Brain/wiki/project files.
+- Use tools only to persist the log in Brain/wiki-style memory; do not work on the deliverable itself.
 - End with a concise visible log-loop status update.
 - Do not call update_goal in this phase; leave the goal active for the improvement loop."#
         }
@@ -1904,7 +2267,7 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
             r#"You are now running the Improvement Loop as a foreground autonomous agent turn.
 - Speak visibly in this turn; do not stay silent.
 - Look for reusable knowledge, prompt/tooling improvements, missing skills, memory updates, or repeated failure patterns that matter for the active goal.
-- Use Brain or other tools when useful; prefer concrete evidence over speculation.
+- Persist improvement notes to a Brain/Wiki vault when they would help future loop turns; prefer concrete evidence over speculation.
 - End with a concise visible improvement-loop status update.
 - Do not call update_goal in this phase; leave the goal active for the cleanup loop."#
         }
@@ -1912,7 +2275,7 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
             r#"You are now running the Cleanup Loop as a foreground autonomous agent turn.
 - Speak visibly in this turn; do not stay silent.
 - Clean up or verify state that could confuse the next execution pass: stale assumptions, duplicate tasks, unresolved temporary artifacts, misleading context, or lightweight hygiene work.
-- Use tools if needed, but keep cleanup bounded to the active goal.
+- Persist cleanup notes to a Brain/Wiki vault when they would help future loop turns; do not work on the deliverable itself.
 - End with a concise visible cleanup-loop status update.
 - Do not call update_goal in this phase; leave the goal active for the execution loop."#
         }
@@ -1921,11 +2284,13 @@ fn phase_continuation_prompt(goal: &ThreadGoal, phase: GoalContinuationPhase) ->
 - Speak visibly in this turn; do not stay silent.
 - Use the prior super, improvement, and cleanup loop outputs as current context.
 - Make concrete progress on the user's objective now.
+- Use shell, patch, build, test, GPU, MCP generation, and other side-effect tools when they are needed and appropriate.
 - If current evidence proves the full objective is complete, call update_goal with status "complete"; otherwise leave the goal active for the next loop cycle."#
         }
     };
+    let phase_contract = phase.phase_contract();
     format!(
-        "{continuation}\n\nSuperloop phase:\n<goal_loop_phase>\n{phase_instruction}\n</goal_loop_phase>"
+        "{continuation}\n\nSuperloop phase:\n<goal_loop_phase>\n{phase_instruction}\n</goal_loop_phase>\n\nSuperloop phase contract:\n<goal_loop_phase_contract>\n{phase_contract}\n</goal_loop_phase_contract>"
     )
 }
 
@@ -2117,10 +2482,13 @@ mod tests {
     use super::goal_context_input_item;
     use super::goal_loop_context_input_item;
     use super::goal_token_delta_for_usage;
+    use super::is_blocked_in_non_execution_goal_phase;
     use super::next_superloop_continuation_phase;
     use super::objective_updated_prompt;
     use super::phase_continuation_prompt;
     use super::should_ignore_goal_for_mode;
+    use super::validate_non_execution_apply_patch_payload;
+    use crate::tools::context::ToolPayload;
     use chrono::Utc;
     use codex_protocol::ThreadId;
     use codex_protocol::config_types::ModeKind;
@@ -2129,8 +2497,11 @@ mod tests {
     use codex_protocol::protocol::ThreadGoal;
     use codex_protocol::protocol::ThreadGoalStatus;
     use codex_protocol::protocol::TokenUsage;
+    use codex_tools::ToolName;
+    use codex_utils_absolute_path::AbsolutePathBuf;
     use std::time::Duration;
     use std::time::Instant;
+    use tempfile::TempDir;
 
     #[test]
     fn goal_continuation_is_ignored_only_in_plan_mode() {
@@ -2395,6 +2766,7 @@ mod tests {
             assert!(prompt.contains(label));
             assert!(prompt.contains("Speak visibly in this turn; do not stay silent."));
             assert!(prompt.contains("<goal_loop_phase>"));
+            assert!(prompt.contains("<goal_loop_phase_contract>"));
         }
     }
 
@@ -2423,11 +2795,104 @@ mod tests {
         ] {
             let prompt = phase_continuation_prompt(&goal, phase);
             assert!(prompt.contains("Do not call update_goal in this phase"));
+            assert!(prompt.contains("This is a non-execution"));
+            assert!(prompt.contains("Brain/Wiki vaults"));
+            assert!(
+                prompt.contains("must not create, modify, or delete deliverable/project files")
+            );
+            assert!(prompt.contains("shell, exec, write_stdin"));
+            assert!(prompt.contains("Use apply_patch only for Brain/Wiki vault notes."));
+            assert!(prompt.contains("Hand concrete work to the Execution Loop."));
         }
-        assert!(
-            phase_continuation_prompt(&goal, GoalContinuationPhase::Execution)
-                .contains("call update_goal with status \"complete\"")
-        );
+        let execution_prompt = phase_continuation_prompt(&goal, GoalContinuationPhase::Execution);
+        assert!(execution_prompt.contains("This is the only execution loop."));
+        assert!(execution_prompt.contains("call update_goal with status \"complete\""));
+    }
+
+    #[test]
+    fn non_execution_phase_tool_policy_blocks_deliverable_tools() {
+        for name in [
+            "exec_command",
+            "image_generation",
+            "update_goal",
+            "write_stdin",
+        ] {
+            assert!(
+                is_blocked_in_non_execution_goal_phase(
+                    GoalContinuationPhase::Plan,
+                    &ToolName::plain(name)
+                ),
+                "{name} should be blocked outside the execution loop"
+            );
+        }
+
+        for name in [
+            "apply_patch",
+            "get_goal",
+            "update_plan",
+            "view_image",
+            "web_search",
+        ] {
+            assert!(
+                !is_blocked_in_non_execution_goal_phase(
+                    GoalContinuationPhase::Plan,
+                    &ToolName::plain(name)
+                ),
+                "{name} should remain available outside the execution loop"
+            );
+        }
+
+        assert!(is_blocked_in_non_execution_goal_phase(
+            GoalContinuationPhase::Plan,
+            &ToolName::namespaced("videoeditor", "GenerateImageAndWait")
+        ));
+        assert!(is_blocked_in_non_execution_goal_phase(
+            GoalContinuationPhase::Research,
+            &ToolName::namespaced("videoeditor", "SetActiveProject")
+        ));
+        assert!(!is_blocked_in_non_execution_goal_phase(
+            GoalContinuationPhase::Plan,
+            &ToolName::namespaced("brain", "write_note")
+        ));
+        assert!(!is_blocked_in_non_execution_goal_phase(
+            GoalContinuationPhase::Plan,
+            &ToolName::namespaced("wiki", "create_page")
+        ));
+    }
+
+    #[test]
+    fn non_execution_apply_patch_policy_allows_only_knowledge_vault_paths() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let cwd = AbsolutePathBuf::from_absolute_path(temp_dir.path()).expect("absolute cwd");
+
+        let project_wiki_payload = ToolPayload::Custom {
+            input: r#"*** Begin Patch
+*** Add File: docs/wiki/plan.md
++plan note
+*** End Patch"#
+                .to_string(),
+        };
+        assert!(validate_non_execution_apply_patch_payload(&project_wiki_payload, &cwd).is_ok());
+
+        let project_brain_payload = ToolPayload::Custom {
+            input: r#"*** Begin Patch
+*** Add File: .ilhae/brain/research.md
++research note
+*** End Patch"#
+                .to_string(),
+        };
+        assert!(validate_non_execution_apply_patch_payload(&project_brain_payload, &cwd).is_ok());
+
+        let deliverable_payload = ToolPayload::Custom {
+            input: r#"*** Begin Patch
+*** Add File: demo/package.json
++{}
+*** End Patch"#
+                .to_string(),
+        };
+        let err = validate_non_execution_apply_patch_payload(&deliverable_payload, &cwd)
+            .expect_err("deliverable patch should be blocked");
+        assert!(err.contains("non-execution loops may only write Brain/Wiki vault files"));
     }
 
     #[test]
