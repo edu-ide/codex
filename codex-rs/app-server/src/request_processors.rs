@@ -501,7 +501,7 @@ mod thread_summary;
 
 use self::config_errors::*;
 use self::request_errors::*;
-use self::thread_goal_processor::api_thread_goal_from_state;
+pub(crate) use self::thread_goal_processor::api_thread_goal_from_state;
 use self::thread_lifecycle::*;
 use self::thread_resume_redaction::*;
 use self::thread_summary::*;

@@ -611,6 +611,7 @@ async fn goal_slash_command_emits_set_goal_event() {
         thread_id: actual_thread_id,
         objective,
         mode,
+        superloop_enabled,
     } = event
     else {
         panic!("expected SetThreadGoalObjective, got {event:?}");
@@ -618,6 +619,7 @@ async fn goal_slash_command_emits_set_goal_event() {
     assert_eq!(actual_thread_id, thread_id);
     assert_eq!(objective, "--tokens 98.5K improve benchmark coverage");
     assert_eq!(mode, crate::app_event::ThreadGoalSetMode::ConfirmIfExists);
+    assert_eq!(superloop_enabled, None);
     assert_no_submit_op(&mut op_rx);
     assert_eq!(recall_latest_after_clearing(&mut chat), command);
 }
@@ -761,6 +763,61 @@ async fn goal_control_slash_commands_emit_goal_events() {
 }
 
 #[tokio::test]
+async fn superloop_slash_command_emits_set_goal_event_with_superloop_enabled() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    let command = "/superloop improve benchmark coverage";
+
+    submit_composer_text(&mut chat, command);
+
+    let event = rx.try_recv().expect("expected goal objective event");
+    let AppEvent::SetThreadGoalObjective {
+        thread_id: actual_thread_id,
+        objective,
+        mode,
+        superloop_enabled,
+    } = event
+    else {
+        panic!("expected SetThreadGoalObjective, got {event:?}");
+    };
+    assert_eq!(actual_thread_id, thread_id);
+    assert_eq!(objective, "improve benchmark coverage");
+    assert_eq!(mode, crate::app_event::ThreadGoalSetMode::ConfirmIfExists);
+    assert_eq!(superloop_enabled, Some(true));
+    assert_no_submit_op(&mut op_rx);
+    assert_eq!(recall_latest_after_clearing(&mut chat), command);
+}
+
+#[tokio::test]
+async fn superloop_slash_command_rejects_removed_toggle_words() {
+    let command = "/superloop on";
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    chat.thread_id = Some(ThreadId::new());
+
+    submit_composer_text(&mut chat, command);
+
+    let cells = drain_insert_history(&mut rx);
+    let rendered = cells
+        .iter()
+        .map(|cell| lines_to_single_string(cell))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Usage: /superloop <objective>"),
+        "expected superloop usage, got: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("/goal pause"),
+        "expected pause/clear stop hint, got: {rendered:?}"
+    );
+    assert_no_submit_op(&mut op_rx);
+    assert_eq!(recall_latest_after_clearing(&mut chat), command);
+}
+
+#[tokio::test]
 async fn goal_edit_slash_command_opens_goal_editor() {
     for thread_id in [Some(ThreadId::new()), None] {
         let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
@@ -806,6 +863,36 @@ async fn queued_goal_slash_command_emits_set_goal_event_after_thread_starts() {
     };
     assert_eq!(actual_thread_id, thread_id);
     assert_eq!(objective, "improve benchmark coverage");
+    assert_no_submit_op(&mut op_rx);
+}
+
+#[tokio::test]
+async fn queued_superloop_slash_command_enables_superloop_after_thread_starts() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    let command = "/superloop improve benchmark coverage";
+
+    submit_composer_text(&mut chat, command);
+    assert_eq!(chat.input_queue.queued_user_messages.len(), 1);
+    assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
+
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    chat.maybe_send_next_queued_input();
+
+    let event = rx.try_recv().expect("expected goal objective event");
+    let AppEvent::SetThreadGoalObjective {
+        thread_id: actual_thread_id,
+        objective,
+        superloop_enabled,
+        ..
+    } = event
+    else {
+        panic!("expected SetThreadGoalObjective, got {event:?}");
+    };
+    assert_eq!(actual_thread_id, thread_id);
+    assert_eq!(objective, "improve benchmark coverage");
+    assert_eq!(superloop_enabled, Some(true));
     assert_no_submit_op(&mut op_rx);
 }
 
@@ -1513,6 +1600,7 @@ async fn active_goal_without_follow_up_suppresses_agent_turn_complete_notificati
                     objective: "finish the benchmark".to_string(),
                     status: codex_app_server_protocol::ThreadGoalStatus::Active,
                     token_budget: None,
+                    superloop_enabled: false,
                     tokens_used: 0,
                     time_used_seconds: 0,
                     created_at: 1,

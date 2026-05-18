@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::config::ThreadStoreConfig;
 use crate::environment_selection::default_thread_environment_selections;
 use crate::environment_selection::resolve_environment_selections;
+use crate::goals::GoalContinuationHook;
 use crate::mcp::McpManager;
 use crate::rollout::truncation;
 use crate::session::Codex;
@@ -206,6 +207,7 @@ pub(crate) struct ThreadManagerState {
     plugins_manager: Arc<PluginsManager>,
     mcp_manager: Arc<McpManager>,
     extensions: Arc<ExtensionRegistry<Config>>,
+    goal_continuation_hook: Option<GoalContinuationHook>,
     thread_store: Arc<dyn ThreadStore>,
     attestation_provider: Option<Arc<dyn AttestationProvider>>,
     session_source: SessionSource,
@@ -248,6 +250,7 @@ impl ThreadManager {
         session_source: SessionSource,
         environment_manager: Arc<EnvironmentManager>,
         extensions: Arc<ExtensionRegistry<Config>>,
+        goal_continuation_hook: Option<GoalContinuationHook>,
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
         state_db: Option<StateDbHandle>,
@@ -277,6 +280,7 @@ impl ThreadManager {
                 plugins_manager,
                 mcp_manager,
                 extensions,
+                goal_continuation_hook,
                 thread_store,
                 attestation_provider,
                 auth_manager,
@@ -378,6 +382,7 @@ impl ThreadManager {
                 plugins_manager,
                 mcp_manager,
                 extensions: empty_extension_registry(),
+                goal_continuation_hook: None,
                 thread_store,
                 attestation_provider: None,
                 auth_manager,
@@ -1206,6 +1211,7 @@ impl ThreadManagerState {
             plugins_manager: Arc::clone(&self.plugins_manager),
             mcp_manager: Arc::clone(&self.mcp_manager),
             extensions: Arc::clone(&self.extensions),
+            goal_continuation_hook: self.goal_continuation_hook.clone(),
             conversation_history: initial_history,
             session_source,
             thread_source,

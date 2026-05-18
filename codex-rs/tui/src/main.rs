@@ -57,6 +57,7 @@ fn main() -> anyhow::Result<()> {
             LoaderOverrides::default(),
             /*explicit_remote_endpoint*/ None,
             /*external_notifications*/ None,
+            codex_app_server_client::AppServerRuntimeHooks::default(),
         )
         .await?;
         match exit_info.exit_reason {

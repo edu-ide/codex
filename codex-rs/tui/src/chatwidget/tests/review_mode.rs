@@ -1234,6 +1234,7 @@ async fn interrupted_turn_after_goal_budget_limited_uses_budget_message_snapshot
                     objective: "Run until the token budget is limited".to_string(),
                     status: codex_app_server_protocol::ThreadGoalStatus::BudgetLimited,
                     token_budget: Some(10_000),
+                    superloop_enabled: false,
                     tokens_used: 10_500,
                     time_used_seconds: 0,
                     created_at: 0,

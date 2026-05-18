@@ -107,6 +107,7 @@ impl App {
         thread_id: ThreadId,
         objective: String,
         mode: ThreadGoalSetMode,
+        superloop_enabled: Option<bool>,
     ) {
         if matches!(mode, ThreadGoalSetMode::ConfirmIfExists) {
             let result = app_server.thread_goal_get(thread_id).await;
@@ -116,7 +117,11 @@ impl App {
 
             match result {
                 Ok(response) if response.goal.is_some() => {
-                    self.show_replace_thread_goal_confirmation(thread_id, objective);
+                    self.show_replace_thread_goal_confirmation(
+                        thread_id,
+                        objective,
+                        superloop_enabled,
+                    );
                     return;
                 }
                 Ok(_) => {}
@@ -153,7 +158,13 @@ impl App {
         };
 
         let result = app_server
-            .thread_goal_set(thread_id, Some(objective), Some(status), token_budget)
+            .thread_goal_set(
+                thread_id,
+                Some(objective),
+                Some(status),
+                token_budget,
+                superloop_enabled,
+            )
             .await;
         if self.current_displayed_thread_id() != Some(thread_id) {
             return;
@@ -184,6 +195,7 @@ impl App {
                 /*objective*/ None,
                 Some(status),
                 /*token_budget*/ None,
+                /*superloop_enabled*/ None,
             )
             .await;
         if self.current_displayed_thread_id() != Some(thread_id) {
@@ -229,13 +241,19 @@ impl App {
         }
     }
 
-    fn show_replace_thread_goal_confirmation(&mut self, thread_id: ThreadId, objective: String) {
+    fn show_replace_thread_goal_confirmation(
+        &mut self,
+        thread_id: ThreadId,
+        objective: String,
+        superloop_enabled: Option<bool>,
+    ) {
         let replace_objective = objective.clone();
         let replace_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
             tx.send(AppEvent::SetThreadGoalObjective {
                 thread_id,
                 objective: replace_objective.clone(),
                 mode: ThreadGoalSetMode::ReplaceExisting,
+                superloop_enabled,
             });
         })];
         let items = vec![

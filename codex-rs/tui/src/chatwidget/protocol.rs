@@ -46,6 +46,9 @@ impl ChatWidget {
                 }
             }
             ServerNotification::ThreadGoalUpdated(notification) => {
+                if replay_kind.is_none() {
+                    self.show_goal_loop_update(&notification.goal);
+                }
                 self.on_thread_goal_updated(notification.goal, notification.turn_id);
             }
             ServerNotification::ThreadGoalCleared(notification) => {

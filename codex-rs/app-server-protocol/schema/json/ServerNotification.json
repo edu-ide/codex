@@ -3355,6 +3355,10 @@
         "status": {
           "$ref": "#/definitions/ThreadGoalStatus"
         },
+        "superloopEnabled": {
+          "default": false,
+          "type": "boolean"
+        },
         "threadId": {
           "type": "string"
         },
@@ -3467,6 +3471,11 @@
         "knowledgeLoop",
         "kairosLoop",
         "superLoop",
+        "planLoop",
+        "researchLoop",
+        "decisionLoop",
+        "wikiLoop",
+        "logLoop",
         "improvementLoop",
         "cleanupLoop",
         "executionLoop",

@@ -57,6 +57,7 @@ use tracing::Span;
 
 use crate::goals::ExternalGoalPreviousStatus;
 use crate::goals::ExternalGoalSet;
+use crate::goals::GoalContinuationHook;
 use crate::goals::GoalRuntimeEvent;
 use crate::goals::SetGoalRequest;
 use crate::rollout::recorder::RolloutRecorder;
@@ -4182,6 +4183,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         plugins_manager,
         mcp_manager,
         Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
+        /*goal_continuation_hook*/ None,
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
@@ -4331,6 +4333,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         plugins_manager,
         mcp_manager,
         extensions: Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
+        goal_continuation_hook: None,
         session_extension_data: codex_extension_api::ExtensionData::new(
             agent_control.session_id().to_string(),
         ),
@@ -4526,6 +4529,7 @@ async fn make_session_with_config_and_rx(
         plugins_manager,
         mcp_manager,
         Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
+        /*goal_continuation_hook*/ None,
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
@@ -4629,6 +4633,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         plugins_manager,
         mcp_manager,
         Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
+        /*goal_continuation_hook*/ None,
         agent_control,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
@@ -6187,6 +6192,7 @@ where
         plugins_manager,
         mcp_manager,
         extensions: Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
+        goal_continuation_hook: None,
         session_extension_data: codex_extension_api::ExtensionData::new(
             agent_control.session_id().to_string(),
         ),
@@ -8375,6 +8381,140 @@ async fn active_goal_continuation_runs_again_after_no_tool_turn() -> anyhow::Res
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn superloop_goal_continuation_records_hook_events_before_plan_loop() -> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let hook: GoalContinuationHook = Arc::new(|| {
+        Box::pin(async {
+            vec![
+                codex_state::ThreadGoalLoopEvent {
+                    id: "hook-super-loop".to_string(),
+                    phase: codex_state::ThreadGoalLoopPhase::SuperLoop,
+                    status: codex_state::ThreadGoalLoopStatus::Completed,
+                    title: "Running Super Loop".to_string(),
+                    summary: "Super loop completed".to_string(),
+                    detail: None,
+                    error: None,
+                },
+                codex_state::ThreadGoalLoopEvent {
+                    id: "hook-cleanup-loop".to_string(),
+                    phase: codex_state::ThreadGoalLoopPhase::CleanupLoop,
+                    status: codex_state::ThreadGoalLoopStatus::Completed,
+                    title: "Running Cleanup Loop".to_string(),
+                    summary: "Cleanup loop completed".to_string(),
+                    detail: None,
+                    error: None,
+                },
+            ]
+        })
+    });
+    let mut builder = test_codex()
+        .with_goal_continuation_hook(hook)
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::Goals)
+                .expect("goal mode should be enableable in tests");
+        });
+    let test = builder.build(&server).await?;
+
+    let thread_id = test.session_configured.thread_id;
+    let state_db = test
+        .codex
+        .state_db()
+        .expect("test codex should have a state db");
+    let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
+        thread_id,
+        test.config
+            .codex_home
+            .join("goal-test-rollout.jsonl")
+            .to_path_buf(),
+        chrono::Utc::now(),
+        SessionSource::Exec,
+    );
+    metadata_builder.cwd = test.config.cwd.to_path_buf();
+    metadata_builder.model_provider = Some(test.config.model_provider_id.clone());
+    state_db
+        .upsert_thread(&metadata_builder.build(test.config.model_provider_id.as_str()))
+        .await?;
+    let goal = state_db
+        .replace_thread_goal(
+            thread_id,
+            "exercise the super loop",
+            codex_state::ThreadGoalStatus::Active,
+            /*token_budget*/ None,
+        )
+        .await?;
+    state_db
+        .update_thread_goal(
+            thread_id,
+            codex_state::ThreadGoalUpdate {
+                objective: None,
+                status: None,
+                token_budget: None,
+                superloop_enabled: Some(true),
+                expected_goal_id: Some(goal.goal_id),
+            },
+        )
+        .await?
+        .expect("goal should still exist");
+
+    test.codex.continue_active_goal_if_idle().await?;
+
+    let goal = state_db
+        .get_thread_goal(thread_id)
+        .await?
+        .expect("goal should remain persisted");
+    assert!(
+        goal.loop_history.iter().any(|entry| {
+            entry.phase == codex_state::ThreadGoalLoopPhase::PlanLoop
+                && entry.summary == "Plan loop agent turn started"
+        }),
+        "expected foreground plan-loop agent turn in history: {:?}",
+        goal.loop_history
+    );
+    assert!(
+        goal.loop_history
+            .iter()
+            .all(|entry| entry.id != "hook-super-loop"),
+        "hook events should be injected as context instead of separate loop turns: {:?}",
+        goal.loop_history
+    );
+    assert!(
+        goal.loop_history
+            .iter()
+            .all(|entry| entry.id != "hook-cleanup-loop"),
+        "cleanup hook event should not be recorded before the cleanup agent turn: {:?}",
+        goal.loop_history
+    );
+    assert!(
+        goal.loop_history.iter().all(|entry| {
+            entry.phase != codex_state::ThreadGoalLoopPhase::ExecutionLoop
+                || entry.summary != "Goal execution loop turn started"
+        }),
+        "first superloop-enabled continuation should be the plan-loop agent turn: {:?}",
+        goal.loop_history
+    );
+    assert!(
+        goal.loop_history.iter().any(|entry| {
+            entry.phase == codex_state::ThreadGoalLoopPhase::ContextInjection
+                && entry.summary == "Injected foreground loop context into the plan_loop prompt"
+        }),
+        "expected foreground loop context injection event in history: {:?}",
+        goal.loop_history
+    );
+    assert!(
+        goal.loop_history
+            .iter()
+            .all(|entry| !entry.summary.contains("Goal super loop turn")),
+        "core continuation should no longer be labeled as the super loop: {:?}",
+        goal.loop_history
+    );
+    test.codex.submit(Op::Interrupt).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pending_request_user_input_does_not_spawn_extra_goal_continuation() -> anyhow::Result<()> {
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(|config| {
@@ -8665,16 +8805,17 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
                 objective: None,
                 status: Some(codex_state::ThreadGoalStatus::Complete),
                 token_budget: None,
+                superloop_enabled: None,
                 expected_goal_id: Some(goal_id),
             },
         )
         .await?
         .expect("goal status update should succeed");
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        external_set: ExternalGoalSet {
+        external_set: Box::new(ExternalGoalSet {
             goal: updated_goal,
             previous_status: ExternalGoalPreviousStatus::from(&previous_goal),
-        },
+        }),
     })
     .await?;
 
@@ -8723,10 +8864,10 @@ async fn external_objective_change_steers_active_turn() -> anyhow::Result<()> {
         .await?;
 
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        external_set: ExternalGoalSet {
+        external_set: Box::new(ExternalGoalSet {
             goal: new_goal,
             previous_status: ExternalGoalPreviousStatus::from(&old_goal),
-        },
+        }),
     })
     .await?;
 
@@ -8779,10 +8920,10 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
         )
         .await?;
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        external_set: ExternalGoalSet {
+        external_set: Box::new(ExternalGoalSet {
             goal,
             previous_status: ExternalGoalPreviousStatus::NewGoal,
-        },
+        }),
     })
     .await?;
 

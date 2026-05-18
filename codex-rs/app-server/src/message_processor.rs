@@ -65,6 +65,7 @@ use codex_app_server_protocol::ServerRequestPayload;
 use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_chatgpt::workspace_settings;
+use codex_core::GoalContinuationHook;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_exec_server::EnvironmentManager;
@@ -298,6 +299,17 @@ impl MessageProcessor {
         auth_manager.set_external_auth(Arc::new(ExternalAuthRefreshBridge {
             outgoing: outgoing.clone(),
         }));
+        let goal_continuation_hook: Option<GoalContinuationHook> =
+            runtime_hooks.before_goal_continuation.clone().map(|hook| {
+                Arc::new(move || {
+                    let hook = hook.clone();
+                    Box::pin(async move { hook().await.thread_goal_loop_events })
+                        as futures::future::BoxFuture<
+                            'static,
+                            Vec<codex_state::ThreadGoalLoopEvent>,
+                        >
+                }) as GoalContinuationHook
+            });
         let thread_state_manager = ThreadStateManager::new();
         // The thread store is intentionally process-scoped. Config reloads can
         // affect per-thread behavior, but they must not move newly started,
@@ -310,6 +322,7 @@ impl MessageProcessor {
                 session_source,
                 environment_manager,
                 thread_extensions(guardian_agent_spawner(thread_manager.clone())),
+                goal_continuation_hook.clone(),
                 Some(analytics_events_client.clone()),
                 Arc::clone(&thread_store),
                 state_db.clone(),

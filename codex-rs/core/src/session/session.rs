@@ -1,4 +1,5 @@
 use super::*;
+use crate::goals::GoalContinuationHook;
 use crate::goals::GoalRuntimeState;
 use codex_protocol::SessionId;
 use codex_protocol::config_types::ServiceTier;
@@ -435,6 +436,7 @@ impl Session {
         plugins_manager: Arc<PluginsManager>,
         mcp_manager: Arc<McpManager>,
         extensions: Arc<codex_extension_api::ExtensionRegistry<crate::config::Config>>,
+        goal_continuation_hook: Option<GoalContinuationHook>,
         agent_control: AgentControl,
         environment_manager: Arc<EnvironmentManager>,
         analytics_events_client: Option<AnalyticsEventsClient>,
@@ -918,6 +920,7 @@ impl Session {
                 plugins_manager: Arc::clone(&plugins_manager),
                 mcp_manager: Arc::clone(&mcp_manager),
                 extensions,
+                goal_continuation_hook,
                 // TODO(jif): extract session to share between sub-agents
                 session_extension_data,
                 thread_extension_data,

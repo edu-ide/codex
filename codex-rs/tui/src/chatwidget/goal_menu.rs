@@ -12,6 +12,34 @@ impl ChatWidget {
         self.add_plain_history_lines(goal_summary_lines(&goal));
     }
 
+    pub(crate) fn show_goal_loop_update(&mut self, goal: &AppThreadGoal) {
+        if self
+            .thread_id
+            .is_some_and(|active_thread_id| active_thread_id.to_string() != goal.thread_id)
+        {
+            return;
+        }
+        let Some(loop_state) = goal.loop_state.as_ref() else {
+            return;
+        };
+        if self
+            .current_goal_status
+            .as_ref()
+            .is_some_and(|state| state.has_same_loop_state(goal))
+        {
+            return;
+        }
+        self.add_info_message(
+            format!("Goal loop {}", goal_loop_status_label(loop_state.status)),
+            Some(format!(
+                "cycle {} - {}: {}",
+                loop_state.cycle_number,
+                goal_loop_phase_label(loop_state.phase),
+                loop_state.summary
+            )),
+        );
+    }
+
     pub(crate) fn show_goal_edit_prompt(&mut self, thread_id: ThreadId, goal: AppThreadGoal) {
         let tx = self.app_event_tx.clone();
         let status = edited_goal_status(goal.status);
@@ -29,6 +57,7 @@ impl ChatWidget {
                         status,
                         token_budget,
                     },
+                    superloop_enabled: None,
                 });
             }),
         );
@@ -88,6 +117,10 @@ fn goal_summary_lines(goal: &AppThreadGoal) -> Vec<Line<'static>> {
             "Status: ".dim(),
             goal_status_label(goal.status).to_string().into(),
         ]),
+        Line::from(vec![
+            "Super loop: ".dim(),
+            if goal.superloop_enabled { "on" } else { "off" }.into(),
+        ]),
         Line::from(vec!["Objective: ".dim(), goal.objective.clone().into()]),
         Line::from(vec![
             "Time used: ".dim(),
@@ -127,8 +160,12 @@ fn goal_summary_lines(goal: &AppThreadGoal) -> Vec<Line<'static>> {
         }
     }
     let command_hint = match goal.status {
-        AppThreadGoalStatus::Active => "Commands: /goal edit, /goal pause, /goal clear",
-        AppThreadGoalStatus::Paused => "Commands: /goal edit, /goal resume, /goal clear",
+        AppThreadGoalStatus::Active => {
+            "Commands: /goal edit, /goal pause, /superloop <objective>, /goal clear"
+        }
+        AppThreadGoalStatus::Paused => {
+            "Commands: /goal edit, /goal resume, /superloop <objective>, /goal clear"
+        }
         AppThreadGoalStatus::BudgetLimited | AppThreadGoalStatus::Complete => {
             "Commands: /goal edit, /goal clear"
         }
@@ -171,6 +208,11 @@ fn goal_loop_phase_label(phase: AppThreadGoalLoopPhase) -> &'static str {
         AppThreadGoalLoopPhase::KnowledgeLoop => "knowledge loop",
         AppThreadGoalLoopPhase::KairosLoop => "kairos loop",
         AppThreadGoalLoopPhase::SuperLoop => "super loop",
+        AppThreadGoalLoopPhase::PlanLoop => "plan loop",
+        AppThreadGoalLoopPhase::ResearchLoop => "research loop",
+        AppThreadGoalLoopPhase::DecisionLoop => "decision loop",
+        AppThreadGoalLoopPhase::WikiLoop => "wiki loop",
+        AppThreadGoalLoopPhase::LogLoop => "log loop",
         AppThreadGoalLoopPhase::ImprovementLoop => "improvement loop",
         AppThreadGoalLoopPhase::CleanupLoop => "cleanup loop",
         AppThreadGoalLoopPhase::ExecutionLoop => "execution loop",

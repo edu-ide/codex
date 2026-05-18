@@ -71,7 +71,9 @@ pub const REQ_APP_KB_FILE_BACK: &str = "ilhae/app/kb/file_back";
 #[serde(rename_all = "snake_case")]
 pub enum LoopLifecycleKind {
     SuperLoop,
+    ExecutionLoop,
     ImprovementLoop,
+    CleanupLoop,
     ContextInjection,
 }
 

@@ -1080,6 +1080,7 @@ mod tests {
             opt_out_notification_methods: Vec::new(),
             external_notifications: None,
             channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+            runtime_hooks: codex_app_server_client::AppServerRuntimeHooks::default(),
         })
         .await
         .unwrap();

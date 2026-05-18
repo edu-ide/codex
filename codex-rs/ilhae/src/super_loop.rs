@@ -225,8 +225,10 @@ fn now_millis() -> i64 {
 fn loop_item_id(kind: LoopLifecycleKind, driver: SuperLoopDriver, epoch_ms: i64) -> String {
     let kind = match kind {
         LoopLifecycleKind::SuperLoop => "super_loop",
+        LoopLifecycleKind::ExecutionLoop => "execution_loop",
         LoopLifecycleKind::ImprovementLoop => "improvement_loop",
-        _ => "background_loop",
+        LoopLifecycleKind::CleanupLoop => "cleanup_loop",
+        LoopLifecycleKind::ContextInjection => "context_injection",
     };
     format!("{kind}:{}:{epoch_ms}", driver.as_str())
 }
@@ -1327,10 +1329,10 @@ fn execute_plan(
                     source_signature: Some(finding.signature.clone()),
                     ..followup
                 };
-                if !self_improvement_uses_foreground(settings) {
-                    if let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)? {
-                        actions.push(run_action);
-                    }
+                if !self_improvement_uses_foreground(settings)
+                    && let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)?
+                {
+                    actions.push(run_action);
                 }
                 actions.push(followup);
             }
@@ -1356,10 +1358,10 @@ fn execute_plan(
                     source_signature: Some(finding.signature.clone()),
                     ..followup
                 };
-                if !self_improvement_uses_foreground(settings) {
-                    if let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)? {
-                        actions.push(run_action);
-                    }
+                if !self_improvement_uses_foreground(settings)
+                    && let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)?
+                {
+                    actions.push(run_action);
                 }
                 actions.push(followup);
             }
@@ -1386,10 +1388,10 @@ fn execute_plan(
                     source_signature: Some(finding.signature.clone()),
                     ..followup
                 };
-                if !self_improvement_uses_foreground(settings) {
-                    if let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)? {
-                        actions.push(run_action);
-                    }
+                if !self_improvement_uses_foreground(settings)
+                    && let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)?
+                {
+                    actions.push(run_action);
                 }
                 actions.push(followup);
             }
@@ -1448,6 +1450,7 @@ fn run_cycle_blocking(
     settings_store: Arc<SettingsStore>,
     autonomous_sessions: Arc<Cache<String, AutonomousSessionState>>,
     ilhae_dir: PathBuf,
+    force: bool,
 ) -> Result<(), String> {
     let started_at = Instant::now();
     let super_loop_item_id = loop_item_id(LoopLifecycleKind::SuperLoop, driver, now_millis());
@@ -1468,7 +1471,7 @@ fn run_cycle_blocking(
     });
 
     let settings = settings_store.get();
-    if !super_loop_enabled(&settings, &autonomous_sessions) {
+    if !force && !super_loop_enabled(&settings, &autonomous_sessions) {
         emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Completed {
             session_id: "native-runtime".to_string(),
             item: loop_item(
@@ -1502,7 +1505,7 @@ fn run_cycle_blocking(
         .count() as i64;
     let signature = build_signature(&findings);
     let now = now_secs();
-    if should_skip(&state, &signature, now) {
+    if !force && should_skip(&state, &signature, now) {
         emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Completed {
             session_id: "native-runtime".to_string(),
             item: loop_item(
@@ -1536,7 +1539,7 @@ fn run_cycle_blocking(
         ])),
     });
 
-    let improvement_item_id = (improvement_findings > 0).then(|| {
+    let improvement_item_id = (force || improvement_findings > 0).then(|| {
         loop_item_id(
             LoopLifecycleKind::ImprovementLoop,
             driver,
@@ -1573,6 +1576,24 @@ fn run_cycle_blocking(
                 SuperLoopDriver::Worker => crate::hygiene_loop::HygieneLoopDriver::Worker,
                 SuperLoopDriver::Kairos => crate::hygiene_loop::HygieneLoopDriver::Kairos,
             };
+            let cleanup_item_id =
+                loop_item_id(LoopLifecycleKind::CleanupLoop, driver, now_millis());
+            let cleanup_started_at = Instant::now();
+            emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Started {
+                session_id: "native-runtime".to_string(),
+                item: loop_item(
+                    cleanup_item_id.clone(),
+                    LoopLifecycleKind::CleanupLoop,
+                    "Running Cleanup Loop",
+                    "Cleanup loop started".to_string(),
+                    None,
+                    LoopLifecycleStatus::InProgress,
+                    Some("cleanup_started".to_string()),
+                    None,
+                    None,
+                    None,
+                ),
+            });
             match crate::hygiene_loop::run_embedded_cycle(
                 hygiene_driver,
                 brain.clone(),
@@ -1580,6 +1601,39 @@ fn run_cycle_blocking(
                 ilhae_dir.clone(),
             ) {
                 Ok(hygiene_outcome) => {
+                    let counts = BTreeMap::from([
+                        (
+                            "duplicate_tasks_folded".to_string(),
+                            hygiene_outcome.duplicate_tasks_folded as i64,
+                        ),
+                        (
+                            "legacy_commands_normalized".to_string(),
+                            hygiene_outcome.legacy_commands_normalized as i64,
+                        ),
+                        (
+                            "knowledge_reports_written".to_string(),
+                            hygiene_outcome.knowledge_reports_written as i64,
+                        ),
+                        (
+                            "memory_reports_written".to_string(),
+                            hygiene_outcome.memory_reports_written as i64,
+                        ),
+                    ]);
+                    emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Completed {
+                        session_id: "native-runtime".to_string(),
+                        item: loop_item(
+                            cleanup_item_id,
+                            LoopLifecycleKind::CleanupLoop,
+                            "Running Cleanup Loop",
+                            "Cleanup loop completed".to_string(),
+                            None,
+                            LoopLifecycleStatus::Completed,
+                            Some("cleanup_completed".to_string()),
+                            Some(counts),
+                            None,
+                            Some(cleanup_started_at.elapsed().as_millis() as i64),
+                        ),
+                    });
                     if hygiene_outcome.duplicate_tasks_folded > 0
                         || hygiene_outcome.legacy_commands_normalized > 0
                         || hygiene_outcome.knowledge_reports_written > 0
@@ -1601,6 +1655,21 @@ fn run_cycle_blocking(
                     }
                 }
                 Err(err) => {
+                    emit_loop_notification(crate::IlhaeLoopLifecycleNotification::Failed {
+                        session_id: "native-runtime".to_string(),
+                        item: loop_item(
+                            cleanup_item_id,
+                            LoopLifecycleKind::CleanupLoop,
+                            "Running Cleanup Loop",
+                            "Cleanup loop failed".to_string(),
+                            None,
+                            LoopLifecycleStatus::Failed,
+                            Some("cleanup_failed".to_string()),
+                            None,
+                            Some(err.clone()),
+                            Some(cleanup_started_at.elapsed().as_millis() as i64),
+                        ),
+                    });
                     actions.push(SuperLoopAction {
                         kind: SuperLoopActionKind::RunHygieneCycle,
                         target: "hygiene-loop".to_string(),
@@ -1775,6 +1844,32 @@ pub async fn maybe_run_cycle(
             settings_store,
             autonomous_sessions,
             ilhae_dir,
+            /*force*/ false,
+        )
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => warn!(driver = driver.as_str(), error = %err, "[SuperLoop] cycle failed"),
+        Err(err) => warn!(driver = driver.as_str(), error = %err, "[SuperLoop] worker join failed"),
+    }
+}
+
+pub async fn run_goal_cycle(
+    driver: SuperLoopDriver,
+    brain: Arc<BrainService>,
+    settings_store: Arc<SettingsStore>,
+    autonomous_sessions: Arc<Cache<String, AutonomousSessionState>>,
+    ilhae_dir: PathBuf,
+) {
+    let result = tokio::task::spawn_blocking(move || {
+        run_cycle_blocking(
+            driver,
+            brain,
+            settings_store,
+            autonomous_sessions,
+            ilhae_dir,
+            /*force*/ true,
         )
     })
     .await;

@@ -53,32 +53,32 @@ async fn goal_menu_loop_history_snapshot() {
     );
     goal.loop_state = Some(codex_app_server_protocol::ThreadGoalLoopState {
         cycle_number: 3,
-        phase: codex_app_server_protocol::ThreadGoalLoopPhase::KairosLoop,
+        phase: codex_app_server_protocol::ThreadGoalLoopPhase::ResearchLoop,
         status: codex_app_server_protocol::ThreadGoalLoopStatus::Completed,
-        summary: "Kairos loop completed".to_string(),
+        summary: "Research loop completed".to_string(),
         updated_at: 1_776_272_470,
     });
     goal.loop_history = vec![
         codex_app_server_protocol::ThreadGoalLoopHistoryEntry {
-            id: "super_loop:kairos:3".to_string(),
+            id: "goal_continuation:research_loop:3".to_string(),
             cycle_number: 3,
-            phase: codex_app_server_protocol::ThreadGoalLoopPhase::KairosLoop,
+            phase: codex_app_server_protocol::ThreadGoalLoopPhase::ResearchLoop,
             status: codex_app_server_protocol::ThreadGoalLoopStatus::Completed,
-            title: "Running Kairos Loop".to_string(),
-            summary: "Kairos loop completed".to_string(),
-            detail: Some("reviewed 2 goal follow-ups".to_string()),
+            title: "Research loop agent".to_string(),
+            summary: "Research loop completed".to_string(),
+            detail: Some("verified 2 goal follow-ups".to_string()),
             error: None,
             started_at: 1_776_272_460,
             updated_at: 1_776_272_470,
             completed_at: Some(1_776_272_470),
         },
         codex_app_server_protocol::ThreadGoalLoopHistoryEntry {
-            id: "improvement_loop:worker:2".to_string(),
+            id: "goal_continuation:plan_loop:2".to_string(),
             cycle_number: 2,
-            phase: codex_app_server_protocol::ThreadGoalLoopPhase::ImprovementLoop,
+            phase: codex_app_server_protocol::ThreadGoalLoopPhase::PlanLoop,
             status: codex_app_server_protocol::ThreadGoalLoopStatus::Completed,
-            title: "Reviewing Improvement Loop".to_string(),
-            summary: "Applied 1 improvement follow-up".to_string(),
+            title: "Plan loop agent".to_string(),
+            summary: "Planned 1 research follow-up".to_string(),
             detail: None,
             error: None,
             started_at: 1_776_272_430,
@@ -153,6 +153,7 @@ async fn goal_edit_prompt_submits_preserved_status_and_budget() {
                     status,
                     token_budget,
                 },
+            superloop_enabled,
         }) => {
             assert_eq!(event_thread_id, thread_id);
             assert_eq!(
@@ -161,6 +162,7 @@ async fn goal_edit_prompt_submits_preserved_status_and_budget() {
             );
             assert_eq!(status, AppThreadGoalStatus::Paused);
             assert_eq!(token_budget, Some(80_000));
+            assert_eq!(superloop_enabled, None);
         }
         other => panic!("expected SetThreadGoalObjective event, got {other:?}"),
     }
@@ -250,6 +252,7 @@ fn test_goal(
             .to_string(),
         status,
         token_budget,
+        superloop_enabled: false,
         tokens_used: 12_500,
         time_used_seconds: 90,
         created_at: 1_776_272_400,

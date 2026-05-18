@@ -264,6 +264,7 @@ pub(crate) enum AppEvent {
         thread_id: ThreadId,
         objective: String,
         mode: ThreadGoalSetMode,
+        superloop_enabled: Option<bool>,
     },
 
     /// Pause or resume the current thread goal.

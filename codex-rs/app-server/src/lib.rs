@@ -85,6 +85,7 @@ pub struct AppServerTurnStartHookResult {
 #[derive(Clone, Default)]
 pub struct AppServerRuntimeHooks {
     pub before_turn_start: Option<AppServerTurnStartHook>,
+    pub before_goal_continuation: Option<AppServerTurnStartHook>,
 }
 
 mod analytics_utils;

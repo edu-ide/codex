@@ -34,9 +34,27 @@ const SIDE_REVIEW_UNAVAILABLE_MESSAGE: &str =
     "'/side' is unavailable while code review is running.";
 const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str =
     "Press Ctrl+C to return to the main thread first.";
-const GOAL_USAGE: &str = "Usage: /goal <objective>";
-const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
+const GOAL_USAGE: &str = "Usage: /goal <objective> | /goal edit|pause|resume|clear";
+const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage.";
+const SUPERLOOP_USAGE: &str = "Usage: /superloop <objective>";
+const SUPERLOOP_USAGE_HINT: &str =
+    "Example: /superloop improve benchmark coverage. Use /goal pause or /goal clear to stop.";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
+
+#[derive(Clone, Copy)]
+enum GoalControlCommand {
+    Clear,
+    SetStatus(AppThreadGoalStatus),
+}
+
+fn parse_goal_control_command(normalized: &str) -> Option<GoalControlCommand> {
+    match normalized {
+        "clear" => Some(GoalControlCommand::Clear),
+        "pause" => Some(GoalControlCommand::SetStatus(AppThreadGoalStatus::Paused)),
+        "resume" => Some(GoalControlCommand::SetStatus(AppThreadGoalStatus::Active)),
+        _ => None,
+    }
+}
 
 impl ChatWidget {
     /// Dispatch a bare slash command and record its staged local-history entry.
@@ -46,7 +64,7 @@ impl ChatWidget {
     /// rule as normal text.
     pub(super) fn handle_slash_command_dispatch(&mut self, cmd: SlashCommand) {
         self.dispatch_command(cmd);
-        if cmd == SlashCommand::Goal {
+        if matches!(cmd, SlashCommand::Goal | SlashCommand::Superloop) {
             self.bottom_pane.drain_pending_submission_state();
         }
         self.bottom_pane.record_pending_slash_command_history();
@@ -236,6 +254,21 @@ impl ChatWidget {
                     self.add_info_message(
                         GOAL_USAGE.to_string(),
                         Some(GOAL_USAGE_HINT.to_string()),
+                    );
+                }
+            }
+            SlashCommand::Superloop => {
+                if !self.config.features.enabled(Feature::Goals) {
+                    return;
+                }
+                if let Some(thread_id) = self.thread_id {
+                    self.app_event_tx
+                        .send(AppEvent::OpenThreadGoalMenu { thread_id });
+                    self.append_message_history_entry("/superloop".to_string());
+                } else {
+                    self.add_info_message(
+                        SUPERLOOP_USAGE.to_string(),
+                        Some(SUPERLOOP_USAGE_HINT.to_string()),
                     );
                 }
             }
@@ -650,12 +683,8 @@ impl ChatWidget {
                 if !self.config.features.enabled(Feature::Goals) {
                     return;
                 }
-                enum GoalControlCommand {
-                    Clear,
-                    SetStatus(AppThreadGoalStatus),
-                }
-                let control_command = match trimmed.to_ascii_lowercase().as_str() {
-                    "clear" => Some(GoalControlCommand::Clear),
+                let normalized = trimmed.to_ascii_lowercase();
+                let control_command = match normalized.as_str() {
                     "edit" => {
                         self.app_event_tx.send(AppEvent::OpenThreadGoalEditor {
                             thread_id: self.thread_id,
@@ -665,9 +694,7 @@ impl ChatWidget {
                         }
                         return;
                     }
-                    "pause" => Some(GoalControlCommand::SetStatus(AppThreadGoalStatus::Paused)),
-                    "resume" => Some(GoalControlCommand::SetStatus(AppThreadGoalStatus::Active)),
-                    _ => None,
+                    _ => parse_goal_control_command(normalized.as_str()),
                 };
                 if let Some(command) = control_command {
                     let Some(thread_id) = self.thread_id else {
@@ -739,8 +766,81 @@ impl ChatWidget {
                     thread_id,
                     objective: objective.to_string(),
                     mode: ThreadGoalSetMode::ConfirmIfExists,
+                    superloop_enabled: None,
                 });
                 self.append_message_history_entry(format!("/goal {trimmed}"));
+                if source == SlashCommandDispatchSource::Live {
+                    self.bottom_pane.drain_pending_submission_state();
+                }
+            }
+            SlashCommand::Superloop if !trimmed.is_empty() => {
+                if !self.config.features.enabled(Feature::Goals) {
+                    return;
+                }
+                let normalized = trimmed.to_ascii_lowercase();
+                if matches!(
+                    normalized.as_str(),
+                    "on" | "off" | "enable" | "enabled" | "disable" | "disabled" | "status"
+                ) {
+                    self.add_info_message(
+                        SUPERLOOP_USAGE.to_string(),
+                        Some(SUPERLOOP_USAGE_HINT.to_string()),
+                    );
+                    if source == SlashCommandDispatchSource::Live {
+                        self.bottom_pane.drain_pending_submission_state();
+                    }
+                    return;
+                }
+                let objective = args.trim();
+                if objective.is_empty() {
+                    self.add_error_message("Super loop objective must not be empty.".to_string());
+                    self.add_info_message(
+                        SUPERLOOP_USAGE.to_string(),
+                        Some(SUPERLOOP_USAGE_HINT.to_string()),
+                    );
+                    if source == SlashCommandDispatchSource::Live {
+                        self.bottom_pane.drain_pending_submission_state();
+                    }
+                    return;
+                }
+                let validation_source = match source {
+                    SlashCommandDispatchSource::Live => GoalObjectiveValidationSource::Live,
+                    SlashCommandDispatchSource::Queued => GoalObjectiveValidationSource::Queued,
+                };
+                if !self.goal_objective_is_allowed(objective, validation_source) {
+                    return;
+                }
+                let Some(thread_id) = self.thread_id else {
+                    if source == SlashCommandDispatchSource::Live {
+                        self.queue_user_message_with_options(
+                            UserMessage {
+                                text: format!("/superloop {args}"),
+                                local_images: Vec::new(),
+                                remote_image_urls: Vec::new(),
+                                text_elements: Vec::new(),
+                                mention_bindings: Vec::new(),
+                            },
+                            QueuedInputAction::ParseSlash,
+                        );
+                        self.bottom_pane.drain_pending_submission_state();
+                    } else {
+                        self.add_info_message(
+                            SUPERLOOP_USAGE.to_string(),
+                            Some(
+                                "The session must start before you can set a super loop goal."
+                                    .to_string(),
+                            ),
+                        );
+                    }
+                    return;
+                };
+                self.app_event_tx.send(AppEvent::SetThreadGoalObjective {
+                    thread_id,
+                    objective: objective.to_string(),
+                    mode: ThreadGoalSetMode::ConfirmIfExists,
+                    superloop_enabled: Some(true),
+                });
+                self.append_message_history_entry(format!("/superloop {trimmed}"));
                 if source == SlashCommandDispatchSource::Live {
                     self.bottom_pane.drain_pending_submission_state();
                 }
@@ -788,7 +888,9 @@ impl ChatWidget {
             }
             _ => self.dispatch_command(cmd),
         }
-        if source == SlashCommandDispatchSource::Live && cmd != SlashCommand::Goal {
+        if source == SlashCommandDispatchSource::Live
+            && !matches!(cmd, SlashCommand::Goal | SlashCommand::Superloop)
+        {
             self.bottom_pane.drain_pending_submission_state();
         }
     }
@@ -956,6 +1058,7 @@ impl ChatWidget {
             | SlashCommand::Personality
             | SlashCommand::Plan
             | SlashCommand::Goal
+            | SlashCommand::Superloop
             | SlashCommand::Side
             | SlashCommand::Keymap
             | SlashCommand::Agent

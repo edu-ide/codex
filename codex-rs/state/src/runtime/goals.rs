@@ -5,6 +5,7 @@ pub struct ThreadGoalUpdate {
     pub objective: Option<String>,
     pub status: Option<crate::ThreadGoalStatus>,
     pub token_budget: Option<Option<i64>>,
+    pub superloop_enabled: Option<bool>,
     pub expected_goal_id: Option<String>,
 }
 
@@ -34,6 +35,7 @@ SELECT
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
@@ -75,16 +77,18 @@ INSERT INTO thread_goals (
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
     updated_at_ms
-) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
+) VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, ?)
 ON CONFLICT(thread_id) DO UPDATE SET
     goal_id = excluded.goal_id,
     objective = excluded.objective,
     status = excluded.status,
     token_budget = excluded.token_budget,
+    superloop_enabled = 0,
     tokens_used = 0,
     time_used_seconds = 0,
     created_at_ms = excluded.created_at_ms,
@@ -100,6 +104,7 @@ RETURNING
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
@@ -154,11 +159,12 @@ INSERT INTO thread_goals (
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
     updated_at_ms
-) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
+) VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, ?)
 ON CONFLICT(thread_id) DO NOTHING
 RETURNING
     thread_id,
@@ -166,6 +172,7 @@ RETURNING
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
@@ -203,10 +210,12 @@ RETURNING
             objective,
             status,
             token_budget,
+            superloop_enabled,
             expected_goal_id,
         } = update;
         let objective = objective.as_deref();
         let expected_goal_id = expected_goal_id.as_deref();
+        let superloop_enabled = superloop_enabled.map(|enabled| if enabled { 1_i64 } else { 0 });
         let now_ms = datetime_to_epoch_millis(Utc::now());
         let result = match (status, token_budget) {
             (Some(status), Some(token_budget)) => {
@@ -215,6 +224,7 @@ RETURNING
 UPDATE thread_goals
 SET
     objective = COALESCE(?, objective),
+    superloop_enabled = COALESCE(?, superloop_enabled),
     status = CASE
         WHEN status = ? AND ? = ? THEN status
         WHEN ? = 'active' AND ? IS NOT NULL AND tokens_used >= ? THEN ?
@@ -227,6 +237,7 @@ WHERE thread_id = ?
             "#,
                 )
                 .bind(objective)
+                .bind(superloop_enabled)
                 .bind(crate::ThreadGoalStatus::BudgetLimited.as_str())
                 .bind(status.as_str())
                 .bind(crate::ThreadGoalStatus::Paused.as_str())
@@ -249,6 +260,7 @@ WHERE thread_id = ?
 UPDATE thread_goals
 SET
     objective = COALESCE(?, objective),
+    superloop_enabled = COALESCE(?, superloop_enabled),
     status = CASE
         WHEN status = ? AND ? = ? THEN status
         WHEN ? = 'active' AND token_budget IS NOT NULL AND tokens_used >= token_budget THEN ?
@@ -260,6 +272,7 @@ WHERE thread_id = ?
             "#,
                 )
                 .bind(objective)
+                .bind(superloop_enabled)
                 .bind(crate::ThreadGoalStatus::BudgetLimited.as_str())
                 .bind(status.as_str())
                 .bind(crate::ThreadGoalStatus::Paused.as_str())
@@ -279,6 +292,7 @@ WHERE thread_id = ?
 UPDATE thread_goals
 SET
     objective = COALESCE(?, objective),
+    superloop_enabled = COALESCE(?, superloop_enabled),
     token_budget = ?,
     status = CASE
         WHEN status = 'active' AND ? IS NOT NULL AND tokens_used >= ? THEN ?
@@ -290,6 +304,7 @@ WHERE thread_id = ?
             "#,
                 )
                 .bind(objective)
+                .bind(superloop_enabled)
                 .bind(token_budget)
                 .bind(token_budget)
                 .bind(token_budget)
@@ -302,18 +317,20 @@ WHERE thread_id = ?
                 .await?
             }
             (None, None) => {
-                if let Some(objective) = objective {
+                if objective.is_some() || superloop_enabled.is_some() {
                     sqlx::query(
                         r#"
 UPDATE thread_goals
 SET
-    objective = ?,
+    objective = COALESCE(?, objective),
+    superloop_enabled = COALESCE(?, superloop_enabled),
     updated_at_ms = ?
 WHERE thread_id = ?
   AND (? IS NULL OR goal_id = ?)
             "#,
                     )
                     .bind(objective)
+                    .bind(superloop_enabled)
                     .bind(now_ms)
                     .bind(thread_id.to_string())
                     .bind(expected_goal_id)
@@ -467,6 +484,7 @@ RETURNING
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
@@ -527,16 +545,18 @@ WHERE thread_id = ? AND goal_id = ? AND id = ?
         let (cycle_number, started_at_ms) = match existing {
             Some(row) => (row.try_get("cycle_number")?, row.try_get("started_at_ms")?),
             None => {
-                let previous_cycle_number = goal
-                    .loop_state
-                    .as_ref()
-                    .map(|loop_state| loop_state.cycle_number)
-                    .unwrap_or(0);
-                let cycle_number = if event.status == crate::ThreadGoalLoopStatus::InProgress {
-                    previous_cycle_number.saturating_add(1)
-                } else {
-                    previous_cycle_number.max(1)
-                };
+                let previous_cycle_number: i64 = sqlx::query_scalar(
+                    r#"
+SELECT COALESCE(MAX(cycle_number), 0)
+FROM thread_goal_loop_history
+WHERE thread_id = ? AND goal_id = ?
+                    "#,
+                )
+                .bind(thread_id.to_string())
+                .bind(&goal.goal_id)
+                .fetch_one(self.pool.as_ref())
+                .await?;
+                let cycle_number = previous_cycle_number.saturating_add(1);
                 (cycle_number, now_ms)
             }
         };
@@ -717,6 +737,7 @@ mod tests {
             Some(goal.clone()),
             runtime.get_thread_goal(thread_id).await.unwrap()
         );
+        assert!(!goal.superloop_enabled);
         let metadata = runtime
             .get_thread(thread_id)
             .await
@@ -731,6 +752,7 @@ mod tests {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Paused),
                     token_budget: Some(Some(200_000)),
+                    superloop_enabled: Some(true),
                     expected_goal_id: None,
                 },
             )
@@ -740,6 +762,7 @@ mod tests {
         let expected = crate::ThreadGoal {
             status: crate::ThreadGoalStatus::Paused,
             token_budget: Some(200_000),
+            superloop_enabled: true,
             updated_at: updated.updated_at,
             ..goal.clone()
         };
@@ -757,6 +780,7 @@ mod tests {
         assert_eq!("ship the new result", replaced.objective);
         assert_eq!(crate::ThreadGoalStatus::Active, replaced.status);
         assert_eq!(None, replaced.token_budget);
+        assert!(!replaced.superloop_enabled);
         assert_eq!(0, replaced.tokens_used);
         assert_eq!(0, replaced.time_used_seconds);
 
@@ -943,6 +967,114 @@ mod tests {
             kairos_started.loop_history.first()
         );
 
+        let cleanup_started = runtime
+            .record_thread_goal_loop_event(
+                thread_id,
+                crate::ThreadGoalLoopEvent {
+                    id: "cleanup_loop:worker:3".to_string(),
+                    phase: crate::ThreadGoalLoopPhase::CleanupLoop,
+                    status: crate::ThreadGoalLoopStatus::InProgress,
+                    title: "Running Cleanup Loop".to_string(),
+                    summary: "Cleanup loop started".to_string(),
+                    detail: None,
+                    error: None,
+                },
+            )
+            .await
+            .expect("cleanup loop event should record")
+            .expect("goal should still exist");
+        assert_eq!(
+            Some(crate::ThreadGoalLoopState {
+                cycle_number: 3,
+                phase: crate::ThreadGoalLoopPhase::CleanupLoop,
+                status: crate::ThreadGoalLoopStatus::InProgress,
+                summary: "Cleanup loop started".to_string(),
+                updated_at: cleanup_started.loop_state.as_ref().unwrap().updated_at,
+            }),
+            cleanup_started.loop_state
+        );
+
+        let completed_parent = runtime
+            .record_thread_goal_loop_event(
+                thread_id,
+                crate::ThreadGoalLoopEvent {
+                    id: "super_loop:worker:1".to_string(),
+                    phase: crate::ThreadGoalLoopPhase::SuperLoop,
+                    status: crate::ThreadGoalLoopStatus::Completed,
+                    title: "Running Super Loop".to_string(),
+                    summary: "Super loop completed after cleanup".to_string(),
+                    detail: None,
+                    error: None,
+                },
+            )
+            .await
+            .expect("parent completion should record")
+            .expect("goal should still exist");
+        assert_eq!(
+            Some(crate::ThreadGoalLoopState {
+                cycle_number: 1,
+                phase: crate::ThreadGoalLoopPhase::SuperLoop,
+                status: crate::ThreadGoalLoopStatus::Completed,
+                summary: "Super loop completed after cleanup".to_string(),
+                updated_at: completed_parent.loop_state.as_ref().unwrap().updated_at,
+            }),
+            completed_parent.loop_state
+        );
+
+        let execution_started = runtime
+            .record_thread_goal_loop_event(
+                thread_id,
+                crate::ThreadGoalLoopEvent {
+                    id: "execution_loop:turn:4".to_string(),
+                    phase: crate::ThreadGoalLoopPhase::ExecutionLoop,
+                    status: crate::ThreadGoalLoopStatus::InProgress,
+                    title: "Goal execution loop".to_string(),
+                    summary: "Goal execution loop turn started".to_string(),
+                    detail: None,
+                    error: None,
+                },
+            )
+            .await
+            .expect("execution loop event should record")
+            .expect("goal should still exist");
+        assert_eq!(
+            Some(crate::ThreadGoalLoopState {
+                cycle_number: 4,
+                phase: crate::ThreadGoalLoopPhase::ExecutionLoop,
+                status: crate::ThreadGoalLoopStatus::InProgress,
+                summary: "Goal execution loop turn started".to_string(),
+                updated_at: execution_started.loop_state.as_ref().unwrap().updated_at,
+            }),
+            execution_started.loop_state
+        );
+
+        let plan_started = runtime
+            .record_thread_goal_loop_event(
+                thread_id,
+                crate::ThreadGoalLoopEvent {
+                    id: "goal_continuation:plan_loop:5".to_string(),
+                    phase: crate::ThreadGoalLoopPhase::PlanLoop,
+                    status: crate::ThreadGoalLoopStatus::InProgress,
+                    title: "Plan loop agent".to_string(),
+                    summary: "Plan loop agent turn started".to_string(),
+                    detail: None,
+                    error: None,
+                },
+            )
+            .await
+            .expect("plan loop event should record")
+            .expect("goal should still exist");
+        assert_eq!(
+            Some(crate::ThreadGoalLoopState {
+                cycle_number: 5,
+                phase: crate::ThreadGoalLoopPhase::PlanLoop,
+                status: crate::ThreadGoalLoopStatus::InProgress,
+                summary: "Plan loop agent turn started".to_string(),
+                updated_at: plan_started.loop_state.as_ref().unwrap().updated_at,
+            }),
+            plan_started.loop_state
+        );
+
         let replaced = runtime
             .replace_thread_goal(
                 thread_id,
@@ -1070,6 +1202,7 @@ mod tests {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Complete),
                     token_budget: None,
+                    superloop_enabled: None,
                     expected_goal_id: Some(original.goal_id),
                 },
             )
@@ -1092,6 +1225,7 @@ mod tests {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Complete),
                     token_budget: None,
+                    superloop_enabled: None,
                     expected_goal_id: Some(replacement.goal_id),
                 },
             )
@@ -1183,6 +1317,7 @@ mod tests {
                     objective: Some("draft the report clearly".to_string()),
                     status: Some(crate::ThreadGoalStatus::Paused),
                     token_budget: Some(Some(200)),
+                    superloop_enabled: None,
                     expected_goal_id: Some(accounted.goal_id.clone()),
                 },
             )
@@ -1220,6 +1355,7 @@ mod tests {
                 objective: None,
                 status: Some(crate::ThreadGoalStatus::Paused),
                 token_budget: None,
+                superloop_enabled: None,
                 expected_goal_id: None,
             },
         );
@@ -1229,6 +1365,7 @@ mod tests {
                 objective: None,
                 status: None,
                 token_budget: Some(Some(200_000)),
+                superloop_enabled: None,
                 expected_goal_id: None,
             },
         );
@@ -1279,6 +1416,7 @@ mod tests {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Complete),
                     token_budget: None,
+                    superloop_enabled: None,
                     expected_goal_id: None,
                 },
             )
@@ -1420,6 +1558,7 @@ mod tests {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Paused),
                     token_budget: None,
+                    superloop_enabled: None,
                     expected_goal_id: None,
                 },
             )
@@ -1476,6 +1615,7 @@ mod tests {
                     objective: None,
                     status: None,
                     token_budget: Some(Some(40)),
+                    superloop_enabled: None,
                     expected_goal_id: None,
                 },
             )
@@ -1520,6 +1660,7 @@ mod tests {
                     objective: Some("stay within budget, with clearer wording".to_string()),
                     status: Some(crate::ThreadGoalStatus::Active),
                     token_budget: None,
+                    superloop_enabled: None,
                     expected_goal_id: None,
                 },
             )
@@ -1568,6 +1709,7 @@ mod tests {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Paused),
                     token_budget: None,
+                    superloop_enabled: None,
                     expected_goal_id: None,
                 },
             )
@@ -1651,6 +1793,7 @@ mod tests {
                     objective: None,
                     status: Some(crate::ThreadGoalStatus::Paused),
                     token_budget: None,
+                    superloop_enabled: None,
                     expected_goal_id: None,
                 },
             )

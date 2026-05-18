@@ -4,15 +4,16 @@ expression: rendered_goal_summary(&mut rx)
 ---
 Goal
 Status: active
+Super loop: off
 Objective: Keep improving the bare goal command until it feels calm and useful.
 Time used: 1m
 Tokens used: 12.5K
 Token budget: 80K
-Loop: cycle 3 - kairos loop - completed
-Last loop: Kairos loop completed
+Loop: cycle 3 - research loop - completed
+Last loop: Research loop completed
 Loop history
-  #3 kairos loop completed: Kairos loop completed
-    reviewed 2 goal follow-ups
-  #2 improvement loop completed: Applied 1 improvement follow-up
+  #3 research loop completed: Research loop completed
+    verified 2 goal follow-ups
+  #2 plan loop completed: Planned 1 research follow-up
 
-Commands: /goal edit, /goal pause, /goal clear
+Commands: /goal edit, /goal pause, /superloop <objective>, /goal clear

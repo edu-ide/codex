@@ -933,8 +933,14 @@ fn thread_goal_loop_phase_from_ilhae_parts(
     }
     match kind {
         codex_ilhae::LoopLifecycleKind::SuperLoop => codex_state::ThreadGoalLoopPhase::SuperLoop,
+        codex_ilhae::LoopLifecycleKind::ExecutionLoop => {
+            codex_state::ThreadGoalLoopPhase::ExecutionLoop
+        }
         codex_ilhae::LoopLifecycleKind::ImprovementLoop => {
             codex_state::ThreadGoalLoopPhase::ImprovementLoop
+        }
+        codex_ilhae::LoopLifecycleKind::CleanupLoop => {
+            codex_state::ThreadGoalLoopPhase::CleanupLoop
         }
         codex_ilhae::LoopLifecycleKind::ContextInjection => {
             codex_state::ThreadGoalLoopPhase::ContextInjection
@@ -952,6 +958,56 @@ fn thread_goal_loop_status_from_ilhae(
         }
         codex_ilhae::LoopLifecycleStatus::Completed => codex_state::ThreadGoalLoopStatus::Completed,
         codex_ilhae::LoopLifecycleStatus::Failed => codex_state::ThreadGoalLoopStatus::Failed,
+    }
+}
+
+#[cfg(feature = "ilhae")]
+async fn collect_ilhae_foreground_loop_events(
+    goal_continuation: bool,
+) -> Vec<codex_state::ThreadGoalLoopEvent> {
+    let result = if goal_continuation {
+        codex_ilhae::run_active_goal_foreground_loop_cycle_collecting_lifecycle().await
+    } else {
+        codex_ilhae::run_active_foreground_loop_cycle_collecting_lifecycle().await
+    };
+    match result {
+        Ok(notifications) => notifications
+            .into_iter()
+            .map(thread_goal_loop_event_from_ilhae_lifecycle)
+            .collect(),
+        Err(err) => {
+            let stage = if goal_continuation {
+                "goal continuation"
+            } else {
+                "app-server turn"
+            };
+            tracing::warn!(
+                error = ?err,
+                "ilhae foreground loop cycle failed before {stage}"
+            );
+            Vec::new()
+        }
+    }
+}
+
+#[cfg(feature = "ilhae")]
+fn ilhae_foreground_loop_hook(goal_continuation: bool) -> codex_app_server::AppServerTurnStartHook {
+    Arc::new(move || {
+        Box::pin(async move {
+            let thread_goal_loop_events =
+                collect_ilhae_foreground_loop_events(goal_continuation).await;
+            codex_app_server::AppServerTurnStartHookResult {
+                thread_goal_loop_events,
+            }
+        })
+    })
+}
+
+#[cfg(feature = "ilhae")]
+fn ilhae_app_server_runtime_hooks() -> codex_app_server::AppServerRuntimeHooks {
+    codex_app_server::AppServerRuntimeHooks {
+        before_turn_start: Some(ilhae_foreground_loop_hook(/*goal_continuation*/ false)),
+        before_goal_continuation: Some(ilhae_foreground_loop_hook(/*goal_continuation*/ true)),
     }
 }
 
@@ -1766,29 +1822,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     let external_notifications = None;
                     #[cfg(feature = "ilhae")]
                     let runtime_hooks = if is_ilhae_app_server {
-                        codex_app_server::AppServerRuntimeHooks {
-                            before_turn_start: Some(Arc::new(|| {
-                                Box::pin(async {
-                                    let thread_goal_loop_events =
-                                        match codex_ilhae::run_active_foreground_loop_cycle_collecting_lifecycle().await {
-                                            Ok(notifications) => notifications
-                                                .into_iter()
-                                                .map(thread_goal_loop_event_from_ilhae_lifecycle)
-                                                .collect(),
-                                            Err(err) => {
-                                                tracing::warn!(
-                                                    error = ?err,
-                                                    "ilhae foreground loop cycle failed before app-server turn"
-                                                );
-                                                Vec::new()
-                                            }
-                                        };
-                                    codex_app_server::AppServerTurnStartHookResult {
-                                        thread_goal_loop_events,
-                                    }
-                                })
-                            })),
-                        }
+                        ilhae_app_server_runtime_hooks()
                     } else {
                         codex_app_server::AppServerRuntimeHooks::default()
                     };
@@ -2947,12 +2981,21 @@ async fn run_interactive_tui(
         is_invoked_as_ilhae_cli().then(codex_ilhae::spawn_app_server_external_notification_bridge);
     #[cfg(not(feature = "ilhae"))]
     let external_notifications = None;
+    #[cfg(feature = "ilhae")]
+    let runtime_hooks = if normalized_remote.is_none() && is_invoked_as_ilhae_cli() {
+        ilhae_app_server_runtime_hooks()
+    } else {
+        codex_app_server::AppServerRuntimeHooks::default()
+    };
+    #[cfg(not(feature = "ilhae"))]
+    let runtime_hooks = codex_app_server::AppServerRuntimeHooks::default();
     codex_tui::run_main(
         interactive,
         arg0_paths,
         loader_overrides,
         normalized_remote,
         external_notifications,
+        runtime_hooks,
     )
     .await
 }

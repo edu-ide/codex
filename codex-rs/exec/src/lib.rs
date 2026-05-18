@@ -554,6 +554,7 @@ pub async fn run_main_with_external_notifications(
         opt_out_notification_methods: Vec::new(),
         external_notifications,
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        runtime_hooks: codex_app_server_client::AppServerRuntimeHooks::default(),
     };
     run_exec_session(ExecRunArgs {
         in_process_start_args,

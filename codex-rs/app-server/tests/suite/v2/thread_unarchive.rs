@@ -267,6 +267,7 @@ async fn thread_unarchive_preserves_pathless_store_metadata() -> Result<()> {
             }),
         },
         channel_capacity: in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        runtime_hooks: codex_app_server::AppServerRuntimeHooks::default(),
     })
     .await?;
 

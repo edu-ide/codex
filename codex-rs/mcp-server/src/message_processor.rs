@@ -69,6 +69,7 @@ impl MessageProcessor {
             SessionSource::Mcp,
             environment_manager,
             empty_extension_registry(),
+            /*goal_continuation_hook*/ None,
             /*analytics_events_client*/ None,
             codex_core::thread_store_from_config(config.as_ref(), state_db.clone()),
             state_db.clone(),

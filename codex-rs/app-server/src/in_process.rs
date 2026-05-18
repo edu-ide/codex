@@ -143,6 +143,8 @@ pub struct InProcessStartArgs {
     pub initialize: InitializeParams,
     /// Capacity used for all runtime queues (clamped to at least 1).
     pub channel_capacity: usize,
+    /// Local runtime hooks installed for the embedded app-server.
+    pub runtime_hooks: crate::AppServerRuntimeHooks,
 }
 
 /// Event emitted from the app-server to the in-process client.
@@ -435,7 +437,7 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                 rpc_transport: AppServerRpcTransport::InProcess,
                 remote_control_handle: None,
                 plugin_startup_tasks: crate::PluginStartupTasks::Start,
-                runtime_hooks: crate::AppServerRuntimeHooks::default(),
+                runtime_hooks: args.runtime_hooks,
             }));
             let mut thread_created_rx = processor.thread_created_receiver();
             let session = Arc::new(ConnectionSessionState::new());
@@ -788,6 +790,7 @@ mod tests {
                 capabilities: None,
             },
             channel_capacity,
+            runtime_hooks: crate::AppServerRuntimeHooks::default(),
         };
         let mut client = start(args).await.expect("in-process runtime should start");
         client._test_codex_home = Some(codex_home);

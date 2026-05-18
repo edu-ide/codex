@@ -2271,6 +2271,78 @@ async fn thread_goal_update_for_other_thread_is_ignored() {
     assert!(chat.turn_lifecycle.budget_limited_turn_ids.is_empty());
 }
 
+#[tokio::test]
+async fn duplicate_thread_goal_loop_state_updates_do_not_add_duplicate_history() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    let mut goal = test_thread_goal(
+        codex_app_server_protocol::ThreadGoalStatus::Active,
+        /*token_budget*/ None,
+        /*tokens_used*/ 0,
+    );
+    goal.loop_state = Some(codex_app_server_protocol::ThreadGoalLoopState {
+        cycle_number: 2,
+        phase: codex_app_server_protocol::ThreadGoalLoopPhase::SuperLoop,
+        status: codex_app_server_protocol::ThreadGoalLoopStatus::InProgress,
+        summary: "Goal super loop turn started".to_string(),
+        updated_at: 10,
+    });
+
+    chat.handle_server_notification(
+        ServerNotification::ThreadGoalUpdated(
+            codex_app_server_protocol::ThreadGoalUpdatedNotification {
+                thread_id: goal.thread_id.clone(),
+                turn_id: None,
+                goal: goal.clone(),
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+    let first = drain_insert_history(&mut rx);
+    assert_eq!(first.len(), 1);
+    assert!(lines_to_single_string(&first[0]).contains("Goal loop in progress"));
+
+    chat.handle_server_notification(
+        ServerNotification::ThreadGoalUpdated(
+            codex_app_server_protocol::ThreadGoalUpdatedNotification {
+                thread_id: goal.thread_id.clone(),
+                turn_id: None,
+                goal: goal.clone(),
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+    let duplicate = drain_insert_history(&mut rx);
+    assert!(
+        duplicate.is_empty(),
+        "expected duplicate loop-state update to skip history, got: {:?}",
+        duplicate
+            .iter()
+            .map(|cell| lines_to_single_string(cell))
+            .collect::<Vec<_>>()
+    );
+
+    let Some(loop_state) = goal.loop_state.as_mut() else {
+        panic!("test goal should include a loop state");
+    };
+    loop_state.status = codex_app_server_protocol::ThreadGoalLoopStatus::Completed;
+    loop_state.summary = "Goal super loop turn completed".to_string();
+    loop_state.updated_at = 11;
+    chat.handle_server_notification(
+        ServerNotification::ThreadGoalUpdated(
+            codex_app_server_protocol::ThreadGoalUpdatedNotification {
+                thread_id: goal.thread_id.clone(),
+                turn_id: None,
+                goal,
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+    let changed = drain_insert_history(&mut rx);
+    assert_eq!(changed.len(), 1);
+    assert!(lines_to_single_string(&changed[0]).contains("Goal loop completed"));
+}
+
 #[test]
 fn goal_status_indicator_formats_statuses_and_budgets() {
     assert_eq!(
@@ -2377,6 +2449,7 @@ fn test_thread_goal(
         objective: "Keep improving the benchmark".to_string(),
         status,
         token_budget,
+        superloop_enabled: false,
         tokens_used,
         time_used_seconds: 30 * 60,
         created_at: 0,

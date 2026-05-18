@@ -495,7 +495,7 @@ Experimental: use `memory/reset` to clear local memory artifacts and sqlite-back
 
 ### Example: Set and update a thread goal
 
-Use `thread/goal/set` to create or update the current goal for a materialized thread. Clients can set `budgetLimited` when they stop because a token budget is exhausted or nearly exhausted; the system also sets it when accounting crosses a configured token budget.
+Use `thread/goal/set` to create or update the current goal for a materialized thread. Clients can set `budgetLimited` when they stop because a token budget is exhausted or nearly exhausted; the system also sets it when accounting crosses a configured token budget. Set `superloopEnabled` to opt this goal into app-server turn-start super loop work.
 
 ```json
 { "method": "thread/goal/set", "id": 27, "params": {
@@ -508,6 +508,7 @@ Use `thread/goal/set` to create or update the current goal for a materialized th
     "objective": "Keep improving the benchmark until p95 latency is under 120ms",
     "status": "active",
     "tokenBudget": 200000,
+    "superloopEnabled": false,
     "tokensUsed": 0,
     "timeUsedSeconds": 0,
     "createdAt": 1776272400,
@@ -520,6 +521,7 @@ Use `thread/goal/set` to create or update the current goal for a materialized th
     "objective": "Keep improving the benchmark until p95 latency is under 120ms",
     "status": "active",
     "tokenBudget": 200000,
+    "superloopEnabled": false,
     "tokensUsed": 0,
     "timeUsedSeconds": 0,
     "createdAt": 1776272400,
@@ -532,6 +534,7 @@ Use `thread/goal/set` to create or update the current goal for a materialized th
 ```json
 { "method": "thread/goal/set", "id": 28, "params": {
     "threadId": "thr_123",
+    "superloopEnabled": true,
     "status": "paused"
 } }
 { "id": 28, "result": { "goal": {
@@ -539,6 +542,7 @@ Use `thread/goal/set` to create or update the current goal for a materialized th
     "objective": "Keep improving the benchmark until p95 latency is under 120ms",
     "status": "paused",
     "tokenBudget": 200000,
+    "superloopEnabled": true,
     "tokensUsed": 10000,
     "timeUsedSeconds": 60,
     "createdAt": 1776272400,

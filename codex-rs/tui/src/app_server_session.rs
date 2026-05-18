@@ -722,6 +722,7 @@ impl AppServerSession {
         objective: Option<String>,
         status: Option<ThreadGoalStatus>,
         token_budget: Option<Option<i64>>,
+        superloop_enabled: Option<bool>,
     ) -> Result<ThreadGoalSetResponse> {
         let request_id = self.next_request_id();
         self.client
@@ -732,6 +733,7 @@ impl AppServerSession {
                     objective,
                     status,
                     token_budget,
+                    superloop_enabled,
                 },
             })
             .await

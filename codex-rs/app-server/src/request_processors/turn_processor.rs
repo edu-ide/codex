@@ -363,9 +363,27 @@ impl TurnRequestProcessor {
             self.track_error_response(&request_id, error, /*error_type*/ None);
         })?;
         if let Some(before_turn_start) = self.runtime_hooks.before_turn_start.as_ref() {
-            let result = before_turn_start().await;
-            self.record_thread_goal_loop_events(thread_id, result.thread_goal_loop_events)
-                .await;
+            let should_run_goal_superloop = match self.state_db.as_ref() {
+                Some(state_db) => match state_db.get_thread_goal(thread_id).await {
+                    Ok(Some(goal)) => {
+                        goal.superloop_enabled
+                            && goal.status == codex_state::ThreadGoalStatus::Active
+                    }
+                    Ok(None) => false,
+                    Err(err) => {
+                        warn!(
+                            "failed to read thread goal before turn start for {thread_id}: {err}"
+                        );
+                        false
+                    }
+                },
+                None => false,
+            };
+            if should_run_goal_superloop {
+                let result = before_turn_start().await;
+                self.record_thread_goal_loop_events(thread_id, result.thread_goal_loop_events)
+                    .await;
+            }
         }
 
         let collaboration_mode = params

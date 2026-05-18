@@ -162,6 +162,7 @@ impl ThreadGoalRequestProcessor {
                             objective: Some(objective.to_string()),
                             status,
                             token_budget: params.token_budget,
+                            superloop_enabled: params.superloop_enabled,
                             expected_goal_id: Some(goal.goal_id.clone()),
                         },
                     )
@@ -176,15 +177,35 @@ impl ThreadGoalRequestProcessor {
                     .map(|goal| (goal, previous_status))
             } else {
                 let previous_status = ExternalGoalPreviousStatus::NewGoal;
-                state_db
-                    .replace_thread_goal(
-                        thread_id,
-                        objective,
-                        status.unwrap_or(codex_state::ThreadGoalStatus::Active),
-                        params.token_budget.flatten(),
-                    )
-                    .await
-                    .map(|goal| (goal, previous_status))
+                async {
+                    let goal = state_db
+                        .replace_thread_goal(
+                            thread_id,
+                            objective,
+                            status.unwrap_or(codex_state::ThreadGoalStatus::Active),
+                            params.token_budget.flatten(),
+                        )
+                        .await?;
+                    let goal = if let Some(superloop_enabled) = params.superloop_enabled {
+                        state_db
+                            .update_thread_goal(
+                                thread_id,
+                                codex_state::ThreadGoalUpdate {
+                                    objective: None,
+                                    status: None,
+                                    token_budget: None,
+                                    superloop_enabled: Some(superloop_enabled),
+                                    expected_goal_id: Some(goal.goal_id.clone()),
+                                },
+                            )
+                            .await?
+                            .unwrap_or(goal)
+                    } else {
+                        goal
+                    };
+                    Ok::<_, anyhow::Error>((goal, previous_status))
+                }
+                .await
             }
         } else {
             let existing_goal = state_db
@@ -204,6 +225,7 @@ impl ThreadGoalRequestProcessor {
                         objective: None,
                         status,
                         token_budget: params.token_budget,
+                        superloop_enabled: params.superloop_enabled,
                         expected_goal_id: None,
                     },
                 )
@@ -468,6 +490,11 @@ fn thread_goal_loop_phase_from_state(
         codex_state::ThreadGoalLoopPhase::KnowledgeLoop => ThreadGoalLoopPhase::KnowledgeLoop,
         codex_state::ThreadGoalLoopPhase::KairosLoop => ThreadGoalLoopPhase::KairosLoop,
         codex_state::ThreadGoalLoopPhase::SuperLoop => ThreadGoalLoopPhase::SuperLoop,
+        codex_state::ThreadGoalLoopPhase::PlanLoop => ThreadGoalLoopPhase::PlanLoop,
+        codex_state::ThreadGoalLoopPhase::ResearchLoop => ThreadGoalLoopPhase::ResearchLoop,
+        codex_state::ThreadGoalLoopPhase::DecisionLoop => ThreadGoalLoopPhase::DecisionLoop,
+        codex_state::ThreadGoalLoopPhase::WikiLoop => ThreadGoalLoopPhase::WikiLoop,
+        codex_state::ThreadGoalLoopPhase::LogLoop => ThreadGoalLoopPhase::LogLoop,
         codex_state::ThreadGoalLoopPhase::ImprovementLoop => ThreadGoalLoopPhase::ImprovementLoop,
         codex_state::ThreadGoalLoopPhase::CleanupLoop => ThreadGoalLoopPhase::CleanupLoop,
         codex_state::ThreadGoalLoopPhase::ExecutionLoop => ThreadGoalLoopPhase::ExecutionLoop,
@@ -485,7 +512,7 @@ fn thread_goal_loop_status_from_state(
     }
 }
 
-pub(super) fn api_thread_goal_from_state(goal: codex_state::ThreadGoal) -> ThreadGoal {
+pub(crate) fn api_thread_goal_from_state(goal: codex_state::ThreadGoal) -> ThreadGoal {
     let loop_state = goal.loop_state.map(|loop_state| ThreadGoalLoopState {
         cycle_number: loop_state.cycle_number,
         phase: thread_goal_loop_phase_from_state(loop_state.phase),
@@ -517,6 +544,7 @@ pub(super) fn api_thread_goal_from_state(goal: codex_state::ThreadGoal) -> Threa
         objective: goal.objective,
         status: thread_goal_status_from_state(goal.status),
         token_budget: goal.token_budget,
+        superloop_enabled: goal.superloop_enabled,
         tokens_used: goal.tokens_used,
         time_used_seconds: goal.time_used_seconds,
         created_at: goal.created_at.timestamp(),

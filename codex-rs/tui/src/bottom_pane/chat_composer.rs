@@ -1770,6 +1770,16 @@ impl ChatComposer {
                 ..
             } => {
                 if let Some(sel) = popup.selected_item() {
+                    let text = self.draft.textarea.text();
+                    let first_line = text.lines().next().unwrap_or("");
+                    if let Some((name, rest, _rest_offset)) = parse_slash_name(first_line)
+                        && name == sel.command()
+                        && !rest.trim().is_empty()
+                        && matches!(&sel, CommandItem::Builtin(cmd) if cmd.supports_inline_args())
+                    {
+                        self.popups.active = ActivePopup::None;
+                        return self.handle_key_event_without_popup(key_event);
+                    }
                     self.stage_selected_slash_command_history(&sel);
                     self.draft.textarea.set_text_clearing_elements("");
                     self.draft.is_bash_mode = false;
@@ -10260,6 +10270,46 @@ mod tests {
             composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         assert_eq!(result, InputResult::None);
         assert_eq!(composer.current_text(), "/plan investigate this");
+    }
+
+    #[test]
+    fn stale_slash_popup_enter_dispatches_exact_inline_command_args() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ false,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+        );
+        composer.set_goal_command_enabled(/*enabled*/ true);
+        composer.set_text_content(
+            "/superloop \"hi 2번 인사하고 완료해\"".to_string(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let mut command_popup = CommandPopup::new(
+            CommandPopupFlags {
+                goal_command_enabled: true,
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        command_popup.on_composer_text_change("/superloop".to_string());
+        composer.popups.active = ActivePopup::Command(command_popup);
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        match result {
+            InputResult::CommandWithArgs(cmd, args, text_elements) => {
+                assert_eq!(cmd, SlashCommand::Superloop);
+                assert_eq!(args, "\"hi 2번 인사하고 완료해\"");
+                assert!(text_elements.is_empty());
+            }
+            other => panic!("expected inline /superloop command, got {other:?}"),
+        }
     }
 
     #[test]

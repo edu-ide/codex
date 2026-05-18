@@ -187,6 +187,7 @@ mod tests {
                 SessionSource::Exec,
                 Arc::new(EnvironmentManager::default_for_tests()),
                 thread_extensions(guardian_agent_spawner(thread_manager.clone())),
+                /*goal_continuation_hook*/ None,
                 /*analytics_events_client*/ None,
                 thread_store,
                 Some(state_db.clone()),

@@ -1033,10 +1033,12 @@ async fn run_foreground_loop_cycle_with_runtime(
     settings_store: Arc<SettingsStore>,
     brain: Arc<brain_rs::BrainService>,
     ilhae_dir: std::path::PathBuf,
+    force_super_loop: bool,
 ) -> anyhow::Result<bool> {
     let settings = settings_store.get();
-    if crate::session_context_service::build_runtime_loop_developer_instructions(&settings)
-        .is_none()
+    if !force_super_loop
+        && crate::session_context_service::build_runtime_loop_developer_instructions(&settings)
+            .is_none()
     {
         return Ok(false);
     }
@@ -1094,14 +1096,25 @@ async fn run_foreground_loop_cycle_with_runtime(
             .time_to_idle(std::time::Duration::from_secs(3600))
             .build(),
     );
-    crate::super_loop::maybe_run_cycle(
-        crate::super_loop::SuperLoopDriver::Worker,
-        brain,
-        settings_store,
-        autonomous_sessions,
-        ilhae_dir,
-    )
-    .await;
+    if force_super_loop {
+        crate::super_loop::run_goal_cycle(
+            crate::super_loop::SuperLoopDriver::Worker,
+            brain,
+            settings_store,
+            autonomous_sessions,
+            ilhae_dir,
+        )
+        .await;
+    } else {
+        crate::super_loop::maybe_run_cycle(
+            crate::super_loop::SuperLoopDriver::Worker,
+            brain,
+            settings_store,
+            autonomous_sessions,
+            ilhae_dir,
+        )
+        .await;
+    }
 
     Ok(true)
 }
@@ -1123,23 +1136,57 @@ pub async fn run_exec_foreground_loop_cycle(
         )?,
     );
 
-    run_foreground_loop_cycle_with_runtime(settings_store, brain, ilhae_dir)
-        .await
-        .map(|_| ())
+    run_foreground_loop_cycle_with_runtime(
+        settings_store,
+        brain,
+        ilhae_dir,
+        /*force_super_loop*/ false,
+    )
+    .await
+    .map(|_| ())
 }
 
 pub async fn run_active_foreground_loop_cycle() -> anyhow::Result<bool> {
     let Some(runtime) = native_runtime_context() else {
         return Ok(false);
     };
-    run_foreground_loop_cycle_with_runtime(runtime.settings_store, runtime.brain, runtime.ilhae_dir)
-        .await
+    run_foreground_loop_cycle_with_runtime(
+        runtime.settings_store,
+        runtime.brain,
+        runtime.ilhae_dir,
+        /*force_super_loop*/ false,
+    )
+    .await
+}
+
+pub async fn run_active_goal_foreground_loop_cycle() -> anyhow::Result<bool> {
+    let Some(runtime) = native_runtime_context() else {
+        return Ok(false);
+    };
+    run_foreground_loop_cycle_with_runtime(
+        runtime.settings_store,
+        runtime.brain,
+        runtime.ilhae_dir,
+        /*force_super_loop*/ true,
+    )
+    .await
 }
 
 pub async fn run_active_foreground_loop_cycle_collecting_lifecycle()
 -> anyhow::Result<Vec<crate::IlhaeLoopLifecycleNotification>> {
     let mut lifecycle_rx = subscribe_native_loop_lifecycle();
     run_active_foreground_loop_cycle().await?;
+    let mut notifications = Vec::new();
+    while let Ok(notification) = lifecycle_rx.try_recv() {
+        notifications.push(notification);
+    }
+    Ok(notifications)
+}
+
+pub async fn run_active_goal_foreground_loop_cycle_collecting_lifecycle()
+-> anyhow::Result<Vec<crate::IlhaeLoopLifecycleNotification>> {
+    let mut lifecycle_rx = subscribe_native_loop_lifecycle();
+    run_active_goal_foreground_loop_cycle().await?;
     let mut notifications = Vec::new();
     while let Ok(notification) = lifecycle_rx.try_recv() {
         notifications.push(notification);

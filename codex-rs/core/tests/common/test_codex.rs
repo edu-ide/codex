@@ -219,6 +219,7 @@ pub struct TestCodexBuilder {
     cloud_requirements: Option<CloudRequirementsLoader>,
     user_shell_override: Option<Shell>,
     exec_server_url: Option<String>,
+    goal_continuation_hook: Option<codex_core::GoalContinuationHook>,
 }
 
 impl TestCodexBuilder {
@@ -277,6 +278,11 @@ impl TestCodexBuilder {
 
     pub fn with_exec_server_url(mut self, exec_server_url: impl Into<String>) -> Self {
         self.exec_server_url = Some(exec_server_url.into());
+        self
+    }
+
+    pub fn with_goal_continuation_hook(mut self, hook: codex_core::GoalContinuationHook) -> Self {
+        self.goal_continuation_hook = Some(hook);
         self
     }
 
@@ -474,6 +480,7 @@ impl TestCodexBuilder {
             SessionSource::Exec,
             Arc::clone(&environment_manager),
             empty_extension_registry(),
+            self.goal_continuation_hook.clone(),
             /*analytics_events_client*/ None,
             thread_store,
             state_db.clone(),
@@ -1043,6 +1050,7 @@ pub fn test_codex() -> TestCodexBuilder {
         cloud_requirements: None,
         user_shell_override: None,
         exec_server_url: None,
+        goal_continuation_hook: None,
     }
 }
 

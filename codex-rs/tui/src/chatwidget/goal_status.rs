@@ -23,6 +23,10 @@ impl GoalStatusState {
         self.goal.status == AppThreadGoalStatus::Active
     }
 
+    pub(super) fn has_same_loop_state(&self, goal: &AppThreadGoal) -> bool {
+        self.goal.thread_id == goal.thread_id && self.goal.loop_state == goal.loop_state
+    }
+
     pub(super) fn indicator(
         &self,
         now: Instant,
@@ -215,6 +219,7 @@ mod tests {
                 objective: "do the thing".to_string(),
                 status: AppThreadGoalStatus::Active,
                 token_budget: None,
+                superloop_enabled: false,
                 tokens_used: 0,
                 time_used_seconds,
                 created_at: 1,

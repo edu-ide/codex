@@ -3589,6 +3589,8 @@ pub struct ThreadGoal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub token_budget: Option<i64>,
+    #[serde(default)]
+    pub superloop_enabled: bool,
     pub tokens_used: i64,
     pub time_used_seconds: i64,
     pub created_at: i64,

@@ -701,9 +701,16 @@ impl App {
                 thread_id,
                 objective,
                 mode,
+                superloop_enabled,
             } => {
-                self.set_thread_goal_objective(app_server, thread_id, objective, mode)
-                    .await;
+                self.set_thread_goal_objective(
+                    app_server,
+                    thread_id,
+                    objective,
+                    mode,
+                    superloop_enabled,
+                )
+                .await;
             }
             AppEvent::SetThreadGoalStatus { thread_id, status } => {
                 self.set_thread_goal_status(app_server, thread_id, status)

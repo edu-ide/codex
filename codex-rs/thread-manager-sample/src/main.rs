@@ -124,6 +124,7 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         SessionSource::Exec,
         environment_manager,
         empty_extension_registry(),
+        /*goal_continuation_hook*/ None,
         /*analytics_events_client*/ None,
         Arc::clone(&thread_store),
         state_db,

@@ -25,6 +25,7 @@ use std::io::Result as IoResult;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use codex_app_server::AppServerRuntimeHooks;
 pub use codex_app_server::app_server_control_socket_path;
 pub use codex_app_server::in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 pub use codex_app_server::in_process::InProcessServerEvent;
@@ -366,6 +367,8 @@ pub struct InProcessClientStartArgs {
     pub external_notifications: Option<mpsc::Receiver<ServerNotification>>,
     /// Queue capacity for command/event channels (clamped to at least 1).
     pub channel_capacity: usize,
+    /// Local runtime hooks installed for the embedded app-server.
+    pub runtime_hooks: AppServerRuntimeHooks,
 }
 
 fn configured_thread_config_loader(config: &Config) -> Arc<dyn ThreadConfigLoader> {
@@ -418,6 +421,7 @@ impl InProcessClientStartArgs {
             enable_codex_api_key_env: self.enable_codex_api_key_env,
             initialize,
             channel_capacity: self.channel_capacity,
+            runtime_hooks: self.runtime_hooks,
         }
     }
 }
@@ -1106,6 +1110,7 @@ mod tests {
             opt_out_notification_methods: Vec::new(),
             external_notifications,
             channel_capacity,
+            runtime_hooks: AppServerRuntimeHooks::default(),
         })
         .await
         .expect("in-process app-server client should start");
@@ -2313,6 +2318,7 @@ mod tests {
             opt_out_notification_methods: Vec::new(),
             external_notifications: None,
             channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+            runtime_hooks: AppServerRuntimeHooks::default(),
         }
         .into_runtime_start_args();
 
@@ -2355,6 +2361,7 @@ mod tests {
             opt_out_notification_methods: Vec::new(),
             external_notifications: None,
             channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+            runtime_hooks: AppServerRuntimeHooks::default(),
         }
         .into_runtime_start_args();
 

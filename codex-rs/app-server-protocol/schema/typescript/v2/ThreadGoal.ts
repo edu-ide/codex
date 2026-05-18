@@ -5,4 +5,4 @@ import type { ThreadGoalLoopHistoryEntry } from "./ThreadGoalLoopHistoryEntry";
 import type { ThreadGoalLoopState } from "./ThreadGoalLoopState";
 import type { ThreadGoalStatus } from "./ThreadGoalStatus";
 
-export type ThreadGoal = { threadId: string, objective: string, status: ThreadGoalStatus, tokenBudget: number | null, tokensUsed: number, timeUsedSeconds: number, createdAt: number, updatedAt: number, loopState: ThreadGoalLoopState | null, loopHistory: Array<ThreadGoalLoopHistoryEntry>, };
+export type ThreadGoal = { threadId: string, objective: string, status: ThreadGoalStatus, tokenBudget: number | null, superloopEnabled: boolean, tokensUsed: number, timeUsedSeconds: number, createdAt: number, updatedAt: number, loopState: ThreadGoalLoopState | null, loopHistory: Array<ThreadGoalLoopHistoryEntry>, };

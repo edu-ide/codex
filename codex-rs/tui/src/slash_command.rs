@@ -36,6 +36,7 @@ pub enum SlashCommand {
     Compact,
     Plan,
     Goal,
+    Superloop,
     Agent,
     Side,
     Copy,
@@ -113,6 +114,7 @@ impl SlashCommand {
             SlashCommand::Settings => "configure realtime microphone/speaker",
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Goal => "set or view the goal for a long-running task",
+            SlashCommand::Superloop => "set a goal and run automatic goal-loop turns",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::Side => "start a side conversation in an ephemeral fork",
             SlashCommand::Permissions => "choose what Codex is allowed to do",
@@ -148,6 +150,7 @@ impl SlashCommand {
                 | SlashCommand::Rename
                 | SlashCommand::Plan
                 | SlashCommand::Goal
+                | SlashCommand::Superloop
                 | SlashCommand::Ide
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
@@ -207,6 +210,7 @@ impl SlashCommand {
             | SlashCommand::Ps
             | SlashCommand::Stop
             | SlashCommand::Goal
+            | SlashCommand::Superloop
             | SlashCommand::Mcp
             | SlashCommand::Apps
             | SlashCommand::Plugins
@@ -277,6 +281,17 @@ mod tests {
         assert!(SlashCommand::Raw.available_during_task());
         assert!(SlashCommand::Raw.available_in_side_conversation());
         assert!(SlashCommand::Raw.supports_inline_args());
+    }
+
+    #[test]
+    fn superloop_command_parses_and_takes_args() {
+        assert_eq!(SlashCommand::Superloop.command(), "superloop");
+        assert_eq!(
+            SlashCommand::from_str("superloop"),
+            Ok(SlashCommand::Superloop)
+        );
+        assert!(SlashCommand::Superloop.supports_inline_args());
+        assert!(SlashCommand::Superloop.available_during_task());
     }
 
     #[test]

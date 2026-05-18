@@ -567,6 +567,11 @@ pub enum ThreadGoalLoopPhase {
     KnowledgeLoop,
     KairosLoop,
     SuperLoop,
+    PlanLoop,
+    ResearchLoop,
+    DecisionLoop,
+    WikiLoop,
+    LogLoop,
     ImprovementLoop,
     CleanupLoop,
     ExecutionLoop,
@@ -625,6 +630,8 @@ pub struct ThreadGoal {
     pub status: ThreadGoalStatus,
     #[ts(type = "number | null")]
     pub token_budget: Option<i64>,
+    #[serde(default)]
+    pub superloop_enabled: bool,
     #[ts(type = "number")]
     pub tokens_used: i64,
     #[ts(type = "number")]
@@ -644,6 +651,7 @@ impl From<codex_protocol::protocol::ThreadGoal> for ThreadGoal {
             objective: value.objective,
             status: value.status.into(),
             token_budget: value.token_budget,
+            superloop_enabled: value.superloop_enabled,
             tokens_used: value.tokens_used,
             time_used_seconds: value.time_used_seconds,
             created_at: value.created_at,
@@ -671,6 +679,8 @@ pub struct ThreadGoalSetParams {
     )]
     #[ts(optional = nullable, type = "number | null")]
     pub token_budget: Option<Option<i64>>,
+    #[ts(optional = nullable)]
+    pub superloop_enabled: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

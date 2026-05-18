@@ -51,6 +51,7 @@ pub async fn build_prompt_input(
                 .map_err(|err| CodexErr::Fatal(err.to_string()))?,
         ),
         empty_extension_registry(),
+        /*goal_continuation_hook*/ None,
         /*analytics_events_client*/ None,
         thread_store,
         state_db.clone(),

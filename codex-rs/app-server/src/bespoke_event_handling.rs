@@ -2,6 +2,7 @@ use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::outgoing_message::ClientRequestResult;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
+use crate::request_processors::api_thread_goal_from_state;
 use crate::request_processors::populate_thread_turns_from_history;
 use crate::request_processors::thread_from_stored_thread;
 use crate::server_request_error::is_turn_transition_server_request_error;
@@ -1191,10 +1192,25 @@ pub(crate) async fn apply_bespoke_event_handling(
             }
         }
         EventMsg::ThreadGoalUpdated(thread_goal_event) => {
+            let goal = match conversation.state_db() {
+                Some(state_db) => match state_db.get_thread_goal(thread_goal_event.thread_id).await
+                {
+                    Ok(Some(goal)) => api_thread_goal_from_state(goal),
+                    Ok(None) => thread_goal_event.goal.clone().into(),
+                    Err(err) => {
+                        tracing::warn!(
+                            "failed to enrich thread goal update for {}: {err}",
+                            thread_goal_event.thread_id
+                        );
+                        thread_goal_event.goal.clone().into()
+                    }
+                },
+                None => thread_goal_event.goal.clone().into(),
+            };
             let notification = ThreadGoalUpdatedNotification {
                 thread_id: thread_goal_event.thread_id.to_string(),
                 turn_id: thread_goal_event.turn_id,
-                goal: thread_goal_event.goal.clone().into(),
+                goal,
             };
             outgoing
                 .send_global_server_notification(ServerNotification::ThreadGoalUpdated(
@@ -3368,6 +3384,128 @@ mod tests {
             }
             other => bail!("unexpected message: {other:?}"),
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_goal_updated_enriches_loop_state_from_state_db() -> Result<()> {
+        let codex_home = TempDir::new()?;
+        let config = load_default_config_for_test(&codex_home).await;
+        let state_db = codex_core::init_state_db(&config)
+            .await
+            .expect("state db should initialize");
+        let thread_manager = Arc::new(
+            codex_core::test_support::thread_manager_with_models_provider_home_and_state(
+                CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+                config.model_provider.clone(),
+                config.codex_home.to_path_buf(),
+                Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+                Some(state_db.clone()),
+            ),
+        );
+        let codex_core::NewThread {
+            thread_id: conversation_id,
+            thread: conversation,
+            ..
+        } = thread_manager.start_thread(config).await?;
+        let thread_metadata = codex_state::ThreadMetadataBuilder::new(
+            conversation_id,
+            codex_home.path().join("rollout.jsonl"),
+            Utc::now(),
+            SessionSource::Exec,
+        )
+        .build("mock_provider");
+        state_db.upsert_thread(&thread_metadata).await?;
+        let goal = state_db
+            .replace_thread_goal(
+                conversation_id,
+                "keep polishing",
+                codex_state::ThreadGoalStatus::Active,
+                /*token_budget*/ None,
+            )
+            .await?;
+        state_db
+            .record_thread_goal_loop_event(
+                conversation_id,
+                codex_state::ThreadGoalLoopEvent {
+                    id: "loop-1".to_string(),
+                    phase: codex_state::ThreadGoalLoopPhase::SuperLoop,
+                    status: codex_state::ThreadGoalLoopStatus::InProgress,
+                    title: "Goal super loop".to_string(),
+                    summary: "Goal super loop turn started".to_string(),
+                    detail: None,
+                    error: None,
+                },
+            )
+            .await?
+            .expect("loop event should update the goal");
+        let thread_state = new_thread_state();
+        let thread_watch_manager = ThreadWatchManager::new();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(1)],
+            conversation_id,
+        );
+
+        apply_bespoke_event_handling(
+            Event {
+                id: "turn-1".to_string(),
+                msg: EventMsg::ThreadGoalUpdated(
+                    codex_protocol::protocol::ThreadGoalUpdatedEvent {
+                        thread_id: conversation_id,
+                        turn_id: Some("turn-1".to_string()),
+                        goal: codex_protocol::protocol::ThreadGoal {
+                            thread_id: conversation_id,
+                            objective: goal.objective,
+                            status: codex_protocol::protocol::ThreadGoalStatus::Active,
+                            token_budget: goal.token_budget,
+                            superloop_enabled: goal.superloop_enabled,
+                            tokens_used: goal.tokens_used,
+                            time_used_seconds: goal.time_used_seconds,
+                            created_at: goal.created_at.timestamp(),
+                            updated_at: goal.updated_at.timestamp(),
+                        },
+                    },
+                ),
+            },
+            conversation_id,
+            conversation,
+            thread_manager,
+            outgoing,
+            thread_state,
+            thread_watch_manager,
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+
+        let msg = recv_broadcast_message(&mut rx).await?;
+        let OutgoingMessage::AppServerNotification(ServerNotification::ThreadGoalUpdated(
+            notification,
+        )) = msg
+        else {
+            bail!("unexpected message: {msg:?}");
+        };
+        let loop_state = notification
+            .goal
+            .loop_state
+            .expect("loop state should be enriched from state db");
+        assert_eq!(loop_state.cycle_number, 1);
+        assert_eq!(
+            loop_state.phase,
+            codex_app_server_protocol::ThreadGoalLoopPhase::SuperLoop
+        );
+        assert_eq!(
+            loop_state.status,
+            codex_app_server_protocol::ThreadGoalLoopStatus::InProgress
+        );
+        assert_eq!(loop_state.summary, "Goal super loop turn started");
+        assert_eq!(notification.goal.loop_history.len(), 1);
         Ok(())
     }
 

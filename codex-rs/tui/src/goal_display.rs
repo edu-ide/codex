@@ -87,6 +87,7 @@ mod tests {
                 .to_string(),
             status: ThreadGoalStatus::BudgetLimited,
             token_budget,
+            superloop_enabled: false,
             tokens_used,
             time_used_seconds: 120,
             created_at: 0,

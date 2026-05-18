@@ -1791,6 +1791,7 @@ mod tests {
                 objective: Some("ship it".to_string()),
                 status: None,
                 token_budget: None,
+                superloop_enabled: None,
             },
         };
         assert_eq!(
@@ -2989,6 +2990,7 @@ mod tests {
                 objective: Some("ship goal mode".to_string()),
                 status: Some(v2::ThreadGoalStatus::Active),
                 token_budget: Some(Some(10_000)),
+                superloop_enabled: None,
             },
         };
         let get_request = ClientRequest::ThreadGoalGet {
@@ -3025,6 +3027,7 @@ mod tests {
             objective: "ship goal mode".to_string(),
             status: v2::ThreadGoalStatus::Active,
             token_budget: Some(10_000),
+            superloop_enabled: false,
             tokens_used: 123,
             time_used_seconds: 45,
             created_at: 1_700_000_000,

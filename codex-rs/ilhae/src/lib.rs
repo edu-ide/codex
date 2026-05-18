@@ -105,6 +105,8 @@ pub use startup_main::prepare_native_turn_inputs;
 pub use startup_main::prepare_session_turn_inputs;
 pub use startup_main::run_active_foreground_loop_cycle;
 pub use startup_main::run_active_foreground_loop_cycle_collecting_lifecycle;
+pub use startup_main::run_active_goal_foreground_loop_cycle;
+pub use startup_main::run_active_goal_foreground_loop_cycle_collecting_lifecycle;
 pub use startup_main::run_exec_foreground_loop_cycle;
 pub use startup_main::run_ilhae_proxy;
 pub use startup_main::spawn_native_runtime_server;

@@ -21,6 +21,7 @@ pub use app::AppExitInfo;
 pub use app::ExitReason;
 use app_server_session::AppServerSession;
 use codex_app_server_client::AppServerClient;
+use codex_app_server_client::AppServerRuntimeHooks;
 use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 use codex_app_server_client::InProcessAppServerClient;
 use codex_app_server_client::InProcessClientStartArgs;
@@ -295,6 +296,7 @@ async fn start_embedded_app_server(
     external_notifications: Option<
         tokio::sync::mpsc::Receiver<codex_app_server_protocol::ServerNotification>,
     >,
+    runtime_hooks: AppServerRuntimeHooks,
 ) -> color_eyre::Result<InProcessAppServerClient> {
     start_embedded_app_server_with(
         arg0_paths,
@@ -308,6 +310,7 @@ async fn start_embedded_app_server(
         state_db,
         environment_manager,
         external_notifications,
+        runtime_hooks,
         InProcessAppServerClient::start,
     )
     .await
@@ -487,6 +490,7 @@ async fn start_app_server(
     external_notifications: Option<
         tokio::sync::mpsc::Receiver<codex_app_server_protocol::ServerNotification>,
     >,
+    runtime_hooks: AppServerRuntimeHooks,
 ) -> color_eyre::Result<AppServerClient> {
     match target {
         AppServerTarget::Embedded => start_embedded_app_server(
@@ -501,6 +505,7 @@ async fn start_app_server(
             state_db,
             environment_manager,
             external_notifications,
+            runtime_hooks,
         )
         .await
         .map(AppServerClient::InProcess),
@@ -527,6 +532,7 @@ pub(crate) async fn start_app_server_for_picker(
         state_db,
         environment_manager,
         /*external_notifications*/ None,
+        AppServerRuntimeHooks::default(),
     )
     .await?;
     Ok(AppServerSession::new(app_server))
@@ -561,6 +567,7 @@ async fn start_embedded_app_server_with<F, Fut>(
     external_notifications: Option<
         tokio::sync::mpsc::Receiver<codex_app_server_protocol::ServerNotification>,
     >,
+    runtime_hooks: AppServerRuntimeHooks,
     start_client: F,
 ) -> color_eyre::Result<InProcessAppServerClient>
 where
@@ -598,6 +605,7 @@ where
         opt_out_notification_methods: Vec::new(),
         external_notifications,
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        runtime_hooks,
     })
     .await
     .wrap_err("failed to start embedded app server")?;
@@ -800,6 +808,7 @@ pub async fn run_main(
     external_notifications: Option<
         tokio::sync::mpsc::Receiver<codex_app_server_protocol::ServerNotification>,
     >,
+    runtime_hooks: AppServerRuntimeHooks,
 ) -> std::io::Result<AppExitInfo> {
     let strict_config = cli.strict_config;
     let (sandbox_mode, approval_policy) = if cli.dangerously_bypass_approvals_and_sandbox {
@@ -1199,6 +1208,7 @@ pub async fn run_main(
         remote_endpoint,
         environment_manager,
         external_notifications,
+        runtime_hooks,
     )
     .await
     .map_err(|err| std::io::Error::other(err.to_string()))
@@ -1224,6 +1234,7 @@ async fn run_ratatui_app(
     mut external_notifications: Option<
         tokio::sync::mpsc::Receiver<codex_app_server_protocol::ServerNotification>,
     >,
+    runtime_hooks: AppServerRuntimeHooks,
 ) -> color_eyre::Result<AppExitInfo> {
     let remote_mode = matches!(&app_server_target, AppServerTarget::Remote { .. });
     color_eyre::install()?;
@@ -1283,6 +1294,7 @@ async fn run_ratatui_app(
         state_db.clone(),
         environment_manager.clone(),
         external_notifications.take(),
+        runtime_hooks.clone(),
     )
     .await
     {
@@ -1630,6 +1642,7 @@ async fn run_ratatui_app(
             state_db.clone(),
             environment_manager.clone(),
             external_notifications.take(),
+            runtime_hooks.clone(),
         )
         .await
         {
@@ -1916,6 +1929,7 @@ mod tests {
             state_db,
             Arc::new(EnvironmentManager::default_for_tests()),
             /*external_notifications*/ None,
+            AppServerRuntimeHooks::default(),
         )
         .await
     }
@@ -2512,6 +2526,7 @@ mod tests {
             /*state_db*/ None,
             Arc::new(EnvironmentManager::default_for_tests()),
             /*external_notifications*/ None,
+            AppServerRuntimeHooks::default(),
             |_args| async { Err(std::io::Error::other("boom")) },
         )
         .await;

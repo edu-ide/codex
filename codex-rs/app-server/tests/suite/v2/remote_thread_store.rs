@@ -94,6 +94,7 @@ async fn thread_start_with_non_local_thread_store_does_not_create_local_persiste
             capabilities: None,
         },
         channel_capacity: in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        runtime_hooks: codex_app_server::AppServerRuntimeHooks::default(),
     })
     .await?;
 
