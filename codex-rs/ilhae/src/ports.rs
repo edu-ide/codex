@@ -46,7 +46,7 @@ pub enum AgentTransportPreference {
 
 /// Port: agent process lifecycle management.
 ///
-/// Abstracts how agent processes (gemini-cli, codex-acp) are spawned,
+/// Abstracts how agent processes (for example Gemini CLI or local A2A servers) are spawned,
 /// enabling unit tests to verify supervisor logic without real processes.
 #[async_trait::async_trait]
 pub trait AgentSpawner: Send + Sync {

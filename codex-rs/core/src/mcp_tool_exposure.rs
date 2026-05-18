@@ -1,26 +1,22 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 
 use codex_features::Feature;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::ToolInfo as McpToolInfo;
-use codex_mcp::filter_non_codex_apps_mcp_tools_only;
-use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_tools::ToolsConfig;
 
 use crate::config::Config;
 use crate::connectors;
 
 pub(crate) const DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD: usize = 100;
-const ALWAYS_DIRECT_MCP_SERVERS: &[&str] = &["browser", "brain", "computer"];
 
 pub(crate) struct McpToolExposure {
-    pub(crate) direct_tools: HashMap<String, McpToolInfo>,
-    pub(crate) deferred_tools: Option<HashMap<String, McpToolInfo>>,
+    pub(crate) direct_tools: Vec<McpToolInfo>,
+    pub(crate) deferred_tools: Option<Vec<McpToolInfo>>,
 }
 
 pub(crate) fn build_mcp_tool_exposure(
-    all_mcp_tools: &HashMap<String, McpToolInfo>,
+    all_mcp_tools: &[McpToolInfo],
     connectors: Option<&[connectors::AppInfo]>,
     explicitly_enabled_connectors: &[connectors::AppInfo],
     config: &Config,
@@ -36,7 +32,6 @@ pub(crate) fn build_mcp_tool_exposure(
     }
 
     let should_defer = tools_config.search_tool
-        && !provider_uses_json_function_tools(&config.model_provider_id)
         && (config
             .features
             .enabled(Feature::ToolSearchAlwaysDeferMcpTools)
@@ -51,20 +46,11 @@ pub(crate) fn build_mcp_tool_exposure(
 
     let direct_tools =
         filter_codex_apps_mcp_tools(all_mcp_tools, explicitly_enabled_connectors, config);
-    let mut direct_tools = direct_tools;
-    for tool_name in direct_tools.keys() {
-        deferred_tools.remove(tool_name);
-    }
-    let always_direct_tool_names = deferred_tools
+    let direct_tool_names = direct_tools
         .iter()
-        .filter(|(_, tool)| always_expose_mcp_tool_directly(tool))
-        .map(|(tool_name, _)| tool_name.clone())
-        .collect::<Vec<_>>();
-    for tool_name in always_direct_tool_names {
-        if let Some(tool) = deferred_tools.remove(&tool_name) {
-            direct_tools.insert(tool_name, tool);
-        }
-    }
+        .map(McpToolInfo::canonical_tool_name)
+        .collect::<HashSet<_>>();
+    deferred_tools.retain(|tool| !direct_tool_names.contains(&tool.canonical_tool_name()));
 
     McpToolExposure {
         direct_tools,
@@ -72,11 +58,19 @@ pub(crate) fn build_mcp_tool_exposure(
     }
 }
 
+fn filter_non_codex_apps_mcp_tools_only(mcp_tools: &[McpToolInfo]) -> Vec<McpToolInfo> {
+    mcp_tools
+        .iter()
+        .filter(|tool| tool.server_name != CODEX_APPS_MCP_SERVER_NAME)
+        .cloned()
+        .collect()
+}
+
 fn filter_codex_apps_mcp_tools(
-    mcp_tools: &HashMap<String, McpToolInfo>,
+    mcp_tools: &[McpToolInfo],
     connectors: &[connectors::AppInfo],
     config: &Config,
-) -> HashMap<String, McpToolInfo> {
+) -> Vec<McpToolInfo> {
     let allowed: HashSet<&str> = connectors
         .iter()
         .map(|connector| connector.id.as_str())
@@ -84,7 +78,7 @@ fn filter_codex_apps_mcp_tools(
 
     mcp_tools
         .iter()
-        .filter(|(_, tool)| {
+        .filter(|tool| {
             if tool.server_name != CODEX_APPS_MCP_SERVER_NAME {
                 return false;
             }
@@ -93,12 +87,8 @@ fn filter_codex_apps_mcp_tools(
             };
             allowed.contains(connector_id) && connectors::codex_app_tool_is_enabled(config, tool)
         })
-        .map(|(name, tool)| (name.clone(), tool.clone()))
+        .cloned()
         .collect()
-}
-
-fn always_expose_mcp_tool_directly(tool: &McpToolInfo) -> bool {
-    ALWAYS_DIRECT_MCP_SERVERS.contains(&tool.server_name.as_str())
 }
 
 #[cfg(test)]

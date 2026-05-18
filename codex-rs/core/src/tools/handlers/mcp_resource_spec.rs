@@ -8,14 +8,14 @@ pub fn create_list_mcp_resources_tool() -> ToolSpec {
         (
             "server".to_string(),
             JsonSchema::string(Some(
-                "Optional MCP server name. When omitted, lists resources from every configured server. If you pass cursor, you must also pass the same server."
+                "Optional MCP server name. When omitted, lists resources from every configured server."
                     .to_string(),
             )),
         ),
         (
             "cursor".to_string(),
             JsonSchema::string(Some(
-                "Opaque cursor returned by a previous list_mcp_resources call for the same server. Never send cursor without server."
+                "Opaque cursor returned by a previous list_mcp_resources call for the same server."
                     .to_string(),
             )),
         ),
@@ -23,7 +23,7 @@ pub fn create_list_mcp_resources_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "list_mcp_resources".to_string(),
-        description: "Lists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Use this only when you need a specific MCP resource, not for broad repository or filesystem exploration. Prefer resources over web search when possible.".to_string(),
+        description: "Lists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(properties, /*required*/ None, Some(false.into())),
@@ -64,14 +64,14 @@ pub fn create_read_mcp_resource_tool() -> ToolSpec {
         (
             "server".to_string(),
             JsonSchema::string(Some(
-                "MCP server name exactly as configured. Must match the 'server' field returned by list_mcp_resources. Do not invent names like 'default'."
+                "MCP server name exactly as configured. Must match the 'server' field returned by list_mcp_resources."
                     .to_string(),
             )),
         ),
         (
             "uri".to_string(),
             JsonSchema::string(Some(
-                "Resource URI to read. Must be one of the URIs returned by list_mcp_resources for the same server."
+                "Resource URI to read. Must be one of the URIs returned by list_mcp_resources."
                     .to_string(),
             )),
         ),
@@ -80,7 +80,7 @@ pub fn create_read_mcp_resource_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: "read_mcp_resource".to_string(),
         description:
-            "Read a specific resource from an MCP server given the server name and resource URI. Only use this after list_mcp_resources returned the exact server and uri."
+            "Read a specific resource from an MCP server given the server name and resource URI."
                 .to_string(),
         strict: false,
         defer_loading: None,

@@ -19,9 +19,6 @@ pub enum ThreadEvent {
     /// Emitted when a turn is completed. Typically right after the assistant's response.
     #[serde(rename = "turn.completed")]
     TurnCompleted(TurnCompletedEvent),
-    /// Emitted when exec autonomous follow-up logic decides whether to continue or stop.
-    #[serde(rename = "autonomy.decision")]
-    AutonomyDecision(AutonomyDecisionEvent),
     /// Indicates that a turn failed with an error.
     #[serde(rename = "turn.failed")]
     TurnFailed(TurnFailedEvent),
@@ -34,9 +31,6 @@ pub enum ThreadEvent {
     /// Signals that an item has reached a terminal state—either success or failure.
     #[serde(rename = "item.completed")]
     ItemCompleted(ItemCompletedEvent),
-    /// Ilhae runtime loop lifecycle event emitted outside the active turn.
-    #[serde(rename = "loop_lifecycle")]
-    LoopLifecycle(LoopLifecycleEvent),
     /// Represents an unrecoverable error emitted directly by the event stream.
     #[serde(rename = "error")]
     Error(ThreadErrorEvent),
@@ -49,29 +43,12 @@ pub struct ThreadStartedEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS, Default)]
-pub struct TurnStartedEvent {
-    pub turn_id: String,
-}
+
+pub struct TurnStartedEvent {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 pub struct TurnCompletedEvent {
-    pub turn_id: String,
     pub usage: Usage,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AutonomyDecisionAction {
-    Continue,
-    Stop,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
-pub struct AutonomyDecisionEvent {
-    pub turn_id: String,
-    pub action: AutonomyDecisionAction,
-    pub reason: String,
-    pub stalled_turns: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
@@ -105,11 +82,6 @@ pub struct ItemCompletedEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 pub struct ItemUpdatedEvent {
     pub item: ThreadItem,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
-pub struct LoopLifecycleEvent {
-    pub notification: JsonValue,
 }
 
 /// Fatal error emitted by the stream.
@@ -294,6 +266,9 @@ pub struct McpToolCallItemResult {
     // representations). Using `JsonValue` keeps the payload wire-shaped and
     // easy to export.
     pub content: Vec<JsonValue>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub meta: Option<JsonValue>,
     pub structured_content: Option<JsonValue>,
 }
 

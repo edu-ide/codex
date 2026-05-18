@@ -9,14 +9,15 @@ use codex_exec_server::CreateDirectoryOptions;
 use codex_features::Feature;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
 use core_test_support::assert_regex_match;
+use core_test_support::managed_network_requirements_loader;
 use core_test_support::process::process_is_alive;
 use core_test_support::process::wait_for_pid_file;
 use core_test_support::process::wait_for_process_exit;
@@ -28,12 +29,12 @@ use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
-use core_test_support::skip_if_platform_sandbox_unavailable;
 use core_test_support::skip_if_sandbox;
 use core_test_support::skip_if_windows;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::TestCodexHarness;
 use core_test_support::test_codex::test_codex;
+use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use core_test_support::wait_for_event_with_timeout;
@@ -184,9 +185,11 @@ async fn wait_for_raw_unified_exec_output(
 async fn submit_unified_exec_turn(
     test: &TestCodex,
     prompt: &str,
-    sandbox_policy: SandboxPolicy,
+    permission_profile: PermissionProfile,
 ) -> Result<()> {
     let session_model = test.session_configured.model.clone();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(permission_profile, test.config.cwd.as_path());
 
     test.codex
         .submit(Op::UserTurn {
@@ -200,7 +203,7 @@ async fn submit_unified_exec_turn(
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
             sandbox_policy,
-            permission_profile: None,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -235,7 +238,6 @@ async fn unified_exec_intercepts_apply_patch_exec_command() -> Result<()> {
     skip_if_windows!(Ok(()));
 
     let builder = test_codex().with_config(|config| {
-        config.include_apply_patch_tool = true;
         config.use_experimental_unified_exec_tool = true;
         if let Err(err) = config.features.enable(Feature::UnifiedExec) {
             panic!("test config should allow feature update: {err}");
@@ -272,6 +274,8 @@ async fn unified_exec_intercepts_apply_patch_exec_command() -> Result<()> {
     let codex = test.codex.clone();
     let cwd = test.cwd_path().to_path_buf();
     let session_model = test.session_configured.model.clone();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::Disabled, &cwd);
 
     codex
         .submit(Op::UserTurn {
@@ -284,8 +288,8 @@ async fn unified_exec_intercepts_apply_patch_exec_command() -> Result<()> {
             cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: SandboxPolicy::DangerFullAccess,
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -379,7 +383,7 @@ async fn unified_exec_emits_exec_command_begin_event() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
     let cwd = test.config.cwd.to_path_buf();
 
     let call_id = "uexec-begin-event";
@@ -403,7 +407,7 @@ async fn unified_exec_emits_exec_command_begin_event() -> Result<()> {
     ];
     mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "emit begin event", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "emit begin event", PermissionProfile::Disabled).await?;
 
     let begin_event = wait_for_event_match(&test.codex, |msg| match msg {
         EventMsg::ExecCommandBegin(event) if event.call_id == call_id => Some(event.clone()),
@@ -438,7 +442,7 @@ async fn unified_exec_resolves_relative_workdir() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let workdir_rel = std::path::PathBuf::from("uexec_relative_workdir");
     let workdir = create_workspace_directory(&test, &workdir_rel).await?;
@@ -467,7 +471,7 @@ async fn unified_exec_resolves_relative_workdir() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "run relative workdir test",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -507,7 +511,7 @@ async fn unified_exec_respects_workdir_override() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let workdir = create_workspace_directory(&test, "uexec_workdir_test").await?;
 
@@ -532,7 +536,7 @@ async fn unified_exec_respects_workdir_override() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "run workdir test", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "run workdir test", PermissionProfile::Disabled).await?;
 
     let begin_event = wait_for_event_match(&test.codex, |msg| match msg {
         EventMsg::ExecCommandBegin(event) if event.call_id == call_id => Some(event.clone()),
@@ -572,7 +576,7 @@ async fn unified_exec_emits_exec_command_end_event() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-end-event";
     let args = json!({
@@ -609,7 +613,7 @@ async fn unified_exec_emits_exec_command_end_event() -> Result<()> {
     ];
     mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "emit end event", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "emit end event", PermissionProfile::Disabled).await?;
 
     let end_event = wait_for_event_match(&test.codex, |msg| match msg {
         EventMsg::ExecCommandEnd(ev) if ev.call_id == call_id => Some(ev.clone()),
@@ -645,7 +649,7 @@ async fn unified_exec_emits_output_delta_for_exec_command() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-delta-1";
     let args = json!({
@@ -667,7 +671,7 @@ async fn unified_exec_emits_output_delta_for_exec_command() -> Result<()> {
     ];
     mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "emit delta", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "emit delta", PermissionProfile::Disabled).await?;
 
     let event = wait_for_event_match(&test.codex, |msg| match msg {
         EventMsg::ExecCommandEnd(ev) if ev.call_id == call_id => Some(ev.clone()),
@@ -703,7 +707,7 @@ async fn unified_exec_full_lifecycle_with_background_end_event() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-full-lifecycle";
     // This timing force the long-standing PTY
@@ -729,7 +733,7 @@ async fn unified_exec_full_lifecycle_with_background_end_event() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "exercise full unified exec lifecycle",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -788,7 +792,6 @@ async fn unified_exec_network_denial_emits_failed_background_end_event() -> Resu
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     skip_if_windows!(Ok(()));
-    skip_if_platform_sandbox_unavailable!(PermissionProfile::workspace_write(), Ok(()));
 
     let server = start_mock_server().await;
     let (test, sandbox_policy) = unified_exec_network_denial_test(&server).await?;
@@ -832,7 +835,6 @@ async fn unified_exec_short_lived_network_denial_emits_failed_end_event() -> Res
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     skip_if_windows!(Ok(()));
-    skip_if_platform_sandbox_unavailable!(PermissionProfile::workspace_write(), Ok(()));
 
     let server = start_mock_server().await;
     let (test, sandbox_policy) = unified_exec_network_denial_test(&server).await?;
@@ -874,14 +876,8 @@ async fn unified_exec_short_lived_network_denial_emits_failed_end_event() -> Res
 #[allow(clippy::expect_used)]
 async fn unified_exec_network_denial_test(
     server: &wiremock::MockServer,
-) -> Result<(TestCodex, SandboxPolicy)> {
-    use codex_config::ConfigLayerStack;
-    use codex_config::ConfigLayerStackOrdering;
+) -> Result<(TestCodex, PermissionProfile)> {
     use codex_config::Constrained;
-    use codex_config::NetworkConstraints;
-    use codex_config::NetworkRequirementsToml;
-    use codex_config::RequirementSource;
-    use codex_config::Sourced;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -899,58 +895,35 @@ mode = "limited"
 allow_local_binding = true
 "#,
     )?;
-    let mut sandbox_policy = SandboxPolicy::new_workspace_write_policy();
-    if let SandboxPolicy::WorkspaceWrite { network_access, .. } = &mut sandbox_policy {
-        *network_access = true;
-    }
-    let sandbox_policy_for_config = sandbox_policy.clone();
-    let mut builder = test_codex().with_home(home).with_config(move |config| {
-        config.use_experimental_unified_exec_tool = true;
-        config
-            .features
-            .enable(Feature::UnifiedExec)
-            .expect("test config should allow feature update");
-        config.permissions.approval_policy = Constrained::allow_any(AskForApproval::Never);
-        config.permissions.permission_profile = Constrained::allow_any(
-            PermissionProfile::from_legacy_sandbox_policy(&sandbox_policy_for_config),
-        );
-        let layers = config
-            .config_layer_stack
-            .get_layers(
-                ConfigLayerStackOrdering::LowestPrecedenceFirst,
-                /*include_disabled*/ true,
-            )
-            .into_iter()
-            .cloned()
-            .collect();
-        let mut requirements = config.config_layer_stack.requirements().clone();
-        requirements.network = Some(Sourced::new(
-            NetworkConstraints {
-                enabled: Some(true),
-                allow_local_binding: Some(true),
-                ..Default::default()
-            },
-            RequirementSource::CloudRequirements,
-        ));
-        let mut requirements_toml = config.config_layer_stack.requirements_toml().clone();
-        requirements_toml.network = Some(NetworkRequirementsToml {
-            enabled: Some(true),
-            allow_local_binding: Some(true),
-            ..Default::default()
+    let permission_profile_for_config = PermissionProfile::workspace_write_with(
+        &[],
+        NetworkSandboxPolicy::Enabled,
+        /*exclude_tmpdir_env_var*/ false,
+        /*exclude_slash_tmp*/ false,
+    );
+    let permission_profile = permission_profile_for_config.clone();
+    let mut builder = test_codex()
+        .with_home(home)
+        .with_cloud_requirements(managed_network_requirements_loader())
+        .with_config(move |config| {
+            config.use_experimental_unified_exec_tool = true;
+            config
+                .features
+                .enable(Feature::UnifiedExec)
+                .expect("test config should allow feature update");
+            config.permissions.approval_policy = Constrained::allow_any(AskForApproval::Never);
+            config
+                .permissions
+                .set_permission_profile(permission_profile_for_config)
+                .expect("set permission profile");
         });
-        config.config_layer_stack =
-            match ConfigLayerStack::new(layers, requirements, requirements_toml) {
-                Ok(stack) => stack,
-                Err(err) => panic!("rebuild config layer stack with network requirements: {err}"),
-            };
-    });
-    let test = builder.build_remote_aware(server).await?;
+    let test = builder.build_with_remote_env(server).await?;
     assert!(
         test.config.permissions.network.is_some(),
         "expected managed network proxy config to be present"
     );
 
-    Ok((test, sandbox_policy))
+    Ok((test, permission_profile))
 }
 
 async fn mount_unified_exec_network_denial_responses(
@@ -1025,7 +998,7 @@ async fn unified_exec_emits_terminal_interaction_for_write_stdin() -> Result<()>
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let open_call_id = "uexec-open";
     let open_args = json!({
@@ -1068,7 +1041,7 @@ async fn unified_exec_emits_terminal_interaction_for_write_stdin() -> Result<()>
     ];
     mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "stdin delta", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "stdin delta", PermissionProfile::Disabled).await?;
 
     let mut terminal_interaction = None;
 
@@ -1108,7 +1081,7 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let open_call_id = "uexec-delayed-open";
     let open_args = json!({
@@ -1188,7 +1161,7 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
     submit_unified_exec_turn(
         &test,
         "delayed terminal interaction output",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1287,7 +1260,7 @@ async fn unified_exec_emits_one_begin_and_one_end_event() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let open_call_id = "uexec-open-session";
     let open_args = json!({
@@ -1333,7 +1306,7 @@ async fn unified_exec_emits_one_begin_and_one_end_event() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "check poll event behavior",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1401,7 +1374,7 @@ async fn exec_command_reports_chunk_and_exit_metadata() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-metadata";
     let args = serde_json::json!({
@@ -1423,7 +1396,7 @@ async fn exec_command_reports_chunk_and_exit_metadata() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "run metadata test", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "run metadata test", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -1496,7 +1469,7 @@ async fn exec_command_clamps_model_requested_max_output_tokens_to_policy() -> Re
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-clamped-max-output";
     let args = serde_json::json!({
@@ -1522,7 +1495,7 @@ async fn exec_command_clamps_model_requested_max_output_tokens_to_policy() -> Re
     submit_unified_exec_turn(
         &test,
         "run clamped max output test",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1558,7 +1531,7 @@ async fn write_stdin_clamps_model_requested_max_output_tokens_to_policy() -> Res
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let start_call_id = "uexec-stdin-clamp-start";
     let start_args = serde_json::json!({
@@ -1605,7 +1578,7 @@ async fn write_stdin_clamps_model_requested_max_output_tokens_to_policy() -> Res
     submit_unified_exec_turn(
         &test,
         "run clamped write_stdin output test",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1645,7 +1618,7 @@ async fn unified_exec_defaults_to_pipe() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-default-pipe";
     let args = serde_json::json!({
@@ -1670,7 +1643,7 @@ async fn unified_exec_defaults_to_pipe() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "check default pipe mode",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1714,7 +1687,7 @@ async fn unified_exec_can_enable_tty() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-tty-enabled";
     let args = serde_json::json!({
@@ -1737,7 +1710,7 @@ async fn unified_exec_can_enable_tty() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "check tty enabled", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "check tty enabled", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -1780,7 +1753,7 @@ async fn unified_exec_respects_early_exit_notifications() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-early-exit";
     let args = serde_json::json!({
@@ -1804,7 +1777,7 @@ async fn unified_exec_respects_early_exit_notifications() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "watch early exit timing",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -1863,7 +1836,7 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let start_call_id = "uexec-cat-start";
     let send_call_id = "uexec-cat-send";
@@ -1923,7 +1896,7 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
     submit_unified_exec_turn(
         &test,
         "test write_stdin exit behavior",
-        SandboxPolicy::DangerFullAccess,
+        PermissionProfile::Disabled,
     )
     .await?;
 
@@ -2017,7 +1990,7 @@ async fn unified_exec_emits_end_event_when_session_dies_via_stdin() -> Result<()
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let start_call_id = "uexec-end-on-exit-start";
     let start_args = serde_json::json!({
@@ -2076,7 +2049,7 @@ async fn unified_exec_emits_end_event_when_session_dies_via_stdin() -> Result<()
     ];
     mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "end on exit", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "end on exit", PermissionProfile::Disabled).await?;
 
     // We expect the ExecCommandEnd event to match the initial exec_command call_id.
     let end_event = wait_for_event_match(&test.codex, |msg| match msg {
@@ -2142,6 +2115,9 @@ async fn unified_exec_keeps_long_running_session_after_turn_end() -> Result<()> 
     mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
+    let turn_cwd = cwd.path().to_path_buf();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::Disabled, &turn_cwd);
 
     codex
         .submit(Op::UserTurn {
@@ -2151,11 +2127,11 @@ async fn unified_exec_keeps_long_running_session_after_turn_end() -> Result<()> 
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
-            cwd: cwd.path().to_path_buf(),
+            cwd: turn_cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: SandboxPolicy::DangerFullAccess,
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -2237,6 +2213,9 @@ async fn unified_exec_interrupt_preserves_long_running_session() -> Result<()> {
     mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
+    let turn_cwd = cwd.path().to_path_buf();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::Disabled, &turn_cwd);
 
     codex
         .submit(Op::UserTurn {
@@ -2246,11 +2225,11 @@ async fn unified_exec_interrupt_preserves_long_running_session() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
-            cwd: cwd.path().to_path_buf(),
+            cwd: turn_cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: SandboxPolicy::DangerFullAccess,
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -2300,7 +2279,7 @@ async fn unified_exec_reuses_session_via_stdin() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let first_call_id = "uexec-start";
     let first_args = serde_json::json!({
@@ -2342,7 +2321,7 @@ async fn unified_exec_reuses_session_via_stdin() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "run unified exec", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "run unified exec", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -2399,7 +2378,7 @@ async fn unified_exec_streams_after_lagged_output() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let script = r#"python3 - <<'PY'
 import sys
@@ -2460,12 +2439,7 @@ PY
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(
-        &test,
-        "exercise lag handling",
-        SandboxPolicy::DangerFullAccess,
-    )
-    .await?;
+    submit_unified_exec_turn(&test, "exercise lag handling", PermissionProfile::Disabled).await?;
     // This is a worst case scenario for the truncate logic, and CI can spend a
     // while draining the lagged tail before the follow-up tool call completes.
     wait_for_event_with_timeout(
@@ -2519,7 +2493,7 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let first_call_id = "uexec-timeout";
     let first_args = serde_json::json!({
@@ -2560,7 +2534,7 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(&test, "check timeout", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "check timeout", PermissionProfile::Disabled).await?;
 
     loop {
         let event = test.codex.next_event().await.expect("event");
@@ -2608,7 +2582,7 @@ async fn unified_exec_formats_large_output_summary() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let script = r#"python3 - <<'PY'
 import sys
@@ -2636,12 +2610,7 @@ PY
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(
-        &test,
-        "summarize large output",
-        SandboxPolicy::DangerFullAccess,
-    )
-    .await?;
+    submit_unified_exec_turn(&test, "summarize large output", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -2675,7 +2644,6 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     skip_if_windows!(Ok(()));
-    skip_if_platform_sandbox_unavailable!(PermissionProfile::read_only(), Ok(()));
 
     let server = start_mock_server().await;
 
@@ -2712,6 +2680,9 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
     let request_log = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
+    let turn_cwd = cwd.path().to_path_buf();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::read_only(), &turn_cwd);
 
     codex
         .submit(Op::UserTurn {
@@ -2721,12 +2692,12 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
-            cwd: cwd.path().to_path_buf(),
+            cwd: turn_cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
             // Important!
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -2756,7 +2727,6 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
-    use codex_config::Constrained;
     use codex_protocol::models::PermissionProfile;
     use codex_protocol::permissions::FileSystemAccessMode;
     use codex_protocol::permissions::FileSystemPath;
@@ -2766,19 +2736,13 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
 
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
-    skip_if_platform_sandbox_unavailable!(PermissionProfile::read_only(), Ok(()));
 
     let server = start_mock_server().await;
-    let read_only_policy = SandboxPolicy::new_read_only_policy();
-    let read_only_policy_for_config = read_only_policy.clone();
     let mut builder = test_codex().with_config(move |config| {
         config
             .features
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
-        config
-            .set_legacy_sandbox_policy(read_only_policy_for_config)
-            .expect("set sandbox policy");
         let mut file_system_sandbox_policy = FileSystemSandboxPolicy::default();
         file_system_sandbox_policy
             .entries
@@ -2788,11 +2752,13 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
                 },
                 access: FileSystemAccessMode::None,
             });
-        config.permissions.permission_profile =
-            Constrained::allow_any(PermissionProfile::from_runtime_permissions(
+        config
+            .permissions
+            .set_permission_profile(PermissionProfile::from_runtime_permissions(
                 &file_system_sandbox_policy,
                 NetworkSandboxPolicy::Restricted,
-            ));
+            ))
+            .expect("set permission profile");
     });
     let TestCodex {
         codex,
@@ -2833,6 +2799,9 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
     let request_log = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
+    let turn_cwd = cwd.path().to_path_buf();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::read_only(), &turn_cwd);
     codex
         .submit(Op::UserTurn {
             environments: None,
@@ -2841,11 +2810,11 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
-            cwd: cwd.path().to_path_buf(),
+            cwd: turn_cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: read_only_policy,
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -2962,6 +2931,9 @@ async fn unified_exec_python_prompt_under_seatbelt() -> Result<()> {
     let request_log = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
+    let turn_cwd = cwd.path().to_path_buf();
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(PermissionProfile::read_only(), &turn_cwd);
 
     codex
         .submit(Op::UserTurn {
@@ -2971,11 +2943,11 @@ async fn unified_exec_python_prompt_under_seatbelt() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
-            cwd: cwd.path().to_path_buf(),
+            cwd: turn_cwd,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_model,
             effort: None,
             summary: None,
@@ -3038,7 +3010,7 @@ async fn unified_exec_runs_on_all_platforms() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec";
     let args = serde_json::json!({
@@ -3058,12 +3030,7 @@ async fn unified_exec_runs_on_all_platforms() -> Result<()> {
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
 
-    submit_unified_exec_turn(
-        &test,
-        "summarize large output",
-        SandboxPolicy::DangerFullAccess,
-    )
-    .await?;
+    submit_unified_exec_turn(&test, "summarize large output", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
@@ -3102,7 +3069,7 @@ async fn unified_exec_prunes_exited_sessions_first() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     const MAX_SESSIONS_FOR_TEST: i32 = 64;
     const FILLER_SESSIONS: i32 = MAX_SESSIONS_FOR_TEST - 1;
@@ -3181,7 +3148,7 @@ async fn unified_exec_prunes_exited_sessions_first() -> Result<()> {
     let response_mock =
         mount_sse_sequence(&server, vec![first_response, completion_response]).await;
 
-    submit_unified_exec_turn(&test, "fill session cache", SandboxPolicy::DangerFullAccess).await?;
+    submit_unified_exec_turn(&test, "fill session cache", PermissionProfile::Disabled).await?;
 
     wait_for_event(&test.codex, |event| {
         matches!(event, EventMsg::TurnComplete(_))

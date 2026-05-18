@@ -25,6 +25,7 @@ pub(super) fn server_request_thread_id(request: &ServerRequest) -> Option<Thread
             ThreadId::from_string(&params.thread_id).ok()
         }
         ServerRequest::ChatgptAuthTokensRefresh { .. }
+        | ServerRequest::AttestationGenerate { .. }
         | ServerRequest::ApplyPatchApproval { .. }
         | ServerRequest::ExecCommandApproval { .. } => None,
     }
@@ -114,27 +115,6 @@ pub(super) fn server_notification_thread_target(
         ServerNotification::ModelVerification(notification) => {
             Some(notification.thread_id.as_str())
         }
-        ServerNotification::LoopLifecycleProgress(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::IlhaeLoopLifecycle(notification) => match notification {
-            codex_app_server_protocol::IlhaeLoopLifecycleNotification::Started {
-                session_id,
-                ..
-            }
-            | codex_app_server_protocol::IlhaeLoopLifecycleNotification::Progress {
-                session_id,
-                ..
-            }
-            | codex_app_server_protocol::IlhaeLoopLifecycleNotification::Completed {
-                session_id,
-                ..
-            }
-            | codex_app_server_protocol::IlhaeLoopLifecycleNotification::Failed {
-                session_id,
-                ..
-            } => Some(session_id.as_str()),
-        },
         ServerNotification::ThreadRealtimeStarted(notification) => {
             Some(notification.thread_id.as_str())
         }

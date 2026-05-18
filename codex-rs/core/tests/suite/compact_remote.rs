@@ -357,11 +357,11 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
         Some("Bearer Access Token")
     );
     assert_eq!(
-        compact_request.header("session_id").as_deref(),
+        compact_request.header("session-id").as_deref(),
         Some(session_id.as_str())
     );
     assert_eq!(
-        compact_request.header("thread_id").as_deref(),
+        compact_request.header("thread-id").as_deref(),
         Some(thread_id.as_str())
     );
     let compact_body = compact_request.body_json();
@@ -479,10 +479,9 @@ async fn assert_remote_manual_compact_request_parity(
                 responses::ev_completed("turn-three-final-response"),
             ]),
             responses::sse(vec![
-                responses::ev_local_shell_call(
-                    "turn-four-local-shell",
-                    "completed",
-                    vec!["/bin/echo", "TURN_FOUR_LOCAL_SHELL"],
+                responses::ev_shell_command_call(
+                    "turn-four-shell-command",
+                    "echo TURN_FOUR_LOCAL_SHELL",
                 ),
                 responses::ev_completed("turn-four-local-shell-response"),
             ]),
@@ -557,7 +556,10 @@ async fn assert_remote_manual_compact_request_parity(
         .submit(Op::UserInput {
             environments: None,
             items: vec![
-                UserInput::Image { image_url },
+                UserInput::Image {
+                    image_url,
+                    detail: None,
+                },
                 UserInput::Text {
                     text: "TURN_FOUR_IMAGE_USER".to_string(),
                     text_elements: Vec::new(),
@@ -589,7 +591,7 @@ async fn assert_remote_manual_compact_request_parity(
     assert_eq!(
         response_requests.len(),
         7,
-        "expected five turns with one unsupported tool continuation and one local shell continuation"
+        "expected five turns with one unsupported tool continuation and one shell command continuation"
     );
     assert_eq!(
         compact_mock.requests().len(),
@@ -664,15 +666,16 @@ async fn assert_remote_manual_compact_request_parity(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_manual_compact_api_auth_reuses_prompt_cache_key() -> Result<()> {
+async fn remote_manual_compact_api_auth_omits_service_tier_and_reuses_prompt_cache_key()
+-> Result<()> {
     skip_if_no_network!(Ok(()));
 
     assert_remote_manual_compact_request_parity(
         CodexAuth::from_api_key("dummy"),
         Some(ServiceTier::Fast),
-        Some("priority"),
+        /*expected_service_tier*/ None,
         "remote_manual_compact_api_auth_prompt_cache_key_request_diff",
-        "After five varied API-key-auth turns, remote manual compaction reuses the normal responses service_tier and prompt_cache_key while omitting responses-only fields.",
+        "After five varied API-key-auth turns, remote manual compaction omits service_tier, reuses prompt_cache_key, and still omits responses-only fields.",
     )
     .await?;
 
@@ -689,7 +692,7 @@ async fn remote_manual_compact_chatgpt_auth_reuses_service_tier_and_prompt_cache
         Some(ServiceTier::Fast),
         Some("priority"),
         "remote_manual_compact_chatgpt_auth_service_tier_prompt_cache_key_request_diff",
-        "After five varied ChatGPT-auth turns, remote manual compaction reuses the normal responses service_tier and prompt_cache_key while omitting responses-only fields.",
+        "After five varied ChatGPT-auth turns, remote manual compaction reuses service_tier and prompt_cache_key while omitting responses-only fields.",
     )
     .await?;
 
@@ -697,7 +700,7 @@ async fn remote_manual_compact_chatgpt_auth_reuses_service_tier_and_prompt_cache
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_compact_v2_reuses_context_compaction_for_followups() -> Result<()> {
+async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let harness = TestCodexHarness::with_builder(
@@ -721,7 +724,7 @@ async fn remote_compact_v2_reuses_context_compaction_for_followups() -> Result<(
                 serde_json::json!({
                     "type": "response.output_item.done",
                     "item": {
-                        "type": "context_compaction",
+                        "type": "compaction",
                         "encrypted_content": "ENCRYPTED_CONTEXT_COMPACTION_SUMMARY",
                     }
                 }),
@@ -778,8 +781,8 @@ async fn remote_compact_v2_reuses_context_compaction_for_followups() -> Result<(
     assert_eq!(compact_request.path(), "/v1/responses");
     let compact_body = compact_request.body_json().to_string();
     assert!(
-        compact_body.contains("\"type\":\"context_compaction\""),
-        "expected v2 compaction request to include the context_compaction trigger item"
+        compact_body.contains("\"type\":\"compaction_trigger\""),
+        "expected v2 compaction request to include the compaction_trigger item"
     );
     assert!(
         !compact_body.contains("ENCRYPTED_CONTEXT_COMPACTION_SUMMARY"),
@@ -789,12 +792,12 @@ async fn remote_compact_v2_reuses_context_compaction_for_followups() -> Result<(
     let follow_up_request = response_requests.last().expect("follow-up request missing");
     let follow_up_body = follow_up_request.body_json().to_string();
     assert!(
-        follow_up_body.contains("\"type\":\"context_compaction\""),
-        "expected follow-up request to preserve the v2 context_compaction item"
+        follow_up_body.contains("\"type\":\"compaction\""),
+        "expected follow-up request to preserve the compaction item"
     );
     assert!(
         follow_up_body.contains("ENCRYPTED_CONTEXT_COMPACTION_SUMMARY"),
-        "expected follow-up request to include the context compaction payload"
+        "expected follow-up request to include the compaction payload"
     );
     assert!(
         follow_up_body.contains("hello remote compact"),
@@ -805,8 +808,7 @@ async fn remote_compact_v2_reuses_context_compaction_for_followups() -> Result<(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_compact_v2_accepts_additional_output_items_before_context_compaction() -> Result<()>
-{
+async fn remote_compact_v2_accepts_additional_output_items_before_compaction() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let harness = TestCodexHarness::with_builder(
@@ -831,7 +833,7 @@ async fn remote_compact_v2_accepts_additional_output_items_before_context_compac
                 serde_json::json!({
                     "type": "response.output_item.done",
                     "item": {
-                        "type": "context_compaction",
+                        "type": "compaction",
                         "encrypted_content": "ENCRYPTED_CONTEXT_COMPACTION_SUMMARY",
                     }
                 }),
@@ -878,12 +880,12 @@ async fn remote_compact_v2_accepts_additional_output_items_before_context_compac
     let follow_up_request = response_requests.last().expect("follow-up request missing");
     let follow_up_body = follow_up_request.body_json().to_string();
     assert!(
-        follow_up_body.contains("\"type\":\"context_compaction\""),
-        "expected follow-up request to preserve the v2 context_compaction item"
+        follow_up_body.contains("\"type\":\"compaction\""),
+        "expected follow-up request to preserve the compaction item"
     );
     assert!(
         follow_up_body.contains("ENCRYPTED_CONTEXT_COMPACTION_SUMMARY"),
-        "expected follow-up request to include the context compaction payload"
+        "expected follow-up request to include the compaction payload"
     );
     assert!(
         !follow_up_body.contains("IGNORED_COMPACT_REPLY"),
@@ -914,10 +916,6 @@ async fn remote_compact_filters_deferred_dynamic_tools() -> Result<()> {
             description: "Hidden until discovered.".to_string(),
             input_schema: input_schema.clone(),
             defer_loading: true,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         },
         DynamicToolSpec {
             namespace: Some("codex_app".to_string()),
@@ -925,10 +923,6 @@ async fn remote_compact_filters_deferred_dynamic_tools() -> Result<()> {
             description: "Visible immediately.".to_string(),
             input_schema,
             defer_loading: false,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         },
     ];
     let new_thread = test
@@ -1053,12 +1047,12 @@ async fn remote_compact_runs_automatically() -> Result<()> {
     assert_eq!(
         compact_mock
             .single_request()
-            .header("session_id")
+            .header("session-id")
             .as_deref(),
         Some(session_id.as_str())
     );
     assert_eq!(
-        compact_mock.single_request().header("thread_id").as_deref(),
+        compact_mock.single_request().header("thread-id").as_deref(),
         Some(thread_id.as_str())
     );
     let follow_up_request = responses_mock.single_request();
@@ -1537,7 +1531,7 @@ async fn remote_compact_trim_estimate_uses_session_base_instructions() -> Result
     let override_base_instructions = format!(
         "{}\nREMOTE_BASE_INSTRUCTIONS_OVERRIDE {}",
         baseline_compact_request.instructions_text(),
-        "x".repeat(40_000)
+        "x".repeat(4_000)
     );
     let override_context_window = baseline_payload_tokens.saturating_add(500);
     let pretrim_override_estimate =

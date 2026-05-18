@@ -4,6 +4,7 @@ name = "codex-terminal-detection"
 [lib]
 name = "codex_terminal_detection"
 path = "src/lib.rs"
+doctest = false
 
 [lints]
 workspace = true

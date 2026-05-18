@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::future::Future;
@@ -13,6 +12,7 @@ use std::time::Instant;
 use anyhow::Result;
 use anyhow::anyhow;
 use codex_api::SharedAuthProvider;
+use codex_client::build_reqwest_client_with_custom_ca;
 use codex_config::types::McpServerEnvVar;
 use codex_exec_server::HttpClient;
 use futures::FutureExt;
@@ -24,19 +24,14 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::model::CallToolResult;
 use rmcp::model::ClientNotification;
 use rmcp::model::ClientRequest;
-use rmcp::model::CompleteRequestParams;
-use rmcp::model::CompleteResult;
 use rmcp::model::CreateElicitationRequestParams;
 use rmcp::model::CreateElicitationResult;
 use rmcp::model::CustomNotification;
 use rmcp::model::CustomRequest;
 use rmcp::model::ElicitationAction;
 use rmcp::model::Extensions;
-use rmcp::model::GetPromptRequestParams;
-use rmcp::model::GetPromptResult;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::InitializeResult;
-use rmcp::model::ListPromptsResult;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
 use rmcp::model::ListToolsResult;
@@ -75,6 +70,7 @@ use crate::stdio_server_launcher::StdioServerCommand;
 use crate::stdio_server_launcher::StdioServerLauncher;
 use crate::stdio_server_launcher::StdioServerProcessHandle;
 use crate::stdio_server_launcher::StdioServerTransport;
+use crate::utils::apply_default_headers;
 use crate::utils::build_default_headers;
 use codex_config::types::OAuthCredentialsStoreMode;
 
@@ -243,7 +239,7 @@ impl From<CreateElicitationResult> for ElicitationResponse {
         Self {
             action: value.action,
             content: value.content,
-            meta: value.meta.map(|meta| Value::Object(meta.0)),
+            meta: None,
         }
     }
 }
@@ -253,10 +249,6 @@ impl From<ElicitationResponse> for CreateElicitationResult {
         Self {
             action: value.action,
             content: value.content,
-            meta: value.meta.and_then(|meta| match meta {
-                Value::Object(object) => Some(rmcp::model::Meta(object)),
-                _ => None,
-            }),
         }
     }
 }
@@ -534,54 +526,6 @@ impl RmcpClient {
         Ok(result)
     }
 
-    pub async fn list_prompts(
-        &self,
-        params: Option<PaginatedRequestParams>,
-        timeout: Option<Duration>,
-    ) -> Result<ListPromptsResult> {
-        self.refresh_oauth_if_needed().await;
-        let result = self
-            .run_service_operation("prompts/list", timeout, move |service| {
-                let params = params.clone();
-                async move { service.list_prompts(params).await }.boxed()
-            })
-            .await?;
-        self.persist_oauth_tokens().await;
-        Ok(result)
-    }
-
-    pub async fn get_prompt(
-        &self,
-        params: GetPromptRequestParams,
-        timeout: Option<Duration>,
-    ) -> Result<GetPromptResult> {
-        self.refresh_oauth_if_needed().await;
-        let result = self
-            .run_service_operation("prompts/get", timeout, move |service| {
-                let params = params.clone();
-                async move { service.get_prompt(params).await }.boxed()
-            })
-            .await?;
-        self.persist_oauth_tokens().await;
-        Ok(result)
-    }
-
-    pub async fn complete(
-        &self,
-        params: CompleteRequestParams,
-        timeout: Option<Duration>,
-    ) -> Result<CompleteResult> {
-        self.refresh_oauth_if_needed().await;
-        let result = self
-            .run_service_operation("completion/complete", timeout, move |service| {
-                let params = params.clone();
-                async move { service.complete(params).await }.boxed()
-            })
-            .await?;
-        self.persist_oauth_tokens().await;
-        Ok(result)
-    }
-
     pub async fn read_resource(
         &self,
         params: ReadResourceRequestParams,
@@ -624,17 +568,32 @@ impl RmcpClient {
             }
             None => None,
         };
-        let mut rmcp_params = CallToolRequestParams::new(Cow::Owned(name));
-        rmcp_params.arguments = arguments;
-        rmcp_params.meta = meta;
+        let rmcp_params = CallToolRequestParams {
+            meta: None,
+            name: name.into(),
+            arguments,
+            task: None,
+        };
         let result = self
             .run_service_operation("tools/call", timeout, move |service| {
                 let rmcp_params = rmcp_params.clone();
+                let meta = meta.clone();
                 async move {
-                    let request = rmcp::model::CallToolRequest::new(rmcp_params);
                     let result = service
                         .peer()
-                        .send_request(ClientRequest::CallToolRequest(request))
+                        .send_request_with_option(
+                            ClientRequest::CallToolRequest(rmcp::model::CallToolRequest {
+                                method: Default::default(),
+                                params: rmcp_params,
+                                extensions: Default::default(),
+                            }),
+                            rmcp::service::PeerRequestOptions {
+                                timeout: None,
+                                meta,
+                            },
+                        )
+                        .await?
+                        .await_response()
                         .await?;
                     match result {
                         ServerResult::CallToolResult(result) => Ok(result),
@@ -1060,10 +1019,13 @@ async fn create_oauth_transport_and_runtime(
     StreamableHttpClientTransport<AuthClient<StreamableHttpClientAdapter>>,
     OAuthPersistor,
 )> {
+    let builder = apply_default_headers(reqwest::Client::builder(), &default_headers);
+    let oauth_metadata_client = build_reqwest_client_with_custom_ca(builder)?;
     // TODO(aibrahim): teach OAuth bootstrap and refresh to use the same
     // shared HTTP client abstraction instead of always creating the local
     // reqwest metadata client here.
-    let mut oauth_state = OAuthState::new(url.to_string(), None).await?;
+    let mut oauth_state =
+        OAuthState::new(url.to_string(), Some(oauth_metadata_client.clone())).await?;
 
     oauth_state
         .set_credentials(
@@ -1078,7 +1040,6 @@ async fn create_oauth_transport_and_runtime(
         OAuthState::Session(_) | OAuthState::AuthorizedHttpClient(_) => {
             return Err(anyhow!("unexpected OAuth state during client setup"));
         }
-        _ => return Err(anyhow!("unsupported OAuth state during client setup")),
     };
 
     let auth_client = AuthClient::new(

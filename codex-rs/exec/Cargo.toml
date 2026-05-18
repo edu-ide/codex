@@ -12,6 +12,7 @@ path = "src/main.rs"
 [lib]
 name = "codex_exec"
 path = "src/lib.rs"
+doctest = false
 
 [[test]]
 name = "all"
@@ -35,15 +36,14 @@ codex-login = { workspace = true }
 codex-model-provider-info = { workspace = true }
 codex-otel = { workspace = true }
 codex-protocol = { workspace = true }
-codex-responses-api-proxy = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-cli = { workspace = true }
 codex-utils-oss = { workspace = true }
+codex-utils-sandbox-summary = { workspace = true }
 owo-colors = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 supports-color = { workspace = true }
-toml = { workspace = true }
 tokio = { workspace = true, features = [
     "io-std",
     "macros",

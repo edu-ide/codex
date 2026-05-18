@@ -2,57 +2,6 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
-async fn live_app_server_model_rerouted_updates_session_header_to_server_model() {
-    let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
-    let conversation_id = ThreadId::new();
-
-    chat.handle_thread_session(crate::session_state::ThreadSessionState {
-        thread_id: conversation_id,
-        forked_from_id: None,
-        fork_parent_title: None,
-        thread_name: None,
-        model: "ilhae".to_string(),
-        model_provider_id: "sglang".to_string(),
-        service_tier: None,
-        approval_policy: AskForApproval::Never,
-        approvals_reviewer: ApprovalsReviewer::User,
-        permission_profile: PermissionProfile::read_only(),
-        active_permission_profile: None,
-        cwd: test_path_buf("/home/user/project").abs(),
-        instruction_source_paths: Vec::new(),
-        reasoning_effort: Some(ReasoningEffortConfig::default()),
-        message_history: None,
-        network_proxy: None,
-        rollout_path: None,
-    });
-    let initial_cells = drain_insert_history(&mut rx);
-    let initial_header = lines_to_single_string(initial_cells.last().expect("session header"));
-    assert!(
-        initial_header.contains("ilhae medium"),
-        "expected initial alias in header, got {initial_header:?}"
-    );
-
-    chat.handle_server_notification(
-        ServerNotification::ModelRerouted(codex_app_server_protocol::ModelReroutedNotification {
-            thread_id: conversation_id.to_string(),
-            turn_id: "turn-1".to_string(),
-            from_model: "ilhae".to_string(),
-            to_model: "/home/sk/models/Qwen3.6-35B-A3B".to_string(),
-            reason: codex_app_server_protocol::ModelRerouteReason::HighRiskCyberActivity,
-        }),
-        /*replay_kind*/ None,
-    );
-
-    let rerouted_cells = drain_insert_history(&mut rx);
-    let rerouted_header = lines_to_single_string(rerouted_cells.last().expect("rerouted header"));
-    assert!(
-        rerouted_header.contains("/home/sk/models/Qwen3.6-35B-A3B"),
-        "expected rerouted server model in header, got {rerouted_header:?}"
-    );
-    assert_eq!(chat.model_display_name(), "/home/sk/models/Qwen3.6-35B-A3B");
-}
-
-#[tokio::test]
 async fn invalid_url_elicitation_is_declined() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) = make_chatwidget_manual_with_sender().await;
     let thread_id = ThreadId::new();
@@ -742,7 +691,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
         .expect("status indicator should be visible");
     assert_eq!(status.header(), "Working");
     assert_eq!(status.details(), None);
-    assert!(chat.retry_status_header.is_none());
+    assert!(chat.status_state.retry_status_header.is_none());
 }
 
 #[tokio::test]

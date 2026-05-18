@@ -7,7 +7,6 @@
 //! `codex-core`.
 
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,7 +33,7 @@ use crate::server::EffectiveMcpServer;
 use crate::server::McpServerMetadata;
 use crate::tools::ToolInfo;
 use crate::tools::filter_tools;
-use crate::tools::qualify_tools;
+use crate::tools::normalize_tools_for_model;
 use crate::tools::tool_with_model_visible_input_schema;
 use anyhow::Context;
 use anyhow::Result;
@@ -44,7 +43,6 @@ use codex_config::Constrained;
 use codex_config::McpServerTransportConfig;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_login::CodexAuth;
-use codex_protocol::ToolName;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -55,15 +53,10 @@ use codex_protocol::protocol::McpStartupFailure;
 use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
 use codex_rmcp_client::ElicitationResponse;
-use rmcp::model::CompleteRequestParams;
-use rmcp::model::CompleteResult;
-use rmcp::model::GetPromptRequestParams;
-use rmcp::model::GetPromptResult;
-use rmcp::model::ListPromptsResult;
+use rmcp::model::ElicitationCapability;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
 use rmcp::model::PaginatedRequestParams;
-use rmcp::model::Prompt;
 use rmcp::model::ReadResourceRequestParams;
 use rmcp::model::ReadResourceResult;
 use rmcp::model::RequestId;
@@ -88,13 +81,20 @@ impl McpConnectionManager {
         approval_policy: &Constrained<AskForApproval>,
         permission_profile: &Constrained<PermissionProfile>,
     ) -> Self {
+        Self::new_uninitialized_with_permission_profile(approval_policy, permission_profile.get())
+    }
+
+    pub fn new_uninitialized_with_permission_profile(
+        approval_policy: &Constrained<AskForApproval>,
+        permission_profile: &PermissionProfile,
+    ) -> Self {
         Self {
             clients: HashMap::new(),
             server_metadata: HashMap::new(),
             host_owned_codex_apps_enabled: false,
             elicitation_requests: ElicitationRequestManager::new(
                 approval_policy.value(),
-                permission_profile.get().clone(),
+                permission_profile.clone(),
                 /*reviewer*/ None,
             ),
             startup_cancellation_token: CancellationToken::new(),
@@ -136,17 +136,6 @@ impl McpConnectionManager {
             .is_none_or(|metadata| metadata.pollutes_memory)
     }
 
-    pub fn parallel_tool_call_server_names(&self) -> HashSet<String> {
-        self.server_metadata
-            .iter()
-            .filter_map(|(name, metadata)| {
-                metadata
-                    .supports_parallel_tool_calls
-                    .then_some(name.clone())
-            })
-            .collect()
-    }
-
     pub fn is_host_owned_codex_apps_server(&self, server_name: &str) -> bool {
         self.host_owned_codex_apps_enabled && server_name == CODEX_APPS_MCP_SERVER_NAME
     }
@@ -184,6 +173,7 @@ impl McpConnectionManager {
         codex_home: PathBuf,
         codex_apps_tools_cache_key: CodexAppsToolsCacheKey,
         host_owned_codex_apps_enabled: bool,
+        client_elicitation_capability: ElicitationCapability,
         tool_plugin_provenance: ToolPluginProvenance,
         auth: Option<&CodexAuth>,
         elicitation_reviewer: Option<ElicitationReviewerHandle>,
@@ -252,8 +242,8 @@ impl McpConnectionManager {
                 codex_apps_tools_cache_context,
                 Arc::clone(&tool_plugin_provenance),
                 runtime_environment.clone(),
-                codex_home.clone(),
                 runtime_auth_provider,
+                client_elicitation_capability.clone(),
             );
             clients.insert(server_name.clone(), async_managed_client.clone());
             let tx_event = tx_event.clone();
@@ -369,26 +359,29 @@ impl McpConnectionManager {
         failures
     }
 
-    /// Returns a single map that contains all tools. Each key is the
-    /// fully-qualified name for the tool.
+    /// Returns all tools with model-visible names normalized.
     #[instrument(level = "trace", skip_all)]
-    pub async fn list_all_tools(&self) -> HashMap<String, ToolInfo> {
+    pub async fn list_all_tools(&self) -> Vec<ToolInfo> {
         let mut tools = Vec::new();
         for managed_client in self.clients.values() {
             let Some(server_tools) = managed_client.listed_tools().await else {
                 continue;
             };
-            tools.extend(server_tools);
+            tools.extend(
+                server_tools
+                    .into_iter()
+                    .map(|tool| self.with_server_metadata(tool)),
+            );
         }
-        qualify_tools(tools)
+        normalize_tools_for_model(tools)
     }
 
     /// Force-refresh codex apps tools by bypassing the in-process cache.
     ///
     /// On success, the refreshed tools replace the cache contents and the
-    /// latest filtered tool map is returned directly to the caller. On
+    /// latest filtered tools are returned directly to the caller. On
     /// failure, the existing cache remains unchanged.
-    pub async fn hard_refresh_codex_apps_tools_cache(&self) -> Result<HashMap<String, ToolInfo>> {
+    pub async fn hard_refresh_codex_apps_tools_cache(&self) -> Result<Vec<ToolInfo>> {
         let managed_client = self
             .clients
             .get(CODEX_APPS_MCP_SERVER_NAME)
@@ -429,9 +422,24 @@ impl McpConnectionManager {
             .into_iter()
             .map(|mut tool| {
                 tool.tool = tool_with_model_visible_input_schema(&tool.tool);
-                tool
+                self.with_server_metadata(tool)
             });
-        Ok(qualify_tools(tools))
+        Ok(normalize_tools_for_model(tools))
+    }
+
+    fn with_server_metadata(&self, mut tool: ToolInfo) -> ToolInfo {
+        let Some(metadata) = self.server_metadata.get(&tool.server_name) else {
+            tool.supports_parallel_tool_calls = false;
+            tool.server_origin = None;
+            return tool;
+        };
+
+        tool.supports_parallel_tool_calls = metadata.supports_parallel_tool_calls;
+        tool.server_origin = metadata
+            .origin
+            .as_ref()
+            .map(|origin| origin.as_str().to_string());
+        tool
     }
 
     /// Returns a single map that contains all resources. Each key is the
@@ -454,8 +462,9 @@ impl McpConnectionManager {
                 let mut cursor: Option<String> = None;
 
                 loop {
-                    let params = cursor.as_ref().map(|next| {
-                        PaginatedRequestParams::default().with_cursor(Some(next.clone()))
+                    let params = cursor.as_ref().map(|next| PaginatedRequestParams {
+                        meta: None,
+                        cursor: Some(next.clone()),
                     });
                     let response = match client.list_resources(params, timeout).await {
                         Ok(result) => result,
@@ -519,8 +528,9 @@ impl McpConnectionManager {
                 let mut cursor: Option<String> = None;
 
                 loop {
-                    let params = cursor.as_ref().map(|next| {
-                        PaginatedRequestParams::default().with_cursor(Some(next.clone()))
+                    let params = cursor.as_ref().map(|next| PaginatedRequestParams {
+                        meta: None,
+                        cursor: Some(next.clone()),
                     });
                     let response = match client.list_resource_templates(params, timeout).await {
                         Ok(result) => result,
@@ -561,71 +571,6 @@ impl McpConnectionManager {
                 }
                 Err(err) => {
                     warn!("Task panic when listing resource templates for MCP server: {err:#}");
-                }
-            }
-        }
-
-        aggregated
-    }
-
-    /// Returns a single map that contains all prompts. Each key is the
-    /// server name and the value is a vector of prompts.
-    pub async fn list_all_prompts(&self) -> HashMap<String, Vec<Prompt>> {
-        let mut join_set = JoinSet::new();
-
-        let clients_snapshot = &self.clients;
-
-        for (server_name, async_managed_client) in clients_snapshot {
-            let server_name = server_name.clone();
-            let Ok(managed_client) = async_managed_client.client().await else {
-                continue;
-            };
-            let client = managed_client.client.clone();
-            let timeout = managed_client.tool_timeout;
-
-            join_set.spawn(async move {
-                let mut collected: Vec<Prompt> = Vec::new();
-                let mut cursor: Option<String> = None;
-
-                loop {
-                    let params = cursor.as_ref().map(|next| {
-                        PaginatedRequestParams::default().with_cursor(Some(next.clone()))
-                    });
-                    let response = match client.list_prompts(params, timeout).await {
-                        Ok(result) => result,
-                        Err(err) => return (server_name, Err(err)),
-                    };
-
-                    collected.extend(response.prompts);
-
-                    match response.next_cursor {
-                        Some(next) => {
-                            if cursor.as_ref() == Some(&next) {
-                                return (
-                                    server_name,
-                                    Err(anyhow!("prompts/list returned duplicate cursor")),
-                                );
-                            }
-                            cursor = Some(next);
-                        }
-                        None => return (server_name, Ok(collected)),
-                    }
-                }
-            });
-        }
-
-        let mut aggregated: HashMap<String, Vec<Prompt>> = HashMap::new();
-
-        while let Some(join_res) = join_set.join_next().await {
-            match join_res {
-                Ok((server_name, Ok(prompts))) => {
-                    aggregated.insert(server_name, prompts);
-                }
-                Ok((server_name, Err(err))) => {
-                    warn!("Failed to list prompts for MCP server '{server_name}': {err:#}");
-                }
-                Err(err) => {
-                    warn!("Task panic when listing prompts for MCP server: {err:#}");
                 }
             }
         }
@@ -713,55 +658,6 @@ impl McpConnectionManager {
             .with_context(|| format!("resources/templates/list failed for `{server}`"))
     }
 
-    /// List prompts from the specified server.
-    pub async fn list_prompts(
-        &self,
-        server: &str,
-        params: Option<PaginatedRequestParams>,
-    ) -> Result<ListPromptsResult> {
-        let managed = self.client_by_name(server).await?;
-        let client = managed.client.clone();
-        let timeout = managed.tool_timeout;
-
-        client
-            .list_prompts(params, timeout)
-            .await
-            .with_context(|| format!("prompts/list failed for `{server}`"))
-    }
-
-    /// Get a prompt from the specified server.
-    pub async fn get_prompt(
-        &self,
-        server: &str,
-        params: GetPromptRequestParams,
-    ) -> Result<GetPromptResult> {
-        let managed = self.client_by_name(server).await?;
-        let client = managed.client.clone();
-        let timeout = managed.tool_timeout;
-        let name = params.name.clone();
-
-        client
-            .get_prompt(params, timeout)
-            .await
-            .with_context(|| format!("prompts/get failed for `{server}` ({name})"))
-    }
-
-    /// Complete a prompt argument from the specified server.
-    pub async fn complete(
-        &self,
-        server: &str,
-        params: CompleteRequestParams,
-    ) -> Result<CompleteResult> {
-        let managed = self.client_by_name(server).await?;
-        let client = managed.client.clone();
-        let timeout = managed.tool_timeout;
-
-        client
-            .complete(params, timeout)
-            .await
-            .with_context(|| format!("completion/complete failed for `{server}`"))
-    }
-
     /// Read a resource from the specified server.
     pub async fn read_resource(
         &self,
@@ -777,16 +673,6 @@ impl McpConnectionManager {
             .read_resource(params, timeout)
             .await
             .with_context(|| format!("resources/read failed for `{server}` ({uri})"))
-    }
-
-    pub async fn resolve_tool_info(&self, tool_name: &ToolName) -> Option<ToolInfo> {
-        let all_tools = self.list_all_tools().await;
-        if let Some(tool) = all_tools.get(&tool_name.display()) {
-            return Some(tool.clone());
-        }
-        all_tools
-            .into_values()
-            .find(|tool| tool.canonical_tool_name() == *tool_name)
     }
 
     async fn client_by_name(&self, name: &str) -> Result<ManagedClient> {

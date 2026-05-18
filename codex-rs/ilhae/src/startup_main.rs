@@ -1002,13 +1002,13 @@ fn foreground_loop_item(
     id: String,
     title: &str,
     summary: String,
-    status: codex_protocol::protocol::LoopLifecycleStatus,
+    status: crate::types::LoopLifecycleStatus,
     reason: &str,
     duration_ms: Option<i64>,
-) -> codex_protocol::items::LoopLifecycleItem {
-    codex_protocol::items::LoopLifecycleItem {
+) -> crate::types::LoopLifecycleItem {
+    crate::types::LoopLifecycleItem {
         id,
-        kind: codex_protocol::protocol::LoopLifecycleKind::SuperLoop,
+        kind: crate::types::LoopLifecycleKind::SuperLoop,
         title: title.to_string(),
         summary,
         detail: Some("foreground loop cycle".to_string()),
@@ -1053,7 +1053,7 @@ async fn run_foreground_loop_cycle_with_runtime(
                 item_id.clone(),
                 "Running Knowledge Loop",
                 "Knowledge loop foreground cycle started".to_string(),
-                codex_protocol::protocol::LoopLifecycleStatus::InProgress,
+                crate::types::LoopLifecycleStatus::InProgress,
                 "knowledge_foreground_started",
                 None,
             ),
@@ -1080,7 +1080,7 @@ async fn run_foreground_loop_cycle_with_runtime(
                 item_id,
                 "Running Knowledge Loop",
                 "Knowledge loop foreground cycle completed".to_string(),
-                codex_protocol::protocol::LoopLifecycleStatus::Completed,
+                crate::types::LoopLifecycleStatus::Completed,
                 "knowledge_foreground_completed",
                 Some(started.elapsed().as_millis() as i64),
             ),

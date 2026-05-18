@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
+use axum::extract::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::Method;
@@ -173,13 +174,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 impl ServerHandler for TestToolServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
-            ServerCapabilities::builder()
+        ServerInfo {
+            capabilities: ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()
                 .enable_resources()
                 .build(),
-        )
+            ..ServerInfo::default()
+        }
     }
 
     fn list_tools(
@@ -230,14 +232,14 @@ impl ServerHandler for TestToolServer {
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         if uri == MEMO_URI {
-            Ok(ReadResourceResult::new(vec![
-                ResourceContents::TextResourceContents {
+            Ok(ReadResourceResult {
+                contents: vec![ResourceContents::TextResourceContents {
                     uri,
                     mime_type: Some("text/plain".to_string()),
                     text: Self::memo_text().to_string(),
                     meta: None,
-                },
-            ]))
+                }],
+            })
         } else {
             Err(McpError::resource_not_found(
                 "resource_not_found",
@@ -272,7 +274,12 @@ impl ServerHandler for TestToolServer {
                     "env": env_snapshot.get("MCP_TEST_VALUE"),
                 });
 
-                Ok(structured_tool_result(structured_content))
+                Ok(CallToolResult {
+                    content: Vec::new(),
+                    structured_content: Some(structured_content),
+                    is_error: Some(false),
+                    meta: None,
+                })
             }
             other => Err(McpError::invalid_params(
                 format!("unknown tool: {other}"),
@@ -395,13 +402,8 @@ async fn require_bearer(
 
 async fn arm_session_post_failure(
     State(state): State<SessionFailureState>,
-    request: Request<Body>,
+    Json(request): Json<ArmSessionPostFailureRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    let body = axum::body::to_bytes(request.into_body(), 1024 * 1024)
-        .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let request: ArmSessionPostFailureRequest =
-        serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
     let status = StatusCode::from_u16(request.status).map_err(|_| StatusCode::BAD_REQUEST)?;
     let armed_failure = if request.remaining == 0 {
         None
@@ -413,12 +415,6 @@ async fn arm_session_post_failure(
     };
     *state.armed_failure.lock().await = armed_failure;
     Ok(StatusCode::NO_CONTENT)
-}
-
-fn structured_tool_result(value: serde_json::Value) -> CallToolResult {
-    let mut result = CallToolResult::structured(value);
-    result.content.clear();
-    result
 }
 
 async fn fail_session_post_when_armed(

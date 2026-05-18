@@ -10,8 +10,6 @@ use std::collections::BTreeMap;
 
 use crate::notification_store;
 use brain_knowledge_rs::memory_store;
-use codex_protocol::items::LoopLifecycleItem;
-use codex_protocol::protocol::LoopLifecycleKind;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 
 // ─── Method Name Constants ───────────────────────────────────────────────
@@ -68,6 +66,44 @@ pub const REQ_APP_KB_COMPILE: &str = "ilhae/app/kb/compile";
 pub const REQ_APP_KB_LINT: &str = "ilhae/app/kb/lint";
 pub const REQ_APP_KB_QUERY: &str = "ilhae/app/kb/query";
 pub const REQ_APP_KB_FILE_BACK: &str = "ilhae/app/kb/file_back";
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopLifecycleKind {
+    SuperLoop,
+    ImprovementLoop,
+    ContextInjection,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopLifecycleStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopLifecycleItem {
+    pub id: String,
+    pub kind: LoopLifecycleKind,
+    pub title: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub status: LoopLifecycleStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<BTreeMap<String, i64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_profile: Option<String>,
+}
 
 // ─── Canonical client-facing DTOs for ilhae app-server v1 ───────────────
 

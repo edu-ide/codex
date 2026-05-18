@@ -1932,121 +1932,12 @@
       ],
       "type": "object"
     },
-    "IlhaeLoopLifecycleNotification": {
-      "oneOf": [
-        {
-          "properties": {
-            "event": {
-              "enum": [
-                "started"
-              ],
-              "type": "string"
-            },
-            "item": {
-              "$ref": "#/definitions/LoopLifecycleItem"
-            },
-            "sessionId": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "event",
-            "item",
-            "sessionId"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "counts": {
-              "additionalProperties": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "type": [
-                "object",
-                "null"
-              ]
-            },
-            "detail": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "event": {
-              "enum": [
-                "progress"
-              ],
-              "type": "string"
-            },
-            "itemId": {
-              "type": "string"
-            },
-            "kind": {
-              "$ref": "#/definitions/LoopLifecycleKind"
-            },
-            "sessionId": {
-              "type": "string"
-            },
-            "summary": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "event",
-            "itemId",
-            "kind",
-            "sessionId",
-            "summary"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "event": {
-              "enum": [
-                "completed"
-              ],
-              "type": "string"
-            },
-            "item": {
-              "$ref": "#/definitions/LoopLifecycleItem"
-            },
-            "sessionId": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "event",
-            "item",
-            "sessionId"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "event": {
-              "enum": [
-                "failed"
-              ],
-              "type": "string"
-            },
-            "item": {
-              "$ref": "#/definitions/LoopLifecycleItem"
-            },
-            "sessionId": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "event",
-            "item",
-            "sessionId"
-          ],
-          "type": "object"
-        }
-      ]
+    "ImageDetail": {
+      "enum": [
+        "high",
+        "original"
+      ],
+      "type": "string"
     },
     "ItemCompletedNotification": {
       "properties": {
@@ -2079,6 +1970,11 @@
         "action": {
           "$ref": "#/definitions/GuardianApprovalReviewAction"
         },
+        "completedAtMs": {
+          "description": "Unix timestamp (in milliseconds) when this review completed.",
+          "format": "int64",
+          "type": "integer"
+        },
         "decisionSource": {
           "$ref": "#/definitions/AutoReviewDecisionSource"
         },
@@ -2088,6 +1984,11 @@
         "reviewId": {
           "description": "Stable identifier for this review.",
           "type": "string"
+        },
+        "startedAtMs": {
+          "description": "Unix timestamp (in milliseconds) when this review started.",
+          "format": "int64",
+          "type": "integer"
         },
         "targetItemId": {
           "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
@@ -2105,9 +2006,11 @@
       },
       "required": [
         "action",
+        "completedAtMs",
         "decisionSource",
         "review",
         "reviewId",
+        "startedAtMs",
         "threadId",
         "turnId"
       ],
@@ -2126,6 +2029,11 @@
           "description": "Stable identifier for this review.",
           "type": "string"
         },
+        "startedAtMs": {
+          "description": "Unix timestamp (in milliseconds) when this review started.",
+          "format": "int64",
+          "type": "integer"
+        },
         "targetItemId": {
           "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
           "type": [
@@ -2144,6 +2052,7 @@
         "action",
         "review",
         "reviewId",
+        "startedAtMs",
         "threadId",
         "turnId"
       ],
@@ -2173,136 +2082,6 @@
         "turnId"
       ],
       "type": "object"
-    },
-    "LoopLifecycleItem": {
-      "properties": {
-        "counts": {
-          "additionalProperties": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "type": [
-            "object",
-            "null"
-          ]
-        },
-        "detail": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "duration_ms": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "error": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "id": {
-          "type": "string"
-        },
-        "kind": {
-          "$ref": "#/definitions/LoopLifecycleKind"
-        },
-        "reason": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "status": {
-          "$ref": "#/definitions/LoopLifecycleStatus"
-        },
-        "summary": {
-          "type": "string"
-        },
-        "target_profile": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "title": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "kind",
-        "status",
-        "summary",
-        "title"
-      ],
-      "type": "object"
-    },
-    "LoopLifecycleKind": {
-      "enum": [
-        "context_injection",
-        "execution_loop",
-        "verification_loop",
-        "advisor",
-        "super_loop",
-        "improvement_loop"
-      ],
-      "type": "string"
-    },
-    "LoopLifecycleProgressNotification": {
-      "properties": {
-        "counts": {
-          "additionalProperties": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "type": [
-            "object",
-            "null"
-          ]
-        },
-        "detail": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "itemId": {
-          "type": "string"
-        },
-        "kind": {
-          "$ref": "#/definitions/LoopLifecycleKind"
-        },
-        "summary": {
-          "type": "string"
-        },
-        "threadId": {
-          "type": "string"
-        },
-        "turnId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "itemId",
-        "kind",
-        "summary",
-        "threadId",
-        "turnId"
-      ],
-      "type": "object"
-    },
-    "LoopLifecycleStatus": {
-      "enum": [
-        "in_progress",
-        "completed",
-        "failed"
-      ],
-      "type": "string"
     },
     "McpServerOauthLoginCompletedNotification": {
       "properties": {
@@ -2965,7 +2744,7 @@
       "type": "string"
     },
     "RemoteControlStatusChangedNotification": {
-      "description": "Current remote-control connection status and environment id exposed to clients.",
+      "description": "Current remote-control connection status and remote identity exposed to clients.",
       "properties": {
         "environmentId": {
           "type": [
@@ -2973,11 +2752,19 @@
             "null"
           ]
         },
+        "installationId": {
+          "type": "string"
+        },
+        "serverName": {
+          "type": "string"
+        },
         "status": {
           "$ref": "#/definitions/RemoteControlConnectionStatus"
         }
       },
       "required": [
+        "installationId",
+        "serverName",
         "status"
       ],
       "type": "object"
@@ -4091,83 +3878,6 @@
         },
         {
           "properties": {
-            "counts": {
-              "additionalProperties": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "type": [
-                "object",
-                "null"
-              ]
-            },
-            "detail": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "durationMs": {
-              "format": "int64",
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "error": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "id": {
-              "type": "string"
-            },
-            "kind": {
-              "$ref": "#/definitions/LoopLifecycleKind"
-            },
-            "reason": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "status": {
-              "$ref": "#/definitions/LoopLifecycleStatus"
-            },
-            "summary": {
-              "type": "string"
-            },
-            "targetProfile": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "title": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "loopLifecycle"
-              ],
-              "title": "LoopLifecycleThreadItemType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "id",
-            "kind",
-            "status",
-            "summary",
-            "title",
-            "type"
-          ],
-          "title": "LoopLifecycleThreadItem",
-          "type": "object"
-        },
-        {
-          "properties": {
             "id": {
               "type": "string"
             },
@@ -4890,6 +4600,17 @@
         },
         {
           "properties": {
+            "detail": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageDetail"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "type": {
               "enum": [
                 "image"
@@ -4910,6 +4631,17 @@
         },
         {
           "properties": {
+            "detail": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageDetail"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "path": {
               "type": "string"
             },
@@ -5797,46 +5529,6 @@
         "params"
       ],
       "title": "Item/mcpToolCall/progressNotification",
-      "type": "object"
-    },
-    {
-      "properties": {
-        "method": {
-          "enum": [
-            "item/loopLifecycle/progress"
-          ],
-          "title": "Item/loopLifecycle/progressNotificationMethod",
-          "type": "string"
-        },
-        "params": {
-          "$ref": "#/definitions/LoopLifecycleProgressNotification"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ],
-      "title": "Item/loopLifecycle/progressNotification",
-      "type": "object"
-    },
-    {
-      "properties": {
-        "method": {
-          "enum": [
-            "ilhae/loop_lifecycle"
-          ],
-          "title": "Ilhae/loopLifecycleNotificationMethod",
-          "type": "string"
-        },
-        "params": {
-          "$ref": "#/definitions/IlhaeLoopLifecycleNotification"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ],
-      "title": "Ilhae/loopLifecycleNotification",
       "type": "object"
     },
     {

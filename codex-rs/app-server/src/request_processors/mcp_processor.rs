@@ -63,22 +63,6 @@ impl McpRequestProcessor {
             .map(|()| None)
     }
 
-    pub(crate) async fn mcp_prompt_get(
-        &self,
-        request_id: &ConnectionRequestId,
-        params: McpPromptGetParams,
-    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.get_mcp_prompt(request_id, params).await.map(|()| None)
-    }
-
-    pub(crate) async fn mcp_completion_complete(
-        &self,
-        request_id: &ConnectionRequestId,
-        params: McpCompletionCompleteParams,
-    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.complete_mcp(request_id, params).await.map(|()| None)
-    }
-
     pub(crate) async fn mcp_server_tool_call(
         &self,
         request_id: &ConnectionRequestId,
@@ -176,6 +160,7 @@ impl McpRequestProcessor {
             http_headers,
             env_http_headers,
             &resolved_scopes.scopes,
+            server.oauth_client_id(),
             server.oauth_resource.as_deref(),
             timeout_secs,
             config.mcp_oauth_callback_port,
@@ -295,7 +280,6 @@ impl McpRequestProcessor {
             tools_by_server,
             resources,
             resource_templates,
-            prompts,
             auth_statuses,
         } = snapshot;
 
@@ -303,14 +287,13 @@ impl McpRequestProcessor {
             .mcp_servers
             .keys()
             .cloned()
-            // Include built-in/plugin MCP servers that are present in the
+            // Include runtime-added/plugin MCP servers that are present in the
             // effective runtime config even when they are not user-declared in
             // `config.mcp_servers`.
             .chain(effective_servers.keys().cloned())
             .chain(auth_statuses.keys().cloned())
             .chain(resources.keys().cloned())
             .chain(resource_templates.keys().cloned())
-            .chain(prompts.keys().cloned())
             .collect();
         server_names.sort();
         server_names.dedup();
@@ -341,7 +324,6 @@ impl McpRequestProcessor {
                 tools: tools_by_server.get(name).cloned().unwrap_or_default(),
                 resources: resources.get(name).cloned().unwrap_or_default(),
                 resource_templates: resource_templates.get(name).cloned().unwrap_or_default(),
-                prompts: prompts.get(name).cloned().unwrap_or_default(),
                 auth_status: auth_statuses
                     .get(name)
                     .cloned()
@@ -430,152 +412,6 @@ impl McpRequestProcessor {
         outgoing.send_result(request_id, result).await;
     }
 
-    async fn get_mcp_prompt(
-        &self,
-        request_id: &ConnectionRequestId,
-        params: McpPromptGetParams,
-    ) -> Result<(), JSONRPCErrorError> {
-        let outgoing = Arc::clone(&self.outgoing);
-        let McpPromptGetParams {
-            thread_id,
-            server,
-            name,
-            arguments,
-        } = params;
-
-        if let Some(thread_id) = thread_id {
-            let (_, thread) = self.load_thread(&thread_id).await?;
-            let request_id = request_id.clone();
-
-            tokio::spawn(async move {
-                let result = thread.get_mcp_prompt(&server, &name, arguments).await;
-                Self::send_mcp_prompt_get_response(outgoing, request_id, result).await;
-            });
-            return Ok(());
-        }
-
-        let prompt_params = build_mcp_get_prompt_request_params(name, arguments)
-            .map_err(|error| invalid_request(format!("{error:#}")))?;
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
-        let mcp_config = config
-            .to_mcp_config(self.thread_manager.plugins_manager().as_ref())
-            .await;
-        let auth = self.auth_manager.auth().await;
-        let runtime_environment = {
-            let environment_manager = self.thread_manager.environment_manager();
-            let environment = environment_manager
-                .default_environment()
-                .unwrap_or_else(|| environment_manager.local_environment());
-            McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf())
-        };
-        let request_id = request_id.clone();
-
-        tokio::spawn(async move {
-            let result = get_mcp_prompt_without_thread(
-                &mcp_config,
-                auth.as_ref(),
-                runtime_environment,
-                &server,
-                prompt_params,
-            )
-            .await
-            .and_then(|result| serde_json::to_value(result).map_err(anyhow::Error::from));
-            Self::send_mcp_prompt_get_response(outgoing, request_id, result).await;
-        });
-        Ok(())
-    }
-
-    async fn send_mcp_prompt_get_response(
-        outgoing: Arc<OutgoingMessageSender>,
-        request_id: ConnectionRequestId,
-        result: anyhow::Result<serde_json::Value>,
-    ) {
-        let result = result
-            .map_err(|error| internal_error(format!("{error:#}")))
-            .and_then(|result| {
-                serde_json::from_value::<McpPromptGetResponse>(result).map_err(|error| {
-                    internal_error(format!(
-                        "failed to deserialize MCP prompt get response: {error}"
-                    ))
-                })
-            });
-        outgoing.send_result(request_id, result).await;
-    }
-
-    async fn complete_mcp(
-        &self,
-        request_id: &ConnectionRequestId,
-        params: McpCompletionCompleteParams,
-    ) -> Result<(), JSONRPCErrorError> {
-        let outgoing = Arc::clone(&self.outgoing);
-        let McpCompletionCompleteParams {
-            thread_id,
-            server,
-            reference,
-            argument,
-            context,
-        } = params;
-
-        let completion_params = build_mcp_complete_request_params(reference, argument, context)
-            .map_err(|error| invalid_request(format!("{error:#}")))?;
-
-        if let Some(thread_id) = thread_id {
-            let (_, thread) = self.load_thread(&thread_id).await?;
-            let request_id = request_id.clone();
-
-            tokio::spawn(async move {
-                let result = thread.complete_mcp(&server, completion_params).await;
-                Self::send_mcp_completion_complete_response(outgoing, request_id, result).await;
-            });
-            return Ok(());
-        }
-
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
-        let mcp_config = config
-            .to_mcp_config(self.thread_manager.plugins_manager().as_ref())
-            .await;
-        let auth = self.auth_manager.auth().await;
-        let runtime_environment = {
-            let environment_manager = self.thread_manager.environment_manager();
-            let environment = environment_manager
-                .default_environment()
-                .unwrap_or_else(|| environment_manager.local_environment());
-            McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf())
-        };
-        let request_id = request_id.clone();
-
-        tokio::spawn(async move {
-            let result = complete_mcp_without_thread(
-                &mcp_config,
-                auth.as_ref(),
-                runtime_environment,
-                &server,
-                completion_params,
-            )
-            .await
-            .and_then(|result| serde_json::to_value(result).map_err(anyhow::Error::from));
-            Self::send_mcp_completion_complete_response(outgoing, request_id, result).await;
-        });
-        Ok(())
-    }
-
-    async fn send_mcp_completion_complete_response(
-        outgoing: Arc<OutgoingMessageSender>,
-        request_id: ConnectionRequestId,
-        result: anyhow::Result<serde_json::Value>,
-    ) {
-        let result = result
-            .map_err(|error| internal_error(format!("{error:#}")))
-            .and_then(|result| {
-                serde_json::from_value::<McpCompletionCompleteResponse>(result).map_err(|error| {
-                    internal_error(format!(
-                        "failed to deserialize MCP completion response: {error}"
-                    ))
-                })
-            });
-        outgoing.send_result(request_id, result).await;
-    }
-
     async fn call_mcp_server_tool(
         &self,
         request_id: &ConnectionRequestId,
@@ -621,36 +457,4 @@ fn with_mcp_tool_call_thread_id_meta(
         }
         other => other,
     }
-}
-
-fn build_mcp_get_prompt_request_params(
-    name: String,
-    arguments: Option<serde_json::Value>,
-) -> anyhow::Result<rmcp::model::GetPromptRequestParams> {
-    let arguments = match arguments {
-        Some(serde_json::Value::Object(map)) => Some(map),
-        Some(other) => {
-            anyhow::bail!("MCP prompt arguments must be a JSON object, got {other}");
-        }
-        None => None,
-    };
-
-    let mut params = rmcp::model::GetPromptRequestParams::new(name);
-    params.arguments = arguments;
-    Ok(params)
-}
-
-fn build_mcp_complete_request_params(
-    reference: serde_json::Value,
-    argument: serde_json::Value,
-    context: Option<serde_json::Value>,
-) -> anyhow::Result<rmcp::model::CompleteRequestParams> {
-    let mut params = serde_json::Map::new();
-    params.insert("ref".to_string(), reference);
-    params.insert("argument".to_string(), argument);
-    if let Some(context) = context {
-        params.insert("context".to_string(), context);
-    }
-
-    Ok(serde_json::from_value(serde_json::Value::Object(params))?)
 }

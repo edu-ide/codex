@@ -3,7 +3,6 @@ use crate::ProposedPlanParser;
 use crate::ProposedPlanSegment;
 use crate::StreamTextChunk;
 use crate::StreamTextParser;
-use crate::ThinkingTagParser;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AssistantTextChunk {
@@ -24,45 +23,27 @@ impl AssistantTextChunk {
 #[derive(Debug, Default)]
 pub struct AssistantTextStreamParser {
     plan_mode: bool,
-    hide_think_tags: bool,
-    thinking: ThinkingTagParser,
     citations: CitationStreamParser,
     plan: ProposedPlanParser,
 }
 
 impl AssistantTextStreamParser {
-    pub fn new(plan_mode: bool, hide_think_tags: bool) -> Self {
+    pub fn new(plan_mode: bool) -> Self {
         Self {
             plan_mode,
-            hide_think_tags,
             ..Self::default()
         }
     }
 
     pub fn push_str(&mut self, chunk: &str) -> AssistantTextChunk {
-        let visible_for_citations = if self.hide_think_tags {
-            self.thinking.push_str(chunk).visible_text
-        } else {
-            chunk.to_string()
-        };
-        let citation_chunk = self.citations.push_str(&visible_for_citations);
+        let citation_chunk = self.citations.push_str(chunk);
         let mut out = self.parse_visible_text(citation_chunk.visible_text);
         out.citations = citation_chunk.extracted;
         out
     }
 
     pub fn finish(&mut self) -> AssistantTextChunk {
-        let think_tail = if self.hide_think_tags {
-            self.thinking.finish().visible_text
-        } else {
-            String::new()
-        };
-        let mut citation_chunk = self.citations.push_str(&think_tail);
-        let citation_finish = self.citations.finish();
-        citation_chunk
-            .visible_text
-            .push_str(&citation_finish.visible_text);
-        citation_chunk.extracted.extend(citation_finish.extracted);
+        let citation_chunk = self.citations.finish();
         let mut out = self.parse_visible_text(citation_chunk.visible_text);
         if self.plan_mode {
             let mut tail = self.plan.finish();
@@ -99,9 +80,7 @@ mod tests {
 
     #[test]
     fn parses_citations_across_seed_and_delta_boundaries() {
-        let mut parser = AssistantTextStreamParser::new(
-            /*plan_mode*/ false, /*hide_think_tags*/ false,
-        );
+        let mut parser = AssistantTextStreamParser::new(/*plan_mode*/ false);
 
         let seeded = parser.push_str("hello <oai-mem-citation>doc");
         let parsed = parser.push_str("1</oai-mem-citation> world");
@@ -117,8 +96,7 @@ mod tests {
 
     #[test]
     fn parses_plan_segments_after_citation_stripping() {
-        let mut parser =
-            AssistantTextStreamParser::new(/*plan_mode*/ true, /*hide_think_tags*/ false);
+        let mut parser = AssistantTextStreamParser::new(/*plan_mode*/ true);
 
         let seeded = parser.push_str("Intro\n<proposed");
         let parsed = parser.push_str("_plan>\n- step <oai-mem-citation>doc</oai-mem-citation>\n");
@@ -148,27 +126,5 @@ mod tests {
             ]
         );
         assert!(finish.is_empty());
-    }
-
-    #[test]
-    fn strips_think_blocks_when_enabled() {
-        let mut parser = AssistantTextStreamParser::new(false, true);
-
-        let seeded = parser.push_str("before<th");
-        let parsed = parser.push_str("ink>hidden</think>after");
-        let tail = parser.finish();
-
-        assert_eq!(seeded.visible_text, "before");
-        assert_eq!(parsed.visible_text, "after");
-        assert!(tail.is_empty());
-    }
-
-    #[test]
-    fn preserves_think_blocks_when_disabled() {
-        let mut parser = AssistantTextStreamParser::new(false, false);
-
-        let out = parser.push_str("before<think>hidden</think>after");
-
-        assert_eq!(out.visible_text, "before<think>hidden</think>after");
     }
 }

@@ -68,48 +68,6 @@ impl AgentTransportFactory for AcpTransportFactory {
 
         info!(port, already_running, "A2A endpoint probe result");
 
-        if is_ilhae_native_engine_name(&request.engine_name) {
-            info!(
-                "Native ACP integration mode: spawning ilhae-agent internally over tokio::io::duplex"
-            );
-            let (a_side, b_side) = tokio::io::duplex(1024 * 1024);
-            let (read_a, write_a) = tokio::io::split(a_side);
-            let (read_b, write_b) = tokio::io::split(b_side);
-
-            let ilhae_dir = crate::config::resolve_ilhae_data_dir();
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
-
-                let config = rt
-                    .block_on(codex_core::config::Config::load_default_with_cli_overrides(
-                        Vec::new(),
-                    ))
-                    .unwrap_or_else(|e| {
-                        panic!("Failed to load ilhae config from {:?}: {:?}", ilhae_dir, e)
-                    });
-
-                tracing::info!("ilhae-agent background thread started.");
-                let _ = rt.block_on(async move {
-                    if let Err(e) = codex_acp::run_stream(config, read_b, write_b).await {
-                        tracing::error!("ilhae-agent stream ran into error: {:?}", e);
-                    }
-                });
-            });
-
-            use tokio_util::compat::TokioAsyncReadCompatExt;
-            use tokio_util::compat::TokioAsyncWriteCompatExt;
-            let compat_write = write_a.compat_write();
-            let compat_read = read_a.compat();
-            let agent = sacp::ByteStreams::new(compat_write, compat_read);
-            return Ok(BuiltAgentTransport {
-                transport: DynConnectTo::new(agent),
-                spawned_child: None,
-            });
-        }
-
         if request.is_team && is_local {
             info!(
                 endpoint = %request.endpoint,

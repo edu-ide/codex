@@ -34,6 +34,7 @@ use codex_tui::ExitReason;
 use codex_tui::UpdateAction;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
+use codex_utils_cli::resume_command;
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -46,14 +47,17 @@ mod app_cmd;
 mod desktop_app;
 mod marketplace_cmd;
 mod mcp_cmd;
+mod plugin_cmd;
 #[cfg(not(windows))]
 mod wsl_paths;
 
-use crate::marketplace_cmd::MarketplaceCli;
 use crate::mcp_cmd::McpCli;
+use crate::plugin_cmd::PluginCli;
+use crate::plugin_cmd::PluginSubcommand;
 
 use codex_core::build_models_manager;
 use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
@@ -61,6 +65,8 @@ use codex_features::FEATURES;
 use codex_features::Stage;
 use codex_features::is_known_feature_key;
 use codex_login::AuthManager;
+use codex_login::CodexAuth;
+use codex_login::read_codex_access_token_from_env;
 use codex_memories_write::clear_memory_roots_contents;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager::manager::RefreshStrategy;
@@ -204,22 +210,6 @@ enum Subcommand {
 
     /// Inspect feature flags.
     Features(FeaturesCli),
-}
-
-#[derive(Debug, Parser)]
-#[command(bin_name = "codex plugin")]
-struct PluginCli {
-    #[clap(flatten)]
-    pub config_overrides: CliConfigOverrides,
-
-    #[command(subcommand)]
-    subcommand: PluginSubcommand,
-}
-
-#[derive(Debug, clap::Subcommand)]
-enum PluginSubcommand {
-    /// Manage plugin marketplaces for Codex.
-    Marketplace(MarketplaceCli),
 }
 
 #[derive(Debug, Parser)]
@@ -457,6 +447,10 @@ struct AppServerCommand {
     #[command(subcommand)]
     subcommand: Option<AppServerSubcommand>,
 
+    /// Error out when config.toml contains fields that are not recognized by this version of Codex.
+    #[arg(long = "strict-config", default_value_t = false)]
+    strict_config: bool,
+
     /// Transport endpoint URL. Supported values: `stdio://` (default),
     /// `unix://`, `unix://PATH`, `ws://IP:PORT`, `off`.
     #[arg(
@@ -529,6 +523,10 @@ struct ExecServerCommand {
     /// Human-readable executor name.
     #[arg(long = "name", value_name = "NAME")]
     name: Option<String>,
+
+    /// Use Agent Identity auth from CODEX_ACCESS_TOKEN for remote registration.
+    #[arg(long = "use-agent-identity-auth", requires = "remote")]
+    use_agent_identity_auth: bool,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -612,9 +610,7 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
         lines.push(token_usage.to_string());
     }
 
-    if let Some(resume_cmd) =
-        codex_core::util::resume_command(/*thread_name*/ None, conversation_id)
-    {
+    if let Some(resume_cmd) = resume_command(/*thread_name*/ None, conversation_id) {
         let command = if color_enabled {
             resume_cmd.cyan().to_string()
         } else {
@@ -840,66 +836,6 @@ fn prepare_ilhae_cli_environment_if_needed() -> anyhow::Result<Option<std::path:
 }
 
 #[cfg(feature = "ilhae")]
-fn ilhae_loop_lifecycle_to_server_notification(
-    notification: codex_ilhae::IlhaeLoopLifecycleNotification,
-) -> codex_app_server_protocol::ServerNotification {
-    use codex_app_server_protocol::IlhaeLoopLifecycleNotification as AppServerLoopLifecycleNotification;
-
-    let notification = match notification {
-        codex_ilhae::IlhaeLoopLifecycleNotification::Started { session_id, item } => {
-            AppServerLoopLifecycleNotification::Started { session_id, item }
-        }
-        codex_ilhae::IlhaeLoopLifecycleNotification::Progress {
-            session_id,
-            item_id,
-            kind,
-            summary,
-            detail,
-            counts,
-        } => AppServerLoopLifecycleNotification::Progress {
-            session_id,
-            item_id,
-            kind,
-            summary,
-            detail,
-            counts,
-        },
-        codex_ilhae::IlhaeLoopLifecycleNotification::Completed { session_id, item } => {
-            AppServerLoopLifecycleNotification::Completed { session_id, item }
-        }
-        codex_ilhae::IlhaeLoopLifecycleNotification::Failed { session_id, item } => {
-            AppServerLoopLifecycleNotification::Failed { session_id, item }
-        }
-    };
-
-    codex_app_server_protocol::ServerNotification::IlhaeLoopLifecycle(notification)
-}
-
-#[cfg(feature = "ilhae")]
-fn spawn_ilhae_loop_lifecycle_app_server_bridge()
--> codex_app_server::ExternalServerNotificationReceiver {
-    let (tx, rx) = tokio::sync::mpsc::channel(256);
-    let mut lifecycle_rx = codex_ilhae::subscribe_native_loop_lifecycle();
-
-    tokio::spawn(async move {
-        loop {
-            match lifecycle_rx.recv().await {
-                Ok(notification) => {
-                    let notification = ilhae_loop_lifecycle_to_server_notification(notification);
-                    if tx.send(notification).await.is_err() {
-                        break;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-
-    rx
-}
-
-#[cfg(feature = "ilhae")]
 fn ilhae_profile_engine_id(profile: &codex_ilhae::config::IlhaeProfileConfig) -> String {
     profile
         .agent
@@ -1027,7 +963,7 @@ fn ilhae_exec_runtime_settings_from_overrides(
 fn ilhae_exec_loop_developer_instructions_from_settings(
     settings: &codex_ilhae::settings_types::Settings,
 ) -> Option<String> {
-    codex_ilhae::session_context_service::build_runtime_loop_developer_instructions(&settings)
+    codex_ilhae::session_context_service::build_runtime_loop_developer_instructions(settings)
 }
 
 #[cfg(feature = "ilhae")]
@@ -1044,20 +980,6 @@ fn ilhae_exec_should_run_foreground_loops(
     settings: &codex_ilhae::settings_types::Settings,
 ) -> bool {
     ilhae_exec_loop_developer_instructions_from_settings(settings).is_some()
-}
-
-#[cfg(feature = "ilhae")]
-fn ilhae_exec_autonomy_settings_from_settings(
-    settings: &codex_ilhae::settings_types::Settings,
-) -> Option<codex_exec::ExecAutonomySettings> {
-    settings.agent.autonomous_mode.then(|| {
-        codex_exec::ExecAutonomySettings::new(
-            settings.agent.auto_max_turns,
-            std::time::Duration::from_secs(
-                u64::from(settings.agent.auto_timebox_minutes.max(1)) * 60,
-            ),
-        )
-    })
 }
 
 #[cfg(feature = "ilhae")]
@@ -1373,15 +1295,6 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             {
                 let runtime_settings =
                     ilhae_exec_runtime_settings_from_overrides(&exec_cli.config_overrides);
-                let loop_developer_instructions = runtime_settings
-                    .as_ref()
-                    .and_then(ilhae_exec_loop_developer_instructions_from_settings);
-                let exec_autonomy_settings = runtime_settings
-                    .as_ref()
-                    .and_then(ilhae_exec_autonomy_settings_from_settings);
-                let external_notifications = loop_developer_instructions
-                    .is_some()
-                    .then(spawn_ilhae_loop_lifecycle_app_server_bridge);
                 if let Some(settings) = runtime_settings.clone()
                     && ilhae_exec_should_run_foreground_loops(&settings)
                 {
@@ -1396,14 +1309,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         }
                     });
                 }
-                codex_exec::run_main_with_extra_developer_instructions_server_notifications_and_autonomy(
-                    exec_cli,
-                    arg0_paths.clone(),
-                    loop_developer_instructions,
-                    external_notifications,
-                    exec_autonomy_settings,
-                )
-                .await?;
+                codex_exec::run_main(exec_cli, arg0_paths.clone()).await?;
             }
             #[cfg(not(feature = "ilhae"))]
             codex_exec::run_main(exec_cli, arg0_paths.clone()).await?;
@@ -1442,7 +1348,12 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "mcp-server",
             )?;
-            codex_mcp_server::run_main(arg0_paths.clone(), root_config_overrides).await?;
+            codex_mcp_server::run_main(
+                arg0_paths.clone(),
+                root_config_overrides,
+                interactive.strict_config,
+            )
+            .await?;
         }
         Some(Subcommand::Mcp(mut mcp_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -1466,15 +1377,34 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             } = plugin_cli;
             prepend_config_flags(&mut config_overrides, root_config_overrides.clone());
             match subcommand {
+                PluginSubcommand::Add(args) => {
+                    let overrides = config_overrides
+                        .parse_overrides()
+                        .map_err(anyhow::Error::msg)?;
+                    plugin_cmd::run_plugin_add(overrides, args).await?;
+                }
+                PluginSubcommand::List(args) => {
+                    let overrides = config_overrides
+                        .parse_overrides()
+                        .map_err(anyhow::Error::msg)?;
+                    plugin_cmd::run_plugin_list(overrides, args).await?;
+                }
                 PluginSubcommand::Marketplace(mut marketplace_cli) => {
                     prepend_config_flags(&mut marketplace_cli.config_overrides, config_overrides);
                     marketplace_cli.run().await?;
+                }
+                PluginSubcommand::Remove(args) => {
+                    let overrides = config_overrides
+                        .parse_overrides()
+                        .map_err(anyhow::Error::msg)?;
+                    plugin_cmd::run_plugin_remove(overrides, args).await?;
                 }
             }
         }
         Some(Subcommand::AppServer(app_server_cli)) => {
             let AppServerCommand {
                 subcommand,
+                strict_config,
                 listen,
                 analytics_default_enabled,
                 auth,
@@ -1491,13 +1421,6 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     let mut loader_overrides = codex_config::LoaderOverrides::default();
                     #[cfg(feature = "ilhae")]
                     let is_ilhae_app_server = is_invoked_as_ilhae_cli();
-                    #[cfg(feature = "ilhae")]
-                    let external_notifications = if is_ilhae_app_server {
-                        Some(spawn_ilhae_loop_lifecycle_app_server_bridge())
-                    } else {
-                        None
-                    };
-                    #[cfg(not(feature = "ilhae"))]
                     let external_notifications = None;
                     #[cfg(feature = "ilhae")]
                     let runtime_hooks = if is_ilhae_app_server {
@@ -1544,6 +1467,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         arg0_paths.clone(),
                         root_config_overrides,
                         loader_overrides,
+                        interactive.strict_config || strict_config,
                         analytics_default_enabled,
                         transport,
                         codex_protocol::protocol::SessionSource::VSCode,
@@ -1675,7 +1599,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     let healthy =
                         codex_ilhae::startup_main::native_runtime_healthcheck(&config.health_url)
                             .await;
-                    println!("Profile: {}", profile_id);
+                    println!("Profile: {profile_id}");
                     println!("Enabled: {}", config.enabled);
                     println!("Health URL: {}", config.health_url);
                     println!("Status: {}", if healthy { "HEALTHY" } else { "DOWN" });
@@ -1786,6 +1710,9 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "cloud",
             )?;
+            if interactive.strict_config {
+                anyhow::bail!("`--strict-config` is not supported for `codex cloud`");
+            }
             prepend_config_flags(
                 &mut cloud_cli.config_overrides,
                 root_config_overrides.clone(),
@@ -1948,7 +1875,13 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "exec-server",
             )?;
-            run_exec_server_command(cmd, &arg0_paths).await?;
+            run_exec_server_command(
+                cmd,
+                &arg0_paths,
+                &root_config_overrides,
+                interactive.config_profile.clone(),
+            )
+            .await?;
         }
         Some(Subcommand::Features(FeaturesCli { sub })) => match sub {
             FeaturesSubcommand::List => {
@@ -2159,6 +2092,8 @@ fn gpu_lease_request(
 async fn run_exec_server_command(
     cmd: ExecServerCommand,
     arg0_paths: &Arg0DispatchPaths,
+    root_config_overrides: &CliConfigOverrides,
+    config_profile: Option<String>,
 ) -> anyhow::Result<()> {
     let codex_self_exe = arg0_paths
         .codex_self_exe
@@ -2172,8 +2107,14 @@ async fn run_exec_server_command(
         let executor_id = cmd
             .executor_id
             .ok_or_else(|| anyhow::anyhow!("--executor-id is required when --remote is set"))?;
+        let auth_provider = load_exec_server_remote_auth_provider(
+            root_config_overrides,
+            config_profile,
+            cmd.use_agent_identity_auth,
+        )
+        .await?;
         let mut remote_config =
-            codex_exec_server::RemoteExecutorConfig::new(base_url, executor_id)?;
+            codex_exec_server::RemoteExecutorConfig::new(base_url, executor_id, auth_provider)?;
         if let Some(name) = cmd.name {
             remote_config.name = name;
         }
@@ -2187,6 +2128,75 @@ async fn run_exec_server_command(
     codex_exec_server::run_main(listen_url, runtime_paths)
         .await
         .map_err(anyhow::Error::from_boxed)
+}
+
+async fn load_exec_server_remote_auth_provider(
+    root_config_overrides: &CliConfigOverrides,
+    config_profile: Option<String>,
+    use_agent_identity_auth: bool,
+) -> anyhow::Result<codex_api::SharedAuthProvider> {
+    let config = load_exec_server_remote_config(root_config_overrides, config_profile).await?;
+    if use_agent_identity_auth {
+        let agent_identity_jwt = read_codex_access_token_from_env().ok_or_else(|| {
+            anyhow::anyhow!("CODEX_ACCESS_TOKEN is required when --use-agent-identity-auth is set")
+        })?;
+        let auth =
+            CodexAuth::from_agent_identity_jwt(&agent_identity_jwt, Some(&config.chatgpt_base_url))
+                .await?;
+        return Ok(codex_model_provider::auth_provider_from_auth(&auth));
+    }
+
+    let auth = load_exec_server_remote_auth(
+        &config,
+        "remote exec-server registration requires ChatGPT authentication; run `codex login` first",
+    )
+    .await?;
+
+    if !auth.is_chatgpt_auth() {
+        anyhow::bail!(
+            "remote exec-server registration requires ChatGPT authentication; API key and Agent Identity auth are not supported"
+        );
+    }
+
+    Ok(codex_model_provider::auth_provider_from_auth(&auth))
+}
+
+async fn load_exec_server_remote_config(
+    root_config_overrides: &CliConfigOverrides,
+    config_profile: Option<String>,
+) -> anyhow::Result<codex_core::config::Config> {
+    let cli_kv_overrides = root_config_overrides
+        .parse_overrides()
+        .map_err(anyhow::Error::msg)?;
+    Ok(ConfigBuilder::default()
+        .cli_overrides(cli_kv_overrides)
+        .harness_overrides(ConfigOverrides {
+            config_profile,
+            ..Default::default()
+        })
+        .build()
+        .await?)
+}
+
+async fn load_exec_server_remote_auth(
+    config: &codex_core::config::Config,
+    missing_auth_error: &'static str,
+) -> anyhow::Result<codex_login::CodexAuth> {
+    let auth_manager =
+        AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ true).await;
+
+    let auth = match auth_manager.auth().await {
+        Some(auth) => auth,
+        None => {
+            auth_manager.reload().await;
+            auth_manager
+                .auth()
+                .await
+                .ok_or_else(|| anyhow::anyhow!(missing_auth_error))?
+        }
+    };
+
+    Ok(auth)
 }
 
 async fn enable_feature_in_config(interactive: &TuiCli, feature: &str) -> anyhow::Result<()> {
@@ -2298,7 +2308,7 @@ async fn run_debug_prompt_input_command(
         .images
         .into_iter()
         .chain(cmd.images)
-        .map(|path| UserInput::LocalImage { path })
+        .map(|path| UserInput::LocalImage { path, detail: None })
         .collect::<Vec<_>>();
     if let Some(prompt) = cmd.prompt.or(interactive.prompt) {
         input.push(UserInput::Text {
@@ -2484,27 +2494,42 @@ async fn run_interactive_tui(
         }
     }
 
-    let normalized_remote = remote
+    let mut normalized_remote = remote
         .as_deref()
-        .map(codex_tui::normalize_remote_addr)
+        .map(codex_tui::resolve_remote_addr)
         .transpose()
         .map_err(std::io::Error::other)?;
-    if remote_auth_token_env.is_some() && normalized_remote.is_none() {
-        return Ok(AppExitInfo::fatal(
-            "`--remote-auth-token-env` requires `--remote`.",
-        ));
+    if let Some(env_var_name) = remote_auth_token_env {
+        let Some(endpoint) = normalized_remote.as_mut() else {
+            return Ok(AppExitInfo::fatal(
+                "`--remote-auth-token-env` requires `--remote`.",
+            ));
+        };
+        if !codex_tui::remote_addr_supports_auth_token(endpoint) {
+            return Ok(AppExitInfo::fatal(
+                "`--remote-auth-token-env` is only supported for loopback ws:// and wss:// remote app servers.",
+            ));
+        }
+        let token = match read_remote_auth_token_from_env_var(&env_var_name) {
+            Ok(token) => token,
+            Err(err) => return Ok(AppExitInfo::fatal(err.to_string())),
+        };
+        match endpoint {
+            codex_tui::RemoteAppServerEndpoint::WebSocket { auth_token, .. } => {
+                *auth_token = Some(token);
+            }
+            codex_tui::RemoteAppServerEndpoint::UnixSocket { .. } => {
+                return Ok(AppExitInfo::fatal(
+                    "`--remote-auth-token-env` is only supported for websocket remote app servers.",
+                ));
+            }
+        }
     }
-    let remote_auth_token = remote_auth_token_env
-        .as_deref()
-        .map(read_remote_auth_token_from_env_var)
-        .transpose()
-        .map_err(std::io::Error::other)?;
     codex_tui::run_main(
         interactive,
         arg0_paths,
         codex_config::LoaderOverrides::default(),
         normalized_remote,
-        remote_auth_token,
     )
     .await
 }
@@ -3728,33 +3753,5 @@ args = ["--ctx-size", "131072"]
             .to_overrides()
             .expect_err("feature should be rejected");
         assert_eq!(err.to_string(), "Unknown feature flag: does_not_exist");
-    }
-
-    #[cfg(feature = "ilhae")]
-    #[test]
-    fn ilhae_loop_lifecycle_to_server_notification_preserves_native_payload() {
-        let notification = codex_ilhae::IlhaeLoopLifecycleNotification::Started {
-            session_id: "native-runtime".to_string(),
-            item: codex_protocol::items::LoopLifecycleItem {
-                id: "super_loop:worker:1".to_string(),
-                kind: codex_protocol::protocol::LoopLifecycleKind::SuperLoop,
-                title: "Running Super Loop".to_string(),
-                summary: "Scanning background follow-ups (worker)".to_string(),
-                detail: None,
-                status: codex_protocol::protocol::LoopLifecycleStatus::InProgress,
-                reason: Some("cycle_started".to_string()),
-                counts: None,
-                error: None,
-                duration_ms: None,
-                target_profile: None,
-            },
-        };
-
-        let converted = ilhae_loop_lifecycle_to_server_notification(notification);
-        let value = serde_json::to_value(converted).expect("serialize server notification");
-        assert_eq!(value["method"], "ilhae/loop_lifecycle");
-        assert_eq!(value["params"]["event"], "started");
-        assert_eq!(value["params"]["sessionId"], "native-runtime");
-        assert_eq!(value["params"]["item"]["kind"], "super_loop");
     }
 }

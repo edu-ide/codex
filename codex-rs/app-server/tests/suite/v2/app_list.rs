@@ -1432,7 +1432,10 @@ impl AppsServerControl {
 
 impl ServerHandler for AppListMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerInfo {
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            ..ServerInfo::default()
+        }
     }
 
     fn list_tools(

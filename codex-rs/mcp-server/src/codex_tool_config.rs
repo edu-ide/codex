@@ -2,6 +2,7 @@
 
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::SandboxMode;
@@ -11,7 +12,6 @@ use rmcp::model::JsonObject;
 use rmcp::model::Tool;
 use schemars::JsonSchema;
 use schemars::r#gen::SchemaSettings;
-use schemars::schema::RootSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -112,20 +112,27 @@ pub(crate) fn create_tool_for_codex_tool_call_param() -> Tool {
     let schema = SchemaSettings::draft2019_09()
         .with(|s| {
             s.inline_subschemas = true;
+            s.option_add_null_type = false;
         })
         .into_generator()
         .into_root_schema_for::<CodexToolCallParam>();
 
     let input_schema = create_tool_input_schema(schema, "Codex tool schema should serialize");
 
-    let mut tool = Tool::new(
-        "codex",
-        "Run a Codex session. Accepts configuration parameters matching the Codex Config struct.",
+    Tool {
+        name: "codex".into(),
+        title: Some("Codex".to_string()),
         input_schema,
-    );
-    tool.title = Some("Codex".to_string());
-    tool.output_schema = Some(codex_tool_output_schema());
-    tool
+        output_schema: Some(codex_tool_output_schema()),
+        description: Some(
+            "Run a Codex session. Accepts configuration parameters matching the Codex Config struct."
+                .into(),
+        ),
+        annotations: None,
+        execution: None,
+        icons: None,
+        meta: None,
+    }
 }
 
 fn codex_tool_output_schema() -> Arc<JsonObject> {
@@ -185,8 +192,11 @@ impl CodexToolCallParam {
             .map(|(k, v)| (k, json_to_toml(v)))
             .collect();
 
-        let cfg =
-            Config::load_with_cli_overrides_and_harness_overrides(cli_overrides, overrides).await?;
+        let cfg = ConfigBuilder::default()
+            .cli_overrides(cli_overrides)
+            .harness_overrides(overrides)
+            .build()
+            .await?;
 
         Ok((prompt, cfg))
     }
@@ -230,23 +240,32 @@ pub(crate) fn create_tool_for_codex_tool_call_reply_param() -> Tool {
     let schema = SchemaSettings::draft2019_09()
         .with(|s| {
             s.inline_subschemas = true;
+            s.option_add_null_type = false;
         })
         .into_generator()
         .into_root_schema_for::<CodexToolCallReplyParam>();
 
     let input_schema = create_tool_input_schema(schema, "Codex reply tool schema should serialize");
 
-    let mut tool = Tool::new(
-        "codex-reply",
-        "Continue a Codex conversation by providing the thread id and prompt.",
+    Tool {
+        name: "codex-reply".into(),
+        title: Some("Codex Reply".to_string()),
         input_schema,
-    );
-    tool.title = Some("Codex Reply".to_string());
-    tool.output_schema = Some(codex_tool_output_schema());
-    tool
+        output_schema: Some(codex_tool_output_schema()),
+        description: Some(
+            "Continue a Codex conversation by providing the thread id and prompt.".into(),
+        ),
+        annotations: None,
+        execution: None,
+        icons: None,
+        meta: None,
+    }
 }
 
-fn create_tool_input_schema(schema: RootSchema, panic_message: &str) -> Arc<JsonObject> {
+fn create_tool_input_schema(
+    schema: schemars::schema::RootSchema,
+    panic_message: &str,
+) -> Arc<JsonObject> {
     #[expect(clippy::expect_used)]
     let schema_value = serde_json::to_value(&schema).expect(panic_message);
     let mut schema_object = match schema_value {

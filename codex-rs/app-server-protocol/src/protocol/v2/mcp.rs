@@ -2,7 +2,6 @@ use super::shared::v2_enum_from_core;
 use codex_protocol::approvals::ElicitationRequest as CoreElicitationRequest;
 use codex_protocol::items::McpToolCallError as CoreMcpToolCallError;
 use codex_protocol::mcp::CallToolResult as CoreMcpCallToolResult;
-use codex_protocol::mcp::Prompt as McpPrompt;
 use codex_protocol::mcp::Resource as McpResource;
 pub use codex_protocol::mcp::ResourceContent as McpResourceContent;
 use codex_protocol::mcp::ResourceTemplate as McpResourceTemplate;
@@ -55,7 +54,6 @@ pub struct McpServerStatus {
     pub tools: std::collections::HashMap<String, McpTool>,
     pub resources: Vec<McpResource>,
     pub resource_templates: Vec<McpResourceTemplate>,
-    pub prompts: Vec<McpPrompt>,
     pub auth_status: McpAuthStatus,
 }
 
@@ -84,48 +82,6 @@ pub struct McpResourceReadParams {
 #[ts(export_to = "v2/")]
 pub struct McpResourceReadResponse {
     pub contents: Vec<McpResourceContent>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct McpPromptGetParams {
-    #[ts(optional = nullable)]
-    pub thread_id: Option<String>,
-    pub server: String,
-    pub name: String,
-    #[ts(optional = nullable)]
-    pub arguments: Option<JsonValue>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct McpPromptGetResponse {
-    pub description: Option<String>,
-    pub messages: Vec<JsonValue>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct McpCompletionCompleteParams {
-    #[ts(optional = nullable)]
-    pub thread_id: Option<String>,
-    pub server: String,
-    #[serde(rename = "ref")]
-    #[ts(rename = "ref")]
-    pub reference: JsonValue,
-    pub argument: JsonValue,
-    #[ts(optional = nullable)]
-    pub context: Option<JsonValue>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct McpCompletionCompleteResponse {
-    pub completion: JsonValue,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -732,9 +688,6 @@ impl From<McpServerElicitationRequestResponse> for rmcp::model::CreateElicitatio
         Self {
             action: value.action.into(),
             content: value.content,
-            meta: value
-                .meta
-                .and_then(|meta| serde_json::from_value(meta).ok()),
         }
     }
 }
@@ -744,7 +697,7 @@ impl From<rmcp::model::CreateElicitationResult> for McpServerElicitationRequestR
         Self {
             action: value.action.into(),
             content: value.content,
-            meta: value.meta.and_then(|meta| serde_json::to_value(meta).ok()),
+            meta: None,
         }
     }
 }

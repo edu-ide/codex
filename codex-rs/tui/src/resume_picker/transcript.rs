@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::app_server_session::AppServerSession;
+use crate::git_action_directives::parse_assistant_markdown;
 use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
@@ -61,8 +62,12 @@ pub(crate) fn thread_to_transcript_cells(
                 }));
             }
             ThreadItem::AgentMessage { text, .. } => {
-                if !text.trim().is_empty() {
-                    cells.push(Arc::new(AgentMarkdownCell::new(text.clone(), cwd)));
+                let parsed = parse_assistant_markdown(text);
+                if !parsed.visible_markdown.trim().is_empty() {
+                    cells.push(Arc::new(AgentMarkdownCell::new(
+                        parsed.visible_markdown,
+                        cwd,
+                    )));
                 }
             }
             ThreadItem::Plan { text, .. } => {
@@ -195,27 +200,6 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
                 .map(|path| format!(" · {}", path.as_path().display()))
                 .unwrap_or_default();
             vec![format!("image generation: {status}{saved}").dim().into()]
-        }
-        ThreadItem::LoopLifecycle {
-            title,
-            summary,
-            detail,
-            status,
-            error,
-            ..
-        } => {
-            let mut lines = vec![
-                format!("loop: {title} · {status:?} · {summary}")
-                    .dim()
-                    .into(),
-            ];
-            if let Some(detail) = detail.as_deref().filter(|value| !value.trim().is_empty()) {
-                lines.push(vec!["  ".dim(), detail.trim().to_string().dim()].into());
-            }
-            if let Some(error) = error.as_deref().filter(|value| !value.trim().is_empty()) {
-                lines.push(vec!["  error: ".red(), error.trim().to_string().red()].into());
-            }
-            lines
         }
         ThreadItem::EnteredReviewMode { review, .. } => {
             vec![vec!["review started: ".dim(), review.clone().into()].into()]

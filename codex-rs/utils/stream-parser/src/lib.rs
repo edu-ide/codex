@@ -4,7 +4,6 @@ mod inline_hidden_tag;
 mod proposed_plan;
 mod stream_text;
 mod tagged_line_parser;
-mod thinking;
 mod utf8_stream;
 
 pub use assistant_text::AssistantTextChunk;
@@ -20,7 +19,5 @@ pub use proposed_plan::extract_proposed_plan_text;
 pub use proposed_plan::strip_proposed_plan_blocks;
 pub use stream_text::StreamTextChunk;
 pub use stream_text::StreamTextParser;
-pub use thinking::ThinkingTagParser;
-pub use thinking::strip_think_blocks;
 pub use utf8_stream::Utf8StreamParser;
 pub use utf8_stream::Utf8StreamParserError;

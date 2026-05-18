@@ -400,10 +400,11 @@ impl ServerHandler for TestToolServer {
             JsonObject::new(),
         )]));
 
-        let mut info = ServerInfo::default();
-        info.instructions = Some("Use these tools to exercise the rmcp test server.".to_string());
-        info.capabilities = capabilities;
-        info
+        ServerInfo {
+            instructions: Some("Use these tools to exercise the rmcp test server.".to_string()),
+            capabilities,
+            ..ServerInfo::default()
+        }
     }
 
     fn list_tools(
@@ -454,14 +455,14 @@ impl ServerHandler for TestToolServer {
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         if uri == MEMO_URI {
-            Ok(ReadResourceResult::new(vec![
-                ResourceContents::TextResourceContents {
+            Ok(ReadResourceResult {
+                contents: vec![ResourceContents::TextResourceContents {
                     uri,
                     mime_type: Some("text/plain".to_string()),
                     text: Self::memo_text().to_string(),
                     meta: None,
-                },
-            ]))
+                }],
+            })
         } else {
             Err(McpError::resource_not_found(
                 "resource_not_found",
@@ -476,14 +477,22 @@ impl ServerHandler for TestToolServer {
         context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         match request.name.as_ref() {
-            "sandbox_meta" => Ok(structured_tool_result(serde_json::Value::Object(
-                context.meta.0,
-            ))),
+            "sandbox_meta" => Ok(CallToolResult {
+                content: Vec::new(),
+                structured_content: Some(serde_json::Value::Object(context.meta.0)),
+                is_error: Some(false),
+                meta: None,
+            }),
             "cwd" => {
                 let cwd = std::env::current_dir()
                     .map(|path| path.to_string_lossy().into_owned())
                     .map_err(|err| McpError::internal_error(err.to_string(), None))?;
-                Ok(structured_tool_result(json!({ "cwd": cwd })))
+                Ok(CallToolResult {
+                    content: Vec::new(),
+                    structured_content: Some(json!({ "cwd": cwd })),
+                    is_error: Some(false),
+                    meta: None,
+                })
             }
             "echo" | "echo-tool" => {
                 let args: EchoArgs = match request.arguments {
@@ -506,7 +515,12 @@ impl ServerHandler for TestToolServer {
                     "env": env_snapshot.get(env_name),
                 });
 
-                Ok(structured_tool_result(structured_content))
+                Ok(CallToolResult {
+                    content: Vec::new(),
+                    structured_content: Some(structured_content),
+                    is_error: Some(false),
+                    meta: None,
+                })
             }
             "image" => {
                 // Read a data URL (e.g. data:image/png;base64,AAA...) from env and convert to
@@ -652,14 +666,13 @@ impl TestToolServer {
             sleep(Duration::from_millis(delay)).await;
         }
 
-        Ok(structured_tool_result(json!({ "result": "ok" })))
+        Ok(CallToolResult {
+            content: Vec::new(),
+            structured_content: Some(json!({ "result": "ok" })),
+            is_error: Some(false),
+            meta: None,
+        })
     }
-}
-
-fn structured_tool_result(value: serde_json::Value) -> CallToolResult {
-    let mut result = CallToolResult::structured(value);
-    result.content.clear();
-    result
 }
 
 async fn wait_on_sync_barrier(args: SyncBarrierArgs) -> Result<(), McpError> {

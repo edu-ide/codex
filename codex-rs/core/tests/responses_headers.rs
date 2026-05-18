@@ -102,7 +102,6 @@ async fn responses_stream_includes_subagent_header_on_review() {
         /*auth_manager*/ None,
         thread_id.into(),
         thread_id,
-        codex_core::OPENAI_PROVIDER_ID.to_string(),
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
         provider.clone(),
         session_source,
@@ -110,6 +109,7 @@ async fn responses_stream_includes_subagent_header_on_review() {
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
+        /*attestation_provider*/ None,
     );
     let mut client_session = client.new_session();
 
@@ -230,7 +230,6 @@ async fn responses_stream_includes_subagent_header_on_other() {
         /*auth_manager*/ None,
         thread_id.into(),
         thread_id,
-        codex_core::OPENAI_PROVIDER_ID.to_string(),
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
         provider.clone(),
         session_source,
@@ -238,6 +237,7 @@ async fn responses_stream_includes_subagent_header_on_other() {
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
+        /*attestation_provider*/ None,
     );
     let mut client_session = client.new_session();
 
@@ -347,7 +347,6 @@ async fn responses_respects_model_info_overrides_from_config() {
         /*auth_manager*/ None,
         thread_id.into(),
         thread_id,
-        codex_core::OPENAI_PROVIDER_ID.to_string(),
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
         provider.clone(),
         session_source,
@@ -355,6 +354,7 @@ async fn responses_respects_model_info_overrides_from_config() {
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
+        /*attestation_provider*/ None,
     );
     let mut client_session = client.new_session();
 

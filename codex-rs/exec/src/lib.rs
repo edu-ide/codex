@@ -15,7 +15,6 @@ pub use cli::Command;
 pub use cli::ReviewArgs;
 use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 use codex_app_server_client::EnvironmentManager;
-use codex_app_server_client::EnvironmentManagerArgs;
 use codex_app_server_client::ExecServerRuntimePaths;
 use codex_app_server_client::InProcessAppServerClient;
 use codex_app_server_client::InProcessClientStartArgs;
@@ -25,7 +24,6 @@ use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::McpServerElicitationRequestResponse;
-use codex_app_server_protocol::PermissionProfileModificationParams;
 use codex_app_server_protocol::PermissionProfileSelectionParams;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ReviewStartParams;
@@ -55,6 +53,7 @@ use codex_app_server_protocol::TurnStartedNotification;
 use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
 use codex_config::ConfigLoadError;
+use codex_config::ConfigLoadOptions;
 use codex_config::LoaderOverrides;
 use codex_config::format_config_error_with_source;
 use codex_core::StateDbHandle;
@@ -63,8 +62,9 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_and_loader_overrides;
+use codex_core::config::load_config_as_toml_with_cli_and_load_options;
 use codex_core::config::resolve_oss_provider;
+use codex_core::config::resolve_profile_v2_config_path;
 use codex_core::find_thread_meta_by_name_str;
 use codex_core::format_exec_policy_error_with_source;
 use codex_core::path_utils;
@@ -82,7 +82,6 @@ use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::ActivePermissionProfileModification;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewRequest;
@@ -102,8 +101,6 @@ pub use event_processor_with_jsonl_output::CodexStatus;
 pub use event_processor_with_jsonl_output::CollectedThreadEvents;
 pub use event_processor_with_jsonl_output::EventProcessorWithJsonOutput;
 pub use exec_events::AgentMessageItem;
-pub use exec_events::AutonomyDecisionAction;
-pub use exec_events::AutonomyDecisionEvent;
 pub use exec_events::CollabAgentState;
 pub use exec_events::CollabAgentStatus;
 pub use exec_events::CollabTool;
@@ -117,7 +114,6 @@ pub use exec_events::FileUpdateChange;
 pub use exec_events::ItemCompletedEvent;
 pub use exec_events::ItemStartedEvent;
 pub use exec_events::ItemUpdatedEvent;
-pub use exec_events::LoopLifecycleEvent;
 pub use exec_events::McpToolCallItem;
 pub use exec_events::McpToolCallItemError;
 pub use exec_events::McpToolCallItemResult;
@@ -139,15 +135,10 @@ pub use exec_events::Usage;
 pub use exec_events::WebSearchItem;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::Hash;
-use std::hash::Hasher;
 use std::io::IsTerminal;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::Duration;
-use std::time::Instant;
 use supports_color::Stream;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -165,171 +156,6 @@ use crate::event_processor::EventProcessor;
 
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
 const EXEC_DEFAULT_LOG_FILTER: &str = "error,opentelemetry_sdk=off,opentelemetry_otlp=off";
-const EXEC_AUTONOMY_STALLED_TURN_LIMIT: u32 = 2;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ExecAutonomySettings {
-    pub max_turns: u32,
-    pub timebox: Duration,
-}
-
-impl ExecAutonomySettings {
-    pub fn new(max_turns: u32, timebox: Duration) -> Self {
-        Self {
-            max_turns: max_turns.max(1),
-            timebox,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ExecAutonomyDecision {
-    Stop {
-        reason: &'static str,
-    },
-    Continue {
-        reason: &'static str,
-        progress_signature: u64,
-        stalled_turns: u32,
-        followup_prompt: String,
-    },
-}
-
-fn latest_agent_progress(items: &[AppServerThreadItem]) -> String {
-    items
-        .iter()
-        .rev()
-        .find_map(|item| match item {
-            AppServerThreadItem::AgentMessage { text, .. } if !text.trim().is_empty() => {
-                Some(text.trim().to_string())
-            }
-            AppServerThreadItem::CommandExecution {
-                aggregated_output: Some(output),
-                ..
-            } if !output.trim().is_empty() => Some(output.trim().to_string()),
-            AppServerThreadItem::McpToolCall {
-                result: Some(result),
-                ..
-            } => serde_json::to_string(result).ok(),
-            AppServerThreadItem::DynamicToolCall {
-                content_items: Some(items),
-                ..
-            } => serde_json::to_string(items).ok(),
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
-fn exec_autonomy_progress_signature(progress: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    progress.trim().hash(&mut hasher);
-    hasher.finish()
-}
-
-fn agent_reports_completion(progress: &str) -> bool {
-    let lower = progress.to_ascii_lowercase();
-    lower.contains("all tasks complete")
-        || lower.contains("task complete")
-        || lower.contains("completed")
-        || lower.contains("done")
-        || progress.contains("완료되었습니다")
-        || progress.contains("완료했습니다")
-        || progress.contains("작업이 완료")
-}
-
-fn extract_pseudo_exec_command(progress: &str) -> Option<String> {
-    let value = serde_json::from_str::<serde_json::Value>(progress.trim()).ok()?;
-    let tool = value
-        .get("tool")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if !tool.contains("exec_command") {
-        return None;
-    }
-    value
-        .pointer("/arguments/cmd")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|cmd| !cmd.is_empty())
-        .map(str::to_string)
-}
-
-fn build_exec_autonomy_followup_prompt_with_root(progress: &str, root_prompt: &str) -> String {
-    let pseudo_exec = extract_pseudo_exec_command(progress)
-        .map(|command| {
-            format!(
-                "\n\n이전 응답은 실제 실행 대신 exec_command tool 호출 JSON만 출력했습니다. 지금 실제 tool을 호출해서 실행하세요.\n명령: `{command}`\n아직 실행하지 않은 다음 단계로 넘어가지 마세요."
-            )
-        })
-        .unwrap_or_else(|| "\n\n이제 다음 미완료 단계를 실제 tool을 호출해서 계속 진행하세요.".to_string());
-
-    format!(
-        "Autonomous follow-up turn.\n\n원래 작업 조건:\n{root_prompt}\n\n직전 진행 내용:\n{progress}{pseudo_exec}\n\n완료 조건을 만족하면 명확히 완료되었다고 말하고 멈추세요."
-    )
-}
-
-fn decide_exec_autonomy_followup(
-    settings: ExecAutonomySettings,
-    elapsed: Duration,
-    completed_turns: u32,
-    previous_progress_signature: Option<u64>,
-    previous_stalled_turns: u32,
-    root_prompt: &str,
-    completed_items: &[AppServerThreadItem],
-) -> ExecAutonomyDecision {
-    if completed_turns >= settings.max_turns {
-        return ExecAutonomyDecision::Stop {
-            reason: "max_turns",
-        };
-    }
-    if elapsed >= settings.timebox {
-        return ExecAutonomyDecision::Stop { reason: "timebox" };
-    }
-
-    let progress = latest_agent_progress(completed_items);
-    if agent_reports_completion(&progress) {
-        return ExecAutonomyDecision::Stop {
-            reason: "completed",
-        };
-    }
-
-    let progress_signature = exec_autonomy_progress_signature(&progress);
-    let stalled_turns = if previous_progress_signature == Some(progress_signature) {
-        previous_stalled_turns.saturating_add(1)
-    } else {
-        0
-    };
-    if stalled_turns >= EXEC_AUTONOMY_STALLED_TURN_LIMIT {
-        return ExecAutonomyDecision::Stop { reason: "stalled" };
-    }
-
-    ExecAutonomyDecision::Continue {
-        reason: if stalled_turns > 0 {
-            "stalled_retry"
-        } else {
-            "progressed"
-        },
-        progress_signature,
-        stalled_turns,
-        followup_prompt: build_exec_autonomy_followup_prompt_with_root(&progress, root_prompt),
-    }
-}
-
-fn merge_developer_instructions(existing: Option<String>, extra: Option<String>) -> Option<String> {
-    let existing = existing
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let extra = extra
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-
-    match (existing, extra) {
-        (Some(existing), Some(extra)) => Some(format!("{existing}\n\n{extra}")),
-        (Some(existing), None) => Some(existing),
-        (None, Some(extra)) => Some(extra),
-        (None, None) => None,
-    }
-}
 
 enum InitialOperation {
     UserTurn {
@@ -376,8 +202,6 @@ struct ExecRunArgs {
     config: Config,
     dangerously_bypass_approvals_and_sandbox: bool,
     exec_span: tracing::Span,
-    external_server_notifications: Option<mpsc::Receiver<ServerNotification>>,
-    autonomy_settings: Option<ExecAutonomySettings>,
     images: Vec<PathBuf>,
     json_mode: bool,
     last_message_file: Option<PathBuf>,
@@ -407,46 +231,6 @@ fn exec_stderr_env_filter() -> EnvFilter {
 }
 
 pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
-    run_main_with_extra_developer_instructions(cli, arg0_paths, None).await
-}
-
-pub async fn run_main_with_extra_developer_instructions(
-    cli: Cli,
-    arg0_paths: Arg0DispatchPaths,
-    extra_developer_instructions: Option<String>,
-) -> anyhow::Result<()> {
-    run_main_with_extra_developer_instructions_and_server_notifications(
-        cli,
-        arg0_paths,
-        extra_developer_instructions,
-        None,
-    )
-    .await
-}
-
-pub async fn run_main_with_extra_developer_instructions_and_server_notifications(
-    cli: Cli,
-    arg0_paths: Arg0DispatchPaths,
-    extra_developer_instructions: Option<String>,
-    external_server_notifications: Option<mpsc::Receiver<ServerNotification>>,
-) -> anyhow::Result<()> {
-    run_main_with_extra_developer_instructions_server_notifications_and_autonomy(
-        cli,
-        arg0_paths,
-        extra_developer_instructions,
-        external_server_notifications,
-        None,
-    )
-    .await
-}
-
-pub async fn run_main_with_extra_developer_instructions_server_notifications_and_autonomy(
-    cli: Cli,
-    arg0_paths: Arg0DispatchPaths,
-    extra_developer_instructions: Option<String>,
-    external_server_notifications: Option<mpsc::Receiver<ServerNotification>>,
-    autonomy_settings: Option<ExecAutonomySettings>,
-) -> anyhow::Result<()> {
     #[allow(clippy::print_stderr)]
     if let Some(message) = cli.removed_full_auto_warning() {
         eprintln!("{message}");
@@ -458,6 +242,7 @@ pub async fn run_main_with_extra_developer_instructions_server_notifications_and
 
     let Cli {
         command,
+        strict_config,
         shared,
         skip_git_repo_check,
         ephemeral,
@@ -478,8 +263,10 @@ pub async fn run_main_with_extra_developer_instructions_server_notifications_and
         oss,
         oss_provider,
         config_profile,
+        config_profile_v2,
         sandbox_mode: sandbox_mode_cli_arg,
         dangerously_bypass_approvals_and_sandbox,
+        bypass_hook_trust,
         cwd,
         add_dir,
     } = shared;
@@ -532,19 +319,25 @@ pub async fn run_main_with_extra_developer_instructions_server_notifications_and
             std::process::exit(1);
         }
     };
-
-    #[allow(clippy::print_stderr)]
+    let user_config_path = config_profile_v2
+        .as_ref()
+        .map(|profile_v2| resolve_profile_v2_config_path(&codex_home, profile_v2));
     let loader_overrides = LoaderOverrides {
+        user_config_path,
+        user_config_profile: config_profile_v2,
         ignore_user_config,
         ignore_user_and_project_exec_policy_rules: ignore_rules,
         ..Default::default()
     };
 
-    let config_toml = match load_config_as_toml_with_cli_and_loader_overrides(
+    let config_toml = match load_config_as_toml_with_cli_and_load_options(
         &codex_home,
         Some(&config_cwd),
         cli_kv_overrides.clone(),
-        loader_overrides.clone(),
+        ConfigLoadOptions {
+            loader_overrides: loader_overrides.clone(),
+            strict_config,
+        },
     )
     .await
     {
@@ -624,6 +417,7 @@ pub async fn run_main_with_extra_developer_instructions_server_notifications_and
         permission_profile: None,
         default_permissions: None,
         cwd: resolved_cwd,
+        workspace_roots: None,
         model_provider: model_provider.clone(),
         service_tier: None,
         codex_self_exe: arg0_paths.codex_self_exe.clone(),
@@ -634,24 +428,21 @@ pub async fn run_main_with_extra_developer_instructions_server_notifications_and
         developer_instructions: None,
         personality: None,
         compact_prompt: None,
-        include_apply_patch_tool: None,
         show_raw_agent_reasoning: oss.then_some(true),
         tools_web_search_request: None,
         ephemeral: ephemeral.then_some(true),
+        bypass_hook_trust: bypass_hook_trust.then_some(true),
         additional_writable_roots: add_dir,
     };
 
-    let mut config = ConfigBuilder::default()
+    let config = ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
         .loader_overrides(loader_overrides)
+        .strict_config(strict_config)
         .cloud_requirements(cloud_requirements)
         .build()
         .await?;
-    config.developer_instructions = merge_developer_instructions(
-        config.developer_instructions.take(),
-        extra_developer_instructions,
-    );
 
     #[allow(clippy::print_stderr)]
     match check_execpolicy_for_warnings(&config.config_layer_stack).await {
@@ -698,6 +489,8 @@ pub async fn run_main_with_extra_developer_instructions_server_notifications_and
             None
         }
     };
+    codex_core::otel_init::record_process_start(otel.as_ref(), "codex_exec");
+    codex_core::otel_init::install_sqlite_telemetry(otel.as_ref(), "codex_exec");
 
     let otel_logger_layer = otel.as_ref().and_then(|o| o.logger_layer());
 
@@ -728,18 +521,22 @@ pub async fn run_main_with_extra_developer_instructions_server_notifications_and
         arg0_paths.codex_linux_sandbox_exe.clone(),
     )?;
     let state_db = codex_core::init_state_db(&config).await;
+    let environment_manager = if run_loader_overrides.ignore_user_config {
+        EnvironmentManager::from_env(local_runtime_paths).await?
+    } else {
+        EnvironmentManager::from_codex_home(config.codex_home.clone(), local_runtime_paths).await?
+    };
     let in_process_start_args = InProcessClientStartArgs {
         arg0_paths,
         config: std::sync::Arc::new(config.clone()),
         cli_overrides: run_cli_overrides,
         loader_overrides: run_loader_overrides,
+        strict_config,
         cloud_requirements: run_cloud_requirements,
         feedback: CodexFeedback::new(),
         log_db: None,
         state_db: state_db.clone(),
-        environment_manager: std::sync::Arc::new(
-            EnvironmentManager::new(EnvironmentManagerArgs::new(local_runtime_paths)).await,
-        ),
+        environment_manager: std::sync::Arc::new(environment_manager),
         config_warnings,
         session_source: SessionSource::Exec,
         enable_codex_api_key_env: true,
@@ -756,8 +553,6 @@ pub async fn run_main_with_extra_developer_instructions_server_notifications_and
         config,
         dangerously_bypass_approvals_and_sandbox,
         exec_span: exec_span.clone(),
-        external_server_notifications,
-        autonomy_settings,
         images,
         json_mode,
         last_message_file,
@@ -780,8 +575,6 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         config,
         dangerously_bypass_approvals_and_sandbox,
         exec_span,
-        mut external_server_notifications,
-        autonomy_settings,
         images,
         json_mode,
         last_message_file,
@@ -844,7 +637,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             let mut items: Vec<UserInput> = imgs
                 .into_iter()
                 .chain(args.images.iter().cloned())
-                .map(|path| UserInput::LocalImage { path })
+                .map(|path| UserInput::LocalImage { path, detail: None })
                 .collect();
             items.push(UserInput::Text {
                 text: prompt_text.clone(),
@@ -864,7 +657,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             let prompt_text = resolve_root_prompt(root_prompt);
             let mut items: Vec<UserInput> = imgs
                 .into_iter()
-                .map(|path| UserInput::LocalImage { path })
+                .map(|path| UserInput::LocalImage { path, detail: None })
                 .collect();
             items.push(UserInput::Text {
                 text: prompt_text.clone(),
@@ -966,7 +759,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     event_processor.print_config_summary(&config, &prompt_summary, &session_configured);
     if !json_mode
         && let Some(message) =
-            codex_core::config::system_bwrap_warning(config.permissions.permission_profile.get())
+            codex_core::config::system_bwrap_warning(config.permissions.permission_profile())
     {
         event_processor.process_warning(message);
     }
@@ -981,10 +774,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         }
     });
 
-    let autonomy_settings = autonomy_settings
-        .filter(|_| matches!(&initial_operation, InitialOperation::UserTurn { .. }));
-    let turn_cwd = default_cwd.clone();
-    let mut task_id = match initial_operation {
+    let task_id = match initial_operation {
         InitialOperation::UserTurn {
             items,
             output_schema,
@@ -998,14 +788,15 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                         input: items.into_iter().map(Into::into).collect(),
                         responsesapi_client_metadata: None,
                         environments: None,
-                        cwd: Some(turn_cwd.clone()),
-                        approval_policy: Some(default_approval_policy.clone().into()),
+                        cwd: Some(default_cwd),
+                        runtime_workspace_roots: None,
+                        approval_policy: Some(default_approval_policy.into()),
                         approvals_reviewer: None,
                         sandbox_policy: None,
                         permissions: None,
                         model: None,
                         service_tier: None,
-                        effort: default_effort.clone(),
+                        effort: default_effort,
                         summary: None,
                         personality: None,
                         output_schema,
@@ -1047,10 +838,6 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         }
     };
     exec_span.record("turn.id", task_id.as_str());
-    let autonomy_started_at = Instant::now();
-    let mut autonomy_completed_turns = 1_u32;
-    let mut autonomy_progress_signature = None;
-    let mut autonomy_stalled_turns = 0_u32;
 
     // Run the loop until the task is complete.
     // Track whether a fatal error was reported by the server so we can
@@ -1083,21 +870,6 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 continue;
             }
             maybe_event = client.next_event() => maybe_event,
-            maybe_notification = async {
-                external_server_notifications
-                    .as_mut()
-                    .expect("external notification receiver is present")
-                    .recv()
-                    .await
-            }, if external_server_notifications.is_some() => {
-                match maybe_notification {
-                    Some(notification) => Some(InProcessServerEvent::ServerNotification(notification)),
-                    None => {
-                        external_server_notifications = None;
-                        continue;
-                    }
-                }
-            },
         };
 
         let Some(server_event) = server_event else {
@@ -1136,112 +908,12 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 )
                 .await;
 
-                let auto_followup_prompt = if let Some(settings) = autonomy_settings
-                    && let ServerNotification::TurnCompleted(payload) = &notification
-                    && payload.thread_id == primary_thread_id_for_requests
-                    && payload.turn.id == task_id
-                    && matches!(
-                        payload.turn.status,
-                        codex_app_server_protocol::TurnStatus::Completed
-                    ) {
-                    match decide_exec_autonomy_followup(
-                        settings,
-                        autonomy_started_at.elapsed(),
-                        autonomy_completed_turns,
-                        autonomy_progress_signature,
-                        autonomy_stalled_turns,
-                        &prompt_summary,
-                        &payload.turn.items,
-                    ) {
-                        ExecAutonomyDecision::Continue {
-                            progress_signature,
-                            stalled_turns,
-                            followup_prompt,
-                            reason,
-                        } => {
-                            autonomy_progress_signature = Some(progress_signature);
-                            autonomy_stalled_turns = stalled_turns;
-                            let _ = event_processor.process_autonomy_decision(
-                                task_id.clone(),
-                                AutonomyDecisionAction::Continue,
-                                reason,
-                                stalled_turns,
-                            );
-                            info!(reason, "exec autonomous follow-up requested");
-                            Some(followup_prompt)
-                        }
-                        ExecAutonomyDecision::Stop { reason } => {
-                            let _ = event_processor.process_autonomy_decision(
-                                task_id.clone(),
-                                AutonomyDecisionAction::Stop,
-                                reason,
-                                autonomy_stalled_turns,
-                            );
-                            info!(reason, "exec autonomous follow-up stopped");
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-
                 if should_process_notification(
                     &notification,
                     &primary_thread_id_for_requests,
                     &task_id,
-                    autonomy_settings.is_some(),
                 ) {
-                    let status = event_processor.process_server_notification(notification);
-                    if let Some(followup_prompt) = auto_followup_prompt {
-                        match send_request_with_response::<TurnStartResponse>(
-                            &client,
-                            ClientRequest::TurnStart {
-                                request_id: request_ids.next(),
-                                params: TurnStartParams {
-                                    thread_id: primary_thread_id_for_requests.clone(),
-                                    input: vec![
-                                        UserInput::Text {
-                                            text: followup_prompt,
-                                            text_elements: Vec::new(),
-                                        }
-                                        .into(),
-                                    ],
-                                    responsesapi_client_metadata: None,
-                                    environments: None,
-                                    cwd: Some(turn_cwd.clone()),
-                                    approval_policy: Some(default_approval_policy.clone().into()),
-                                    approvals_reviewer: None,
-                                    sandbox_policy: None,
-                                    permissions: None,
-                                    model: None,
-                                    service_tier: None,
-                                    effort: default_effort.clone(),
-                                    summary: None,
-                                    personality: None,
-                                    output_schema: None,
-                                    collaboration_mode: None,
-                                },
-                            },
-                            "turn/start",
-                        )
-                        .await
-                        {
-                            Ok(response) => {
-                                task_id = response.turn.id;
-                                autonomy_completed_turns =
-                                    autonomy_completed_turns.saturating_add(1);
-                                exec_span.record("turn.id", task_id.as_str());
-                                info!("Sent autonomous follow-up with event ID: {task_id}");
-                                continue;
-                            }
-                            Err(err) => {
-                                error_seen = true;
-                                warn!("exec autonomous follow-up turn/start failed: {err}");
-                            }
-                        }
-                    }
-
-                    match status {
+                    match event_processor.process_server_notification(notification) {
                         CodexStatus::Running => {}
                         CodexStatus::InitiateShutdown => {
                             if let Err(err) = request_shutdown(
@@ -1281,7 +953,7 @@ fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
     let permissions = permissions_selection_from_config(config);
     let sandbox = permissions.is_none().then(|| {
         sandbox_mode_from_permission_profile(
-            &config.permissions.permission_profile(),
+            &config.permissions.effective_permission_profile(),
             config.cwd.as_path(),
         )
     });
@@ -1289,13 +961,19 @@ fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
         model: config.model.clone(),
         model_provider: Some(config.model_provider_id.clone()),
         cwd: Some(config.cwd.to_string_lossy().to_string()),
+        runtime_workspace_roots: Some(
+            config
+                .workspace_roots
+                .iter()
+                .map(AbsolutePathBuf::to_path_buf)
+                .collect(),
+        ),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox.flatten(),
         permissions,
         config: config_request_overrides_from_config(config),
         ephemeral: Some(config.ephemeral),
-        developer_instructions: config.developer_instructions.clone(),
         ..ThreadStartParams::default()
     }
 }
@@ -1304,7 +982,7 @@ fn thread_resume_params_from_config(config: &Config, thread_id: String) -> Threa
     let permissions = permissions_selection_from_config(config);
     let sandbox = permissions.is_none().then(|| {
         sandbox_mode_from_permission_profile(
-            &config.permissions.permission_profile(),
+            &config.permissions.effective_permission_profile(),
             config.cwd.as_path(),
         )
     });
@@ -1313,12 +991,18 @@ fn thread_resume_params_from_config(config: &Config, thread_id: String) -> Threa
         model: config.model.clone(),
         model_provider: Some(config.model_provider_id.clone()),
         cwd: Some(config.cwd.to_string_lossy().to_string()),
+        runtime_workspace_roots: Some(
+            config
+                .workspace_roots
+                .iter()
+                .map(AbsolutePathBuf::to_path_buf)
+                .collect(),
+        ),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox.flatten(),
         permissions,
         config: config_request_overrides_from_config(config),
-        developer_instructions: config.developer_instructions.clone(),
         ..ThreadResumeParams::default()
     }
 }
@@ -1333,19 +1017,7 @@ fn permissions_selection_from_config(config: &Config) -> Option<PermissionProfil
 fn permissions_selection_from_active_profile(
     active: ActivePermissionProfile,
 ) -> PermissionProfileSelectionParams {
-    let modifications = active
-        .modifications
-        .into_iter()
-        .map(|modification| match modification {
-            ActivePermissionProfileModification::AdditionalWritableRoot { path } => {
-                PermissionProfileModificationParams::AdditionalWritableRoot { path }
-            }
-        })
-        .collect::<Vec<_>>();
-    PermissionProfileSelectionParams::Profile {
-        id: active.id,
-        modifications: (!modifications.is_empty()).then_some(modifications),
-    }
+    PermissionProfileSelectionParams::new(active.id)
 }
 
 fn sandbox_mode_from_permission_profile(
@@ -1417,11 +1089,7 @@ fn session_configured_from_thread_start_response(
         response.service_tier.clone(),
         response.approval_policy.to_core(),
         response.approvals_reviewer.to_core(),
-        response
-            .permission_profile
-            .clone()
-            .map(Into::into)
-            .unwrap_or_else(|| config.permissions.permission_profile()),
+        config.permissions.effective_permission_profile(),
         response.active_permission_profile.clone().map(Into::into),
         response.cwd.clone(),
         response.reasoning_effort,
@@ -1442,11 +1110,7 @@ fn session_configured_from_thread_resume_response(
         response.service_tier.clone(),
         response.approval_policy.to_core(),
         response.approvals_reviewer.to_core(),
-        response
-            .permission_profile
-            .clone()
-            .map(Into::into)
-            .unwrap_or_else(|| config.permissions.permission_profile()),
+        config.permissions.effective_permission_profile(),
         response.active_permission_profile.clone().map(Into::into),
         response.cwd.clone(),
         response.reasoning_effort,
@@ -1515,64 +1179,53 @@ fn should_process_notification(
     notification: &ServerNotification,
     thread_id: &str,
     turn_id: &str,
-    process_same_thread_followups: bool,
 ) -> bool {
     match notification {
         ServerNotification::ConfigWarning(_) | ServerNotification::DeprecationNotice(_) => true,
         ServerNotification::Error(notification) => {
-            notification.thread_id == thread_id
-                && (notification.turn_id == turn_id || process_same_thread_followups)
+            notification.thread_id == thread_id && notification.turn_id == turn_id
         }
         ServerNotification::HookCompleted(notification) => {
             notification.thread_id == thread_id
                 && notification
                     .turn_id
                     .as_deref()
-                    .is_none_or(|candidate| candidate == turn_id || process_same_thread_followups)
+                    .is_none_or(|candidate| candidate == turn_id)
         }
         ServerNotification::HookStarted(notification) => {
             notification.thread_id == thread_id
                 && notification
                     .turn_id
                     .as_deref()
-                    .is_none_or(|candidate| candidate == turn_id || process_same_thread_followups)
+                    .is_none_or(|candidate| candidate == turn_id)
         }
         ServerNotification::ItemCompleted(notification) => {
-            notification.thread_id == thread_id
-                && (notification.turn_id == turn_id || process_same_thread_followups)
+            notification.thread_id == thread_id && notification.turn_id == turn_id
         }
         ServerNotification::ItemStarted(notification) => {
-            notification.thread_id == thread_id
-                && (notification.turn_id == turn_id || process_same_thread_followups)
+            notification.thread_id == thread_id && notification.turn_id == turn_id
         }
         ServerNotification::ModelRerouted(notification) => {
-            notification.thread_id == thread_id
-                && (notification.turn_id == turn_id || process_same_thread_followups)
+            notification.thread_id == thread_id && notification.turn_id == turn_id
         }
         ServerNotification::ModelVerification(notification) => {
             notification.thread_id == thread_id && notification.turn_id == turn_id
         }
         ServerNotification::ThreadTokenUsageUpdated(notification) => {
-            notification.thread_id == thread_id
-                && (notification.turn_id == turn_id || process_same_thread_followups)
+            notification.thread_id == thread_id && notification.turn_id == turn_id
         }
         ServerNotification::TurnCompleted(notification) => {
-            notification.thread_id == thread_id
-                && (notification.turn.id == turn_id || process_same_thread_followups)
+            notification.thread_id == thread_id && notification.turn.id == turn_id
         }
         ServerNotification::TurnDiffUpdated(notification) => {
-            notification.thread_id == thread_id
-                && (notification.turn_id == turn_id || process_same_thread_followups)
+            notification.thread_id == thread_id && notification.turn_id == turn_id
         }
         ServerNotification::TurnPlanUpdated(notification) => {
-            notification.thread_id == thread_id
-                && (notification.turn_id == turn_id || process_same_thread_followups)
+            notification.thread_id == thread_id && notification.turn_id == turn_id
         }
         ServerNotification::TurnStarted(notification) => {
-            notification.thread_id == thread_id
-                && (notification.turn.id == turn_id || process_same_thread_followups)
+            notification.thread_id == thread_id && notification.turn.id == turn_id
         }
-        ServerNotification::IlhaeLoopLifecycle(_) => true,
         _ => false,
     }
 }
@@ -1630,44 +1283,7 @@ fn should_backfill_turn_completed_items(
         return false;
     };
 
-    !thread_ephemeral && turn_items_need_backfill(&payload.turn.items)
-}
-
-fn turn_items_need_backfill(items: &[AppServerThreadItem]) -> bool {
-    items.is_empty()
-        || items.iter().any(|item| match item {
-            AppServerThreadItem::CommandExecution { status, .. } => {
-                matches!(
-                    status,
-                    codex_app_server_protocol::CommandExecutionStatus::InProgress
-                )
-            }
-            AppServerThreadItem::FileChange { status, .. } => {
-                matches!(
-                    status,
-                    codex_app_server_protocol::PatchApplyStatus::InProgress
-                )
-            }
-            AppServerThreadItem::McpToolCall { status, .. } => {
-                matches!(
-                    status,
-                    codex_app_server_protocol::McpToolCallStatus::InProgress
-                )
-            }
-            AppServerThreadItem::DynamicToolCall { status, .. } => {
-                matches!(
-                    status,
-                    codex_app_server_protocol::DynamicToolCallStatus::InProgress
-                )
-            }
-            AppServerThreadItem::CollabAgentToolCall { status, .. } => {
-                matches!(
-                    status,
-                    codex_app_server_protocol::CollabAgentToolCallStatus::InProgress
-                )
-            }
-            _ => false,
-        })
+    !thread_ephemeral && payload.turn.items.is_empty()
 }
 
 fn turn_items_for_thread(
@@ -1999,6 +1615,15 @@ async fn handle_server_request(
             )
             .await
         }
+        ServerRequest::AttestationGenerate { request_id, .. } => {
+            reject_server_request(
+                client,
+                request_id,
+                &method,
+                "attestation generation is not supported in exec mode".to_string(),
+            )
+            .await
+        }
         ServerRequest::ApplyPatchApproval { request_id, params } => {
             reject_server_request(
                 client,
@@ -2157,7 +1782,9 @@ fn read_prompt_from_stdin(behavior: StdinPromptBehavior) -> Option<String> {
         }
         StdinPromptBehavior::Forced => {}
         StdinPromptBehavior::OptionalAppend if stdin_is_terminal => return None,
-        StdinPromptBehavior::OptionalAppend => {}
+        StdinPromptBehavior::OptionalAppend => {
+            eprintln!("Reading additional input from stdin...");
+        }
     }
 
     let mut bytes = Vec::new();
@@ -2183,9 +1810,6 @@ fn read_prompt_from_stdin(behavior: StdinPromptBehavior) -> Option<String> {
             }
         }
     } else {
-        if matches!(behavior, StdinPromptBehavior::OptionalAppend) {
-            eprintln!("Reading additional input from stdin...");
-        }
         Some(buffer)
     }
 }

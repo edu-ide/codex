@@ -1,9 +1,10 @@
 use std::io;
 use std::sync::LazyLock;
 
-use codex_core::DEFAULT_LLAMA_SERVER_PORT;
-use codex_core::LLAMA_SERVER_OSS_PROVIDER_ID;
-use codex_core::config::set_default_oss_provider;
+use crate::key_hint;
+use crate::key_hint::KeyBinding;
+use crate::key_hint::KeyBindingListExt;
+use crate::legacy_core::config::set_default_oss_provider;
 use codex_model_provider_info::DEFAULT_LMSTUDIO_PORT;
 use codex_model_provider_info::DEFAULT_OLLAMA_PORT;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
@@ -12,6 +13,7 @@ use crossterm::event::Event;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
+use crossterm::event::KeyModifiers;
 use crossterm::event::{self};
 use crossterm::execute;
 use crossterm::terminal::EnterAlternateScreen;
@@ -76,14 +78,20 @@ static OSS_SELECT_OPTIONS: LazyLock<Vec<SelectOption>> = LazyLock::new(|| {
             key: KeyCode::Char('o'),
             provider_id: OLLAMA_OSS_PROVIDER_ID,
         },
-        SelectOption {
-            label: Line::from(vec!["S".underlined(), "erver".into()]),
-            description: "Local llama.cpp llama-server (Responses API, default port 8082)",
-            key: KeyCode::Char('s'),
-            provider_id: LLAMA_SERVER_OSS_PROVIDER_ID,
-        },
     ]
 });
+
+// This startup wizard runs before the main TUI runtime keymap is available, so
+// it mirrors the built-in horizontal list defaults instead of reading config.
+// The shared matcher still covers raw C0 Ctrl-H/Ctrl-L terminal reports.
+const MOVE_LEFT_KEYS: [KeyBinding; 2] = [
+    key_hint::plain(KeyCode::Left),
+    key_hint::ctrl(KeyCode::Char('h')),
+];
+const MOVE_RIGHT_KEYS: [KeyBinding; 2] = [
+    key_hint::plain(KeyCode::Right),
+    key_hint::ctrl(KeyCode::Char('l')),
+];
 
 pub struct OssSelectionWidget<'a> {
     select_options: &'a Vec<SelectOption>,
@@ -100,11 +108,7 @@ pub struct OssSelectionWidget<'a> {
 }
 
 impl OssSelectionWidget<'_> {
-    fn new(
-        lmstudio_status: ProviderStatus,
-        ollama_status: ProviderStatus,
-        llama_server_status: ProviderStatus,
-    ) -> io::Result<Self> {
+    fn new(lmstudio_status: ProviderStatus, ollama_status: ProviderStatus) -> io::Result<Self> {
         let providers = vec![
             ProviderOption {
                 name: "LM Studio".to_string(),
@@ -117,10 +121,6 @@ impl OssSelectionWidget<'_> {
             ProviderOption {
                 name: "Ollama (Chat)".to_string(),
                 status: ollama_status,
-            },
-            ProviderOption {
-                name: "llama.cpp llama-server".to_string(),
-                status: llama_server_status,
             },
         ];
 
@@ -194,29 +194,35 @@ impl OssSelectionWidget<'_> {
     }
 
     fn handle_select_key(&mut self, key_event: KeyEvent) {
-        match key_event.code {
-            KeyCode::Char('c')
-                if key_event
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
-            {
+        match key_event {
+            KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
                 self.send_decision("__CANCELLED__".to_string());
             }
-            KeyCode::Left => {
+            _ if MOVE_LEFT_KEYS.is_pressed(key_event) => {
                 self.selected_option = (self.selected_option + self.select_options.len() - 1)
                     % self.select_options.len();
             }
-            KeyCode::Right => {
+            _ if MOVE_RIGHT_KEYS.is_pressed(key_event) => {
                 self.selected_option = (self.selected_option + 1) % self.select_options.len();
             }
-            KeyCode::Enter => {
+            KeyEvent {
+                code: KeyCode::Enter,
+                ..
+            } => {
                 let opt = &self.select_options[self.selected_option];
                 self.send_decision(opt.provider_id.to_string());
             }
-            KeyCode::Esc => {
+            KeyEvent {
+                code: KeyCode::Esc, ..
+            } => {
                 self.send_decision(LMSTUDIO_OSS_PROVIDER_ID.to_string());
             }
-            other => {
+            KeyEvent { code, .. } => {
+                let other = code;
                 let normalized = Self::normalize_keycode(other);
                 if let Some(opt) = self
                     .select_options
@@ -307,28 +313,23 @@ pub async fn select_oss_provider(codex_home: &std::path::Path) -> io::Result<Str
     // Check provider statuses first
     let lmstudio_status = check_lmstudio_status().await;
     let ollama_status = check_ollama_status().await;
-    let llama_server_status = check_llama_server_status().await;
 
     // Autoselect if only one is running
-    let running = [
-        (LMSTUDIO_OSS_PROVIDER_ID, &lmstudio_status),
-        (OLLAMA_OSS_PROVIDER_ID, &ollama_status),
-        (LLAMA_SERVER_OSS_PROVIDER_ID, &llama_server_status),
-    ]
-    .into_iter()
-    .filter_map(|(provider, status)| matches!(status, ProviderStatus::Running).then_some(provider))
-    .collect::<Vec<_>>();
-
-    match running.as_slice() {
-        [provider] => {
-            return Ok((*provider).to_string());
+    match (&lmstudio_status, &ollama_status) {
+        (ProviderStatus::Running, ProviderStatus::NotRunning) => {
+            let provider = LMSTUDIO_OSS_PROVIDER_ID.to_string();
+            return Ok(provider);
+        }
+        (ProviderStatus::NotRunning, ProviderStatus::Running) => {
+            let provider = OLLAMA_OSS_PROVIDER_ID.to_string();
+            return Ok(provider);
         }
         _ => {
-            // Either multiple are running or none are running - show UI.
+            // Both running or both not running - show UI
         }
     }
 
-    let mut widget = OssSelectionWidget::new(lmstudio_status, ollama_status, llama_server_status)?;
+    let mut widget = OssSelectionWidget::new(lmstudio_status, ollama_status)?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -364,7 +365,7 @@ pub async fn select_oss_provider(codex_home: &std::path::Path) -> io::Result<Str
 }
 
 async fn check_lmstudio_status() -> ProviderStatus {
-    match check_url_status(&format!("http://localhost:{DEFAULT_LMSTUDIO_PORT}")).await {
+    match check_port_status(DEFAULT_LMSTUDIO_PORT).await {
         Ok(true) => ProviderStatus::Running,
         Ok(false) => ProviderStatus::NotRunning,
         Err(_) => ProviderStatus::Unknown,
@@ -372,33 +373,40 @@ async fn check_lmstudio_status() -> ProviderStatus {
 }
 
 async fn check_ollama_status() -> ProviderStatus {
-    match check_url_status(&format!("http://localhost:{DEFAULT_OLLAMA_PORT}")).await {
+    match check_port_status(DEFAULT_OLLAMA_PORT).await {
         Ok(true) => ProviderStatus::Running,
         Ok(false) => ProviderStatus::NotRunning,
         Err(_) => ProviderStatus::Unknown,
     }
 }
 
-async fn check_llama_server_status() -> ProviderStatus {
-    match check_url_status(&format!(
-        "http://localhost:{DEFAULT_LLAMA_SERVER_PORT}/health"
-    ))
-    .await
-    {
-        Ok(true) => ProviderStatus::Running,
-        Ok(false) => ProviderStatus::NotRunning,
-        Err(_) => ProviderStatus::Unknown,
-    }
-}
-
-async fn check_url_status(url: &str) -> io::Result<bool> {
+async fn check_port_status(port: u16) -> io::Result<bool> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(io::Error::other)?;
 
-    match client.get(url).send().await {
+    let url = format!("http://localhost:{port}");
+
+    match client.get(&url).send().await {
         Ok(response) => Ok(response.status().is_success()),
-        Err(_) => Ok(false),
+        Err(_) => Ok(false), // Connection failed = not running
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ctrl_h_l_move_provider_selection() {
+        let mut widget = OssSelectionWidget::new(ProviderStatus::Unknown, ProviderStatus::Unknown)
+            .expect("widget should initialize");
+
+        assert_eq!(widget.selected_option, 0);
+        widget.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        assert_eq!(widget.selected_option, 1);
+        widget.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        assert_eq!(widget.selected_option, 0);
     }
 }

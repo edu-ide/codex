@@ -237,54 +237,6 @@ pub fn find_codex_linux_sandbox_exe() -> Result<PathBuf, CargoBinError> {
     codex_utils_cargo_bin::cargo_bin("codex-linux-sandbox")
 }
 
-/// Builds an SSE stream body from a JSON fixture.
-///
-/// The fixture must contain an array of objects where each object represents a
-/// single SSE event with at least a `type` field matching the `event:` value.
-/// Additional fields become the JSON payload for the `data:` line. An object
-/// with only a `type` field results in an event with no `data:` section. This
-/// makes it trivial to extend the fixtures as OpenAI adds new event kinds or
-/// fields.
-pub fn load_sse_fixture(path: impl AsRef<std::path::Path>) -> String {
-    let events: Vec<serde_json::Value> =
-        serde_json::from_reader(std::fs::File::open(path).expect("read fixture"))
-            .expect("parse JSON fixture");
-    events
-        .into_iter()
-        .map(|e| {
-            let kind = e
-                .get("type")
-                .and_then(|v| v.as_str())
-                .expect("fixture event missing type");
-            if e.as_object().map(|o| o.len() == 1).unwrap_or(false) {
-                format!("event: {kind}\n\n")
-            } else {
-                format!("event: {kind}\ndata: {e}\n\n")
-            }
-        })
-        .collect()
-}
-
-pub fn load_sse_fixture_with_id_from_str(raw: &str, id: &str) -> String {
-    let replaced = raw.replace("__ID__", id);
-    let events: Vec<serde_json::Value> =
-        serde_json::from_str(&replaced).expect("parse JSON fixture");
-    events
-        .into_iter()
-        .map(|e| {
-            let kind = e
-                .get("type")
-                .and_then(|v| v.as_str())
-                .expect("fixture event missing type");
-            if e.as_object().map(|o| o.len() == 1).unwrap_or(false) {
-                format!("event: {kind}\n\n")
-            } else {
-                format!("event: {kind}\ndata: {e}\n\n")
-            }
-        })
-        .collect()
-}
-
 pub async fn wait_for_event<F>(
     codex: &CodexThread,
     predicate: F,
@@ -569,30 +521,6 @@ macro_rules! skip_if_no_network {
             println!(
                 "Skipping test because it cannot execute when network is disabled in a Codex sandbox."
             );
-            return $return_value;
-        }
-    }};
-}
-
-pub fn platform_sandbox_unavailable_warning(
-    permission_profile: &codex_protocol::models::PermissionProfile,
-) -> Option<String> {
-    codex_core::config::system_bwrap_warning(permission_profile)
-}
-
-#[macro_export]
-macro_rules! skip_if_platform_sandbox_unavailable {
-    ($permission_profile:expr) => {{
-        let permission_profile = $permission_profile;
-        if let Some(warning) = $crate::platform_sandbox_unavailable_warning(&permission_profile) {
-            eprintln!("Skipping test because platform sandbox is unavailable: {warning}");
-            return;
-        }
-    }};
-    ($permission_profile:expr, $return_value:expr $(,)?) => {{
-        let permission_profile = $permission_profile;
-        if let Some(warning) = $crate::platform_sandbox_unavailable_warning(&permission_profile) {
-            eprintln!("Skipping test because platform sandbox is unavailable: {warning}");
             return $return_value;
         }
     }};

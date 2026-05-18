@@ -16,15 +16,12 @@ use codex_app_server_protocol::TurnStatus;
 use codex_core::config::Config;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::protocol::SessionConfiguredEvent;
-use serde_json::Value as JsonValue;
 use serde_json::json;
 
 pub use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
 use crate::event_processor::handle_last_message;
 use crate::exec_events::AgentMessageItem;
-use crate::exec_events::AutonomyDecisionAction;
-use crate::exec_events::AutonomyDecisionEvent;
 use crate::exec_events::CollabAgentState;
 use crate::exec_events::CollabAgentStatus;
 use crate::exec_events::CollabTool;
@@ -38,7 +35,6 @@ use crate::exec_events::FileUpdateChange;
 use crate::exec_events::ItemCompletedEvent;
 use crate::exec_events::ItemStartedEvent;
 use crate::exec_events::ItemUpdatedEvent;
-use crate::exec_events::LoopLifecycleEvent;
 use crate::exec_events::McpToolCallItem;
 use crate::exec_events::McpToolCallItemError;
 use crate::exec_events::McpToolCallItemResult;
@@ -227,6 +223,7 @@ impl EventProcessorWithJsonOutput {
                     arguments,
                     result: result.map(|result| McpToolCallItemResult {
                         content: result.content,
+                        meta: result.meta,
                         structured_content: result.structured_content,
                     }),
                     error: error.map(|error| McpToolCallItemError {
@@ -412,22 +409,6 @@ impl EventProcessorWithJsonOutput {
         }
     }
 
-    pub fn process_autonomy_decision(
-        &mut self,
-        turn_id: String,
-        action: AutonomyDecisionAction,
-        reason: &str,
-        stalled_turns: u32,
-    ) -> CodexStatus {
-        self.emit(ThreadEvent::AutonomyDecision(AutonomyDecisionEvent {
-            turn_id,
-            action,
-            reason: reason.to_string(),
-            stalled_turns,
-        }));
-        CodexStatus::Running
-    }
-
     pub fn collect_thread_events(
         &mut self,
         notification: ServerNotification,
@@ -536,7 +517,6 @@ impl EventProcessorWithJsonOutput {
                         }
                         self.emit_final_message_on_shutdown = true;
                         events.push(ThreadEvent::TurnCompleted(TurnCompletedEvent {
-                            turn_id: notification.turn.id.clone(),
                             usage: self.usage_from_last_total(),
                         }));
                         CodexStatus::InitiateShutdown
@@ -597,16 +577,8 @@ impl EventProcessorWithJsonOutput {
                 }
                 CodexStatus::Running
             }
-            ServerNotification::TurnStarted(notification) => {
-                events.push(ThreadEvent::TurnStarted(TurnStartedEvent {
-                    turn_id: notification.turn.id.clone(),
-                }));
-                CodexStatus::Running
-            }
-            ServerNotification::IlhaeLoopLifecycle(notification) => {
-                events.push(ThreadEvent::LoopLifecycle(LoopLifecycleEvent {
-                    notification: serde_json::to_value(notification).unwrap_or(JsonValue::Null),
-                }));
+            ServerNotification::TurnStarted(_) => {
+                events.push(ThreadEvent::TurnStarted(TurnStartedEvent {}));
                 CodexStatus::Running
             }
             _ => CodexStatus::Running,
@@ -640,22 +612,6 @@ impl EventProcessor for EventProcessorWithJsonOutput {
             self.emit(event);
         }
         collected.status
-    }
-
-    fn process_autonomy_decision(
-        &mut self,
-        turn_id: String,
-        action: AutonomyDecisionAction,
-        reason: &str,
-        stalled_turns: u32,
-    ) -> CodexStatus {
-        EventProcessorWithJsonOutput::process_autonomy_decision(
-            self,
-            turn_id,
-            action,
-            reason,
-            stalled_turns,
-        )
     }
 
     fn print_final_output(&mut self) {

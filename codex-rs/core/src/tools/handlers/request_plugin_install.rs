@@ -12,10 +12,13 @@ use codex_tools::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
 use codex_tools::REQUEST_PLUGIN_INSTALL_PERSIST_KEY;
 use codex_tools::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
 use codex_tools::RequestPluginInstallArgs;
+use codex_tools::RequestPluginInstallEntry;
 use codex_tools::RequestPluginInstallResult;
 use codex_tools::ToolName;
+use codex_tools::ToolSpec;
 use codex_tools::all_requested_connectors_picked_up;
 use codex_tools::build_request_plugin_install_elicitation_request;
+use codex_tools::collect_request_plugin_install_entries;
 use codex_tools::filter_request_plugin_install_discoverable_tools_for_client;
 use codex_tools::verified_connector_install_completed;
 use rmcp::model::RequestId;
@@ -29,28 +32,47 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::context::boxed_tool_output;
 use crate::tools::handlers::parse_arguments;
-use crate::tools::registry::ToolHandler;
-use crate::tools::registry::ToolKind;
+use crate::tools::handlers::request_plugin_install_spec::create_request_plugin_install_tool;
+use crate::tools::registry::CoreToolRuntime;
+use crate::tools::registry::ToolExecutor;
 
-pub struct RequestPluginInstallHandler;
+#[derive(Default)]
+pub struct RequestPluginInstallHandler {
+    discoverable_tools: Vec<RequestPluginInstallEntry>,
+}
 
-impl ToolHandler for RequestPluginInstallHandler {
-    type Output = FunctionToolOutput;
+impl RequestPluginInstallHandler {
+    pub(crate) fn new(discoverable_tools: &[DiscoverableTool]) -> Self {
+        Self {
+            discoverable_tools: collect_request_plugin_install_entries(discoverable_tools),
+        }
+    }
+}
 
+#[async_trait::async_trait]
+impl ToolExecutor<ToolInvocation> for RequestPluginInstallHandler {
     fn tool_name(&self) -> ToolName {
         ToolName::plain(REQUEST_PLUGIN_INSTALL_TOOL_NAME)
     }
 
-    fn kind(&self) -> ToolKind {
-        ToolKind::Function
+    fn spec(&self) -> Option<ToolSpec> {
+        Some(create_request_plugin_install_tool(&self.discoverable_tools))
+    }
+
+    fn supports_parallel_tool_calls(&self) -> bool {
+        true
     }
 
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "plugin install discovery reads through the session-owned manager guard"
     )]
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
+    async fn handle(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
         let ToolInvocation {
             payload,
             session,
@@ -170,9 +192,14 @@ impl ToolHandler for RequestPluginInstallHandler {
             ))
         })?;
 
-        Ok(FunctionToolOutput::from_text(content, Some(true)))
+        Ok(boxed_tool_output(FunctionToolOutput::from_text(
+            content,
+            Some(true),
+        )))
     }
 }
+
+impl CoreToolRuntime for RequestPluginInstallHandler {}
 
 async fn maybe_persist_disabled_install_request(
     session: &crate::session::session::Session,

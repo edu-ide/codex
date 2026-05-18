@@ -71,7 +71,6 @@ pub fn is_ilhae_native_engine_name(engine_name: &str) -> bool {
 pub fn is_ilhae_native_command(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     lower.contains("codex-ilhae")
-        || lower.contains("codex-acp")
         || lower.contains(" codex")
         || lower.starts_with("codex")
         || lower.contains(" ilhae")
@@ -86,7 +85,7 @@ pub fn infer_agent_id_from_command(command: &str) -> String {
     if lower.contains(" ilhae") || lower.starts_with("ilhae") {
         return ILHAE_AGENT_ID.to_string();
     }
-    if lower.contains("codex-acp") || lower.contains(" codex") || lower.starts_with("codex") {
+    if lower.contains(" codex") || lower.starts_with("codex") {
         return LEGACY_CODEX_AGENT_ID.to_string();
     }
     if lower.contains("claude-code-acp") || lower.contains(" claude") || lower.starts_with("claude")
@@ -808,7 +807,6 @@ mod tests {
 
     #[test]
     fn infer_codex() {
-        assert_eq!(infer_agent_id_from_command("codex-acp server"), "codex");
         assert_eq!(infer_agent_id_from_command("npx codex --help"), "codex");
         assert_eq!(
             infer_agent_id_from_command("codex-ilhae-llama-nemotron"),

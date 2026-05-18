@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use schemars::JsonSchema;
-use schemars::SchemaGenerator;
+use schemars::r#gen::SchemaGenerator;
 use schemars::schema::Schema;
 use serde::Deserialize;
 use serde::Serialize;

@@ -5,8 +5,8 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_core::StateDbHandle;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
-use codex_core::thread_store_from_config;
 use codex_exec_server::EnvironmentManager;
+use codex_extension_api::empty_extension_registry;
 use codex_login::AuthManager;
 use codex_login::default_client::USER_AGENT_SUFFIX;
 use codex_login::default_client::get_codex_user_agent;
@@ -68,10 +68,12 @@ impl MessageProcessor {
             auth_manager,
             SessionSource::Mcp,
             environment_manager,
+            empty_extension_registry(),
             /*analytics_events_client*/ None,
-            thread_store_from_config(config.as_ref(), state_db.clone()),
+            codex_core::thread_store_from_config(config.as_ref(), state_db.clone()),
             state_db.clone(),
             installation_id,
+            /*attestation_provider*/ None,
         ));
         Self {
             outgoing,
@@ -216,10 +218,14 @@ impl MessageProcessor {
             *suffix = Some(user_agent_suffix);
         }
 
-        let mut server_info = Implementation::default();
-        server_info.name = "codex-mcp-server".to_string();
-        server_info.title = Some("Codex".to_string());
-        server_info.version = env!("CARGO_PKG_VERSION").to_string();
+        let server_info = Implementation {
+            name: "codex-mcp-server".to_string(),
+            title: Some("Codex".to_string()),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            description: None,
+            icons: None,
+            website_url: None,
+        };
 
         // Preserve Codex's existing non-spec `serverInfo.user_agent` field.
         let mut server_info_value = match serde_json::to_value(&server_info) {
@@ -241,16 +247,17 @@ impl MessageProcessor {
             obj.insert("user_agent".to_string(), json!(get_codex_user_agent()));
         }
 
-        let mut tools_cap = ToolsCapability::default();
-        tools_cap.list_changed = Some(true);
-        let mut server_capabilities = ServerCapabilities::default();
-        server_capabilities.tools = Some(tools_cap);
-        let mut initialize_result = InitializeResult::default();
-        initialize_result.capabilities = server_capabilities;
-        initialize_result.protocol_version = params.protocol_version.clone();
-        initialize_result.server_info = server_info;
-
-        let mut result_value = match serde_json::to_value(initialize_result) {
+        let mut result_value = match serde_json::to_value(InitializeResult {
+            capabilities: ServerCapabilities {
+                tools: Some(ToolsCapability {
+                    list_changed: Some(true),
+                }),
+                ..Default::default()
+            },
+            instructions: None,
+            protocol_version: params.protocol_version.clone(),
+            server_info,
+        }) {
             Ok(value) => value,
             Err(err) => {
                 self.outgoing
@@ -338,9 +345,12 @@ impl MessageProcessor {
                     .await
             }
             _ => {
-                let result = CallToolResult::error(vec![rmcp::model::Content::text(format!(
-                    "Unknown tool '{name}'"
-                ))]);
+                let result = CallToolResult {
+                    content: vec![rmcp::model::Content::text(format!("Unknown tool '{name}'"))],
+                    structured_content: None,
+                    is_error: Some(true),
+                    meta: None,
+                };
                 self.outgoing.send_response(id, result).await;
             }
         }
@@ -357,25 +367,40 @@ impl MessageProcessor {
                 Ok(tool_cfg) => match tool_cfg.into_config(self.arg0_paths.clone()).await {
                     Ok(cfg) => cfg,
                     Err(e) => {
-                        let result = CallToolResult::error(vec![rmcp::model::Content::text(
-                            format!("Failed to load Codex configuration from overrides: {e}"),
-                        )]);
+                        let result = CallToolResult {
+                            content: vec![rmcp::model::Content::text(format!(
+                                "Failed to load Codex configuration from overrides: {e}"
+                            ))],
+                            structured_content: None,
+                            is_error: Some(true),
+                            meta: None,
+                        };
                         self.outgoing.send_response(id, result).await;
                         return;
                     }
                 },
                 Err(e) => {
-                    let result = CallToolResult::error(vec![rmcp::model::Content::text(format!(
-                        "Failed to parse configuration for Codex tool: {e}"
-                    ))]);
+                    let result = CallToolResult {
+                        content: vec![rmcp::model::Content::text(format!(
+                            "Failed to parse configuration for Codex tool: {e}"
+                        ))],
+                        structured_content: None,
+                        is_error: Some(true),
+                        meta: None,
+                    };
                     self.outgoing.send_response(id, result).await;
                     return;
                 }
             },
             None => {
-                let result = CallToolResult::error(vec![rmcp::model::Content::text(
-                    "Missing arguments for codex tool-call; the `prompt` field is required.",
-                )]);
+                let result = CallToolResult {
+                    content: vec![rmcp::model::Content::text(
+                        "Missing arguments for codex tool-call; the `prompt` field is required.",
+                    )],
+                    structured_content: None,
+                    is_error: Some(true),
+                    meta: None,
+                };
                 self.outgoing.send_response(id, result).await;
                 return;
             }
@@ -416,9 +441,14 @@ impl MessageProcessor {
                 Ok(params) => params,
                 Err(e) => {
                     tracing::error!("Failed to parse Codex tool call reply parameters: {e}");
-                    let result = CallToolResult::error(vec![rmcp::model::Content::text(format!(
-                        "Failed to parse configuration for Codex tool: {e}"
-                    ))]);
+                    let result = CallToolResult {
+                        content: vec![rmcp::model::Content::text(format!(
+                            "Failed to parse configuration for Codex tool: {e}"
+                        ))],
+                        structured_content: None,
+                        is_error: Some(true),
+                        meta: None,
+                    };
                     self.outgoing.send_response(request_id, result).await;
                     return;
                 }
@@ -427,9 +457,14 @@ impl MessageProcessor {
                 tracing::error!(
                     "Missing arguments for codex-reply tool-call; the `thread_id` and `prompt` fields are required."
                 );
-                let result = CallToolResult::error(vec![rmcp::model::Content::text(
-                    "Missing arguments for codex-reply tool-call; the `thread_id` and `prompt` fields are required.",
-                )]);
+                let result = CallToolResult {
+                    content: vec![rmcp::model::Content::text(
+                        "Missing arguments for codex-reply tool-call; the `thread_id` and `prompt` fields are required.",
+                    )],
+                    structured_content: None,
+                    is_error: Some(true),
+                    meta: None,
+                };
                 self.outgoing.send_response(request_id, result).await;
                 return;
             }
@@ -439,9 +474,14 @@ impl MessageProcessor {
             Ok(id) => id,
             Err(e) => {
                 tracing::error!("Failed to parse thread_id: {e}");
-                let result = CallToolResult::error(vec![rmcp::model::Content::text(format!(
-                    "Failed to parse thread_id: {e}"
-                ))]);
+                let result = CallToolResult {
+                    content: vec![rmcp::model::Content::text(format!(
+                        "Failed to parse thread_id: {e}"
+                    ))],
+                    structured_content: None,
+                    is_error: Some(true),
+                    meta: None,
+                };
                 self.outgoing.send_response(request_id, result).await;
                 return;
             }

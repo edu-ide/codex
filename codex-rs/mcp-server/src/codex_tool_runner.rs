@@ -44,10 +44,12 @@ pub(crate) fn create_call_tool_result_with_thread_id(
         "threadId": thread_id,
         "content": content_text,
     });
-    let mut result = CallToolResult::success(content);
-    result.structured_content = Some(structured_content);
-    result.is_error = is_error;
-    result
+    CallToolResult {
+        content,
+        is_error,
+        structured_content: Some(structured_content),
+        meta: None,
+    }
 }
 
 /// Run a complete Codex session and stream events back to the client.
@@ -69,9 +71,12 @@ pub async fn run_codex_tool_session(
     } = match thread_manager.start_thread(config.clone()).await {
         Ok(res) => res,
         Err(e) => {
-            let result = CallToolResult::error(vec![Content::text(format!(
-                "Failed to start Codex session: {e}"
-            ))]);
+            let result = CallToolResult {
+                content: vec![Content::text(format!("Failed to start Codex session: {e}"))],
+                is_error: Some(true),
+                structured_content: None,
+                meta: None,
+            };
             outgoing.send_response(id.clone(), result).await;
             return;
         }
@@ -217,6 +222,7 @@ async fn run_codex_tool_session_inner(
                         let approval_id = ev.effective_approval_id();
                         let ExecApprovalRequestEvent {
                             turn_id: _,
+                            started_at_ms: _,
                             command,
                             cwd,
                             call_id,
@@ -273,6 +279,7 @@ async fn run_codex_tool_session_inner(
                     EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
                         call_id,
                         turn_id: _,
+                        started_at_ms: _,
                         reason,
                         grant_root,
                         changes,
@@ -357,17 +364,12 @@ async fn run_codex_tool_session_inner(
                     | EventMsg::AgentMessageContentDelta(_)
                     | EventMsg::ReasoningContentDelta(_)
                     | EventMsg::ReasoningRawContentDelta(_)
-                    | EventMsg::SkillsUpdateAvailable
                     | EventMsg::ExitedReviewMode(_)
                     | EventMsg::RequestUserInput(_)
                     | EventMsg::RequestPermissions(_)
                     | EventMsg::DynamicToolCallRequest(_)
                     | EventMsg::DynamicToolCallResponse(_)
                     | EventMsg::ContextCompacted(_)
-                    | EventMsg::LoopLifecycleStarted(_)
-                    | EventMsg::LoopLifecycleProgress(_)
-                    | EventMsg::LoopLifecycleCompleted(_)
-                    | EventMsg::LoopLifecycleFailed(_)
                     | EventMsg::ModelReroute(_)
                     | EventMsg::ThreadRolledBack(_)
                     | EventMsg::CollabAgentSpawnBegin(_)
@@ -384,10 +386,6 @@ async fn run_codex_tool_session_inner(
                     | EventMsg::RealtimeConversationSdp(_)
                     | EventMsg::RealtimeConversationRealtime(_)
                     | EventMsg::RealtimeConversationClosed(_)
-                    | EventMsg::GetHistoryEntryResponse(_)
-                    | EventMsg::McpListToolsResponse(_)
-                    | EventMsg::ListSkillsResponse(_)
-                    | EventMsg::ListCommandsResponse(_)
                     | EventMsg::DeprecationNotice(_) => {
                         // For now, we do not do anything extra for these
                         // events. Note that

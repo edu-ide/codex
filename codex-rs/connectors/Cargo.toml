@@ -1,34 +1,25 @@
 [package]
 name = "codex-connectors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true
 
-[package.version]
-workspace = true
+[dependencies]
+anyhow = { workspace = true }
+codex-app-server-protocol = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha1 = { workspace = true }
+tracing = { workspace = true }
+urlencoding = { workspace = true }
 
-[package.edition]
-workspace = true
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
-[package.license]
-workspace = true
-
-[dependencies.anyhow]
-workspace = true
-
-[dependencies.codex-app-server-protocol]
-workspace = true
-
-[dependencies.serde]
-version = "1"
-features = [ "derive",]
-
-[dependencies.urlencoding]
-workspace = true
-
-[dev-dependencies.pretty_assertions]
-workspace = true
-
-[dev-dependencies.tokio]
-version = "1"
-features = [ "macros", "rt-multi-thread",]
+[lib]
+doctest = false

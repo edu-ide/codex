@@ -1,6 +1,7 @@
 use crate::mcp::CallToolResult;
 use crate::memory_citation::MemoryCitation;
 use crate::models::ContentItem;
+use crate::models::ImageDetail;
 use crate::models::MessagePhase;
 use crate::models::ResponseItem;
 use crate::models::WebSearchAction;
@@ -11,11 +12,6 @@ use crate::protocol::ContextCompactedEvent;
 use crate::protocol::EventMsg;
 use crate::protocol::FileChange;
 use crate::protocol::ImageGenerationEndEvent;
-use crate::protocol::LoopLifecycleCompletedEvent;
-use crate::protocol::LoopLifecycleFailedEvent;
-use crate::protocol::LoopLifecycleItemEvent;
-use crate::protocol::LoopLifecycleKind;
-use crate::protocol::LoopLifecycleStatus;
 use crate::protocol::McpInvocation;
 use crate::protocol::McpToolCallBeginEvent;
 use crate::protocol::McpToolCallEndEvent;
@@ -52,7 +48,6 @@ pub enum TurnItem {
     WebSearch(WebSearchItem),
     ImageView(ImageViewItem),
     ImageGeneration(ImageGenerationItem),
-    LoopLifecycle(LoopLifecycleItem),
     FileChange(FileChangeItem),
     McpToolCall(McpToolCallItem),
     ContextCompaction(ContextCompactionItem),
@@ -155,47 +150,6 @@ pub struct ImageGenerationItem {
     pub saved_path: Option<AbsolutePathBuf>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
-pub struct LoopLifecycleItem {
-    pub id: String,
-    pub kind: LoopLifecycleKind,
-    pub title: String,
-    pub summary: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub detail: Option<String>,
-    pub status: LoopLifecycleStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub counts: Option<std::collections::BTreeMap<String, i64>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub duration_ms: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub target_profile: Option<String>,
-}
-
-impl LoopLifecycleItem {
-    pub fn as_started_event(&self) -> EventMsg {
-        EventMsg::LoopLifecycleStarted(LoopLifecycleItemEvent { item: self.clone() })
-    }
-
-    pub fn as_completed_event(&self) -> EventMsg {
-        EventMsg::LoopLifecycleCompleted(LoopLifecycleCompletedEvent { item: self.clone() })
-    }
-
-    pub fn as_failed_event(&self) -> EventMsg {
-        EventMsg::LoopLifecycleFailed(LoopLifecycleFailedEvent { item: self.clone() })
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq)]
 pub struct FileChangeItem {
     pub id: String,
@@ -290,7 +244,9 @@ impl UserMessageItem {
         EventMsg::UserMessage(UserMessageEvent {
             message: self.message(),
             images: Some(self.image_urls()),
+            image_details: self.image_details(),
             local_images: self.local_image_paths(),
+            local_image_details: self.local_image_details(),
             text_elements: self.text_elements(),
         })
     }
@@ -337,21 +293,54 @@ impl UserMessageItem {
         self.content
             .iter()
             .filter_map(|c| match c {
-                UserInput::Image { image_url } => Some(image_url.clone()),
+                UserInput::Image { image_url, .. } => Some(image_url.clone()),
                 _ => None,
             })
             .collect()
+    }
+
+    pub fn image_details(&self) -> Vec<Option<ImageDetail>> {
+        trim_trailing_default_image_details(
+            self.content
+                .iter()
+                .filter_map(|c| match c {
+                    UserInput::Image { detail, .. } => Some(*detail),
+                    _ => None,
+                })
+                .collect(),
+        )
     }
 
     pub fn local_image_paths(&self) -> Vec<std::path::PathBuf> {
         self.content
             .iter()
             .filter_map(|c| match c {
-                UserInput::LocalImage { path } => Some(path.clone()),
+                UserInput::LocalImage { path, .. } => Some(path.clone()),
                 _ => None,
             })
             .collect()
     }
+
+    pub fn local_image_details(&self) -> Vec<Option<ImageDetail>> {
+        trim_trailing_default_image_details(
+            self.content
+                .iter()
+                .filter_map(|c| match c {
+                    UserInput::LocalImage { detail, .. } => Some(*detail),
+                    _ => None,
+                })
+                .collect(),
+        )
+    }
+}
+
+fn trim_trailing_default_image_details(
+    mut details: Vec<Option<ImageDetail>>,
+) -> Vec<Option<ImageDetail>> {
+    while matches!(details.last(), Some(None)) {
+        details.pop();
+    }
+    details
 }
 
 impl HookPromptItem {
@@ -576,7 +565,6 @@ impl TurnItem {
             TurnItem::WebSearch(item) => item.id.clone(),
             TurnItem::ImageView(item) => item.id.clone(),
             TurnItem::ImageGeneration(item) => item.id.clone(),
-            TurnItem::LoopLifecycle(item) => item.id.clone(),
             TurnItem::FileChange(item) => item.id.clone(),
             TurnItem::McpToolCall(item) => item.id.clone(),
             TurnItem::ContextCompaction(item) => item.id.clone(),
@@ -597,7 +585,6 @@ impl TurnItem {
                 })]
             }
             TurnItem::ImageGeneration(item) => vec![item.as_legacy_event()],
-            TurnItem::LoopLifecycle(_) => Vec::new(),
             TurnItem::FileChange(item) => item
                 .as_legacy_end_event(String::new())
                 .into_iter()

@@ -1,6 +1,5 @@
 pub use codex_api::ResponseEvent;
 use codex_config::types::Personality;
-use codex_model_provider_info::provider_uses_json_function_tools;
 use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::FunctionCallOutputBody;
@@ -64,10 +63,7 @@ impl Default for Prompt {
 }
 
 impl Prompt {
-    pub(crate) fn get_formatted_input_for_provider(
-        &self,
-        provider_id: Option<&str>,
-    ) -> Vec<ResponseItem> {
+    pub(crate) fn get_formatted_input(&self) -> Vec<ResponseItem> {
         let mut input = self.input.clone();
 
         // when using the *Freeform* apply_patch tool specifically, tool outputs
@@ -75,10 +71,7 @@ impl Prompt {
         // the Function tool - note that this differs from the check above for
         // instructions. We declare the result as a named variable for clarity.
         let is_freeform_apply_patch_tool_present = self.tools.iter().any(|tool| match tool {
-            ToolSpec::Freeform(f) => {
-                f.name == "apply_patch"
-                    && !provider_id.is_some_and(provider_uses_json_function_tools)
-            }
+            ToolSpec::Freeform(f) => f.name == "apply_patch",
             _ => false,
         });
         if is_freeform_apply_patch_tool_present {
@@ -133,7 +126,7 @@ fn reserialize_shell_outputs(items: &mut [ResponseItem]) {
 }
 
 fn is_shell_tool_name(name: &str) -> bool {
-    matches!(name, "shell" | "container.exec")
+    name == "shell"
 }
 
 #[derive(Deserialize)]

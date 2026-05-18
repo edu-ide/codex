@@ -15,11 +15,6 @@ pub struct DynamicToolSpec {
     pub input_schema: JsonValue,
     #[serde(default)]
     pub defer_loading: bool,
-    // agentskills.io compatible metadata
-    pub tags: Option<Vec<String>>,
-    pub linked_files: Option<Vec<String>>,
-    pub version: Option<String>,
-    pub compatibility: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
@@ -40,7 +35,6 @@ pub struct DynamicToolCallRequest {
 pub struct DynamicToolResponse {
     pub content_items: Vec<DynamicToolCallOutputContentItem>,
     pub success: bool,
-    pub hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
@@ -62,10 +56,6 @@ struct DynamicToolSpecDe {
     input_schema: JsonValue,
     defer_loading: Option<bool>,
     expose_to_context: Option<bool>,
-    tags: Option<Vec<String>>,
-    linked_files: Option<Vec<String>>,
-    version: Option<String>,
-    compatibility: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for DynamicToolSpec {
@@ -80,10 +70,6 @@ impl<'de> Deserialize<'de> for DynamicToolSpec {
             input_schema,
             defer_loading,
             expose_to_context,
-            tags,
-            linked_files,
-            version,
-            compatibility,
         } = DynamicToolSpecDe::deserialize(deserializer)?;
 
         Ok(Self {
@@ -93,10 +79,6 @@ impl<'de> Deserialize<'de> for DynamicToolSpec {
             input_schema,
             defer_loading: defer_loading
                 .unwrap_or_else(|| expose_to_context.map(|visible| !visible).unwrap_or(false)),
-            tags,
-            linked_files,
-            version,
-            compatibility,
         })
     }
 }
@@ -136,10 +118,6 @@ mod tests {
                     }
                 }),
                 defer_loading: true,
-                tags: None,
-                linked_files: None,
-                version: None,
-                compatibility: None,
             }
         );
     }

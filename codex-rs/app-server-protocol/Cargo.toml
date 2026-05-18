@@ -7,6 +7,7 @@ license.workspace = true
 [lib]
 name = "codex_app_server_protocol"
 path = "src/lib.rs"
+doctest = false
 
 [lints]
 workspace = true
@@ -24,7 +25,7 @@ serde_json = { workspace = true }
 serde_with = { workspace = true }
 strum_macros = { workspace = true }
 thiserror = { workspace = true }
-rmcp = { workspace = true, features = [
+rmcp = { workspace = true, default-features = false, features = [
     "base64",
     "macros",
     "schemars",

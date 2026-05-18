@@ -4,10 +4,6 @@ use codex_api::TextControls;
 use codex_api::create_text_param_for_request;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::FunctionCallOutputPayload;
-use codex_tools as tools;
-use codex_tools::ResponsesApiNamespace;
-use codex_tools::ResponsesApiNamespaceTool;
-use codex_tools::ResponsesApiTool;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -230,80 +226,5 @@ fn reserializes_shell_outputs_for_function_and_custom_tool_calls() {
                 output: FunctionCallOutputPayload::from_text(expected_output.to_string()),
             },
         ]
-    );
-}
-
-#[test]
-fn llama_server_keeps_function_style_apply_patch_outputs_unmodified() {
-    let raw_output = r#"{"output":"hello","metadata":{"exit_code":0,"duration_seconds":0.5}}"#;
-    let prompt = Prompt {
-        input: vec![
-            ResponseItem::FunctionCall {
-                id: None,
-                name: "shell".to_string(),
-                namespace: None,
-                arguments: "{}".to_string(),
-                call_id: "call-1".to_string(),
-            },
-            ResponseItem::FunctionCallOutput {
-                call_id: "call-1".to_string(),
-                output: FunctionCallOutputPayload::from_text(raw_output.to_string()),
-            },
-        ],
-        tools: vec![tools::ToolSpec::Freeform(tools::FreeformTool {
-            name: "apply_patch".to_string(),
-            description: "patch".to_string(),
-            format: tools::FreeformToolFormat {
-                r#type: "grammar".to_string(),
-                syntax: "lark".to_string(),
-                definition: "start:".to_string(),
-            },
-        })],
-        ..Prompt::default()
-    };
-
-    assert_eq!(
-        prompt.get_formatted_input_for_provider(Some(crate::LLAMA_SERVER_OSS_PROVIDER_ID)),
-        prompt.input
-    );
-}
-
-#[test]
-fn tool_search_output_namespace_serializes_with_deferred_child_tools() {
-    let namespace = tools::LoadableToolSpec::Namespace(ResponsesApiNamespace {
-        name: "mcp__codex_apps__calendar".to_string(),
-        description: "Plan events".to_string(),
-        tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
-            name: "create_event".to_string(),
-            description: "Create a calendar event.".to_string(),
-            strict: false,
-            defer_loading: Some(true),
-            parameters: codex_tools::JsonSchema::object(Default::default(), None, None),
-            output_schema: None,
-        })],
-    });
-
-    let value = serde_json::to_value(namespace).expect("serialize namespace");
-
-    assert_eq!(
-        value,
-        serde_json::json!({
-            "type": "namespace",
-            "name": "mcp__codex_apps__calendar",
-            "description": "Plan events",
-            "tools": [
-                {
-                    "type": "function",
-                    "name": "create_event",
-                    "description": "Create a calendar event.",
-                    "strict": false,
-                    "defer_loading": true,
-                    "parameters": {
-                        "type": "object",
-                        "properties": {}
-                    }
-                }
-            ]
-        })
     );
 }

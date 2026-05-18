@@ -21,12 +21,12 @@ use anyhow::Error;
 use anyhow::Result;
 use codex_config::types::OAuthCredentialsStoreMode;
 use oauth2::AccessToken;
+use oauth2::EmptyExtraTokenFields;
 use oauth2::RefreshToken;
 use oauth2::Scope;
 use oauth2::TokenResponse;
 use oauth2::basic::BasicTokenType;
 use rmcp::transport::auth::OAuthTokenResponse;
-use rmcp::transport::auth::VendorExtraTokenFields;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -403,7 +403,7 @@ fn load_oauth_tokens_from_file(server_name: &str, url: &str) -> Result<Option<St
         let mut token_response = OAuthTokenResponse::new(
             AccessToken::new(entry.access_token.clone()),
             BasicTokenType::Bearer,
-            VendorExtraTokenFields::default(),
+            EmptyExtraTokenFields {},
         );
 
         if let Some(refresh) = entry.refresh_token.clone() {
@@ -878,10 +878,8 @@ mod tests {
         );
         assert_eq!(actual_response.scopes(), expected_response.scopes());
         assert_eq!(
-            serde_json::to_value(actual_response.extra_fields())
-                .expect("actual extra token fields should serialize"),
-            serde_json::to_value(expected_response.extra_fields())
-                .expect("expected extra token fields should serialize")
+            actual_response.extra_fields(),
+            expected_response.extra_fields()
         );
         assert_eq!(
             actual_response.expires_in().is_some(),
@@ -893,7 +891,7 @@ mod tests {
         let mut response = OAuthTokenResponse::new(
             AccessToken::new("access-token".to_string()),
             BasicTokenType::Bearer,
-            VendorExtraTokenFields::default(),
+            EmptyExtraTokenFields {},
         );
         response.set_refresh_token(Some(RefreshToken::new("refresh-token".to_string())));
         response.set_scopes(Some(vec![

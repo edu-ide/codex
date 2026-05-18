@@ -89,6 +89,7 @@ use codex_app_server_protocol::ThreadRollbackParams;
 use codex_app_server_protocol::ThreadSetNameParams;
 use codex_app_server_protocol::ThreadShellCommandParams;
 use codex_app_server_protocol::ThreadStartParams;
+use codex_app_server_protocol::ThreadTurnsItemsListParams;
 use codex_app_server_protocol::ThreadTurnsListParams;
 use codex_app_server_protocol::ThreadUnarchiveParams;
 use codex_app_server_protocol::ThreadUnsubscribeParams;
@@ -522,6 +523,15 @@ impl McpProcess {
         self.send_request("thread/turns/list", params).await
     }
 
+    /// Send a `thread/turns/items/list` JSON-RPC request.
+    pub async fn send_thread_turns_items_list_request(
+        &mut self,
+        params: ThreadTurnsItemsListParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("thread/turns/items/list", params).await
+    }
+
     /// Send a `model/list` JSON-RPC request.
     pub async fn send_list_models_request(
         &mut self,
@@ -557,6 +567,24 @@ impl McpProcess {
     ) -> anyhow::Result<i64> {
         let params = Some(serde_json::to_value(params)?);
         self.send_request("experimentalFeature/enablement/set", params)
+            .await
+    }
+
+    /// Send a `remoteControl/enable` JSON-RPC request.
+    pub async fn send_remote_control_enable_request(&mut self) -> anyhow::Result<i64> {
+        self.send_request("remoteControl/enable", /*params*/ None)
+            .await
+    }
+
+    /// Send a `remoteControl/disable` JSON-RPC request.
+    pub async fn send_remote_control_disable_request(&mut self) -> anyhow::Result<i64> {
+        self.send_request("remoteControl/disable", /*params*/ None)
+            .await
+    }
+
+    /// Send a `remoteControl/status/read` JSON-RPC request.
+    pub async fn send_remote_control_status_read_request(&mut self) -> anyhow::Result<i64> {
+        self.send_request("remoteControl/status/read", /*params*/ None)
             .await
     }
 

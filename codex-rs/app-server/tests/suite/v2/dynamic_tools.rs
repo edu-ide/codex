@@ -69,10 +69,6 @@ async fn thread_start_injects_dynamic_tools_into_model_requests() -> Result<()> 
         description: "Demo dynamic tool".to_string(),
         input_schema: input_schema.clone(),
         defer_loading: false,
-        tags: None,
-        linked_files: None,
-        version: None,
-        compatibility: None,
     };
 
     // Thread start injects dynamic tools into the thread's tool registry.
@@ -154,10 +150,6 @@ async fn thread_start_keeps_hidden_dynamic_tools_out_of_model_requests() -> Resu
             "additionalProperties": false,
         }),
         defer_loading: true,
-        tags: None,
-        linked_files: None,
-        version: None,
-        compatibility: None,
     };
 
     let thread_req = mcp
@@ -227,10 +219,6 @@ async fn thread_start_rejects_hidden_dynamic_tools_without_namespace() -> Result
             "additionalProperties": false,
         }),
         defer_loading: true,
-        tags: None,
-        linked_files: None,
-        version: None,
-        compatibility: None,
     };
 
     let thread_req = mcp
@@ -271,10 +259,6 @@ async fn thread_start_rejects_dynamic_tools_not_supported_by_responses() -> Resu
             "additionalProperties": false,
         }),
         defer_loading: false,
-        tags: None,
-        linked_files: None,
-        version: None,
-        compatibility: None,
     };
 
     let thread_req = mcp
@@ -343,10 +327,6 @@ async fn dynamic_tool_call_round_trip_sends_text_content_items_to_model() -> Res
             "additionalProperties": false,
         }),
         defer_loading: false,
-        tags: None,
-        linked_files: None,
-        version: None,
-        compatibility: None,
     };
 
     let thread_req = mcp
@@ -522,10 +502,6 @@ async fn dynamic_tool_call_round_trip_sends_content_items_to_model() -> Result<(
             "additionalProperties": false,
         }),
         defer_loading: false,
-        tags: None,
-        linked_files: None,
-        version: None,
-        compatibility: None,
     };
 
     let thread_req = mcp

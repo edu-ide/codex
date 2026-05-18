@@ -55,10 +55,11 @@ use tracing_test::traced_test;
 const MODEL: &str = "gpt-5.3-codex";
 const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
 const USER_AGENT_HEADER: &str = "user-agent";
-const OPENAI_BETA_RESPONSES_WEBSOCKETS: &str = "responses_websockets=2025-03-01";
 const WS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const X_CLIENT_REQUEST_ID_HEADER: &str = "x-client-request-id";
 const TEST_INSTALLATION_ID: &str = "11111111-1111-4111-8111-111111111111";
+const X_CODEX_WS_STREAM_REQUEST_START_MS_CLIENT_METADATA_KEY: &str =
+    "x-codex-ws-stream-request-start-ms";
 
 fn assert_request_trace_matches(body: &serde_json::Value, expected_trace: &W3cTraceContext) {
     let client_metadata = body["client_metadata"]
@@ -131,11 +132,11 @@ async fn responses_websocket_streams_request() {
         Some(harness.thread_id.to_string())
     );
     assert_eq!(
-        handshake.header("session_id"),
+        handshake.header("session-id"),
         Some(harness.session_id.to_string())
     );
     assert_eq!(
-        handshake.header("thread_id"),
+        handshake.header("thread-id"),
         Some(harness.thread_id.to_string())
     );
     assert_eq!(
@@ -146,6 +147,13 @@ async fn responses_websocket_streams_request() {
         body["client_metadata"]["x-codex-installation-id"].as_str(),
         Some(TEST_INSTALLATION_ID)
     );
+    let stream_request_start_ms = body["client_metadata"]
+        [X_CODEX_WS_STREAM_REQUEST_START_MS_CLIENT_METADATA_KEY]
+        .as_str()
+        .expect("missing websocket stream request start timestamp")
+        .parse::<i64>()
+        .expect("websocket stream request start timestamp should be an integer");
+    assert!(stream_request_start_ms > 0);
 
     server.shutdown().await;
 }
@@ -220,6 +228,81 @@ async fn responses_websocket_sends_response_processed_when_feature_enabled() {
     assert_eq!(connection.len(), 3);
     assert_eq!(
         connection[1].body_json()["type"].as_str(),
+        Some("response.create")
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responses_websocket_sends_response_processed_after_remote_compaction_v2() {
+    skip_if_no_network!();
+
+    let server = start_websocket_server(vec![vec![
+        vec![
+            ev_response_created("resp-prewarm"),
+            ev_completed("resp-prewarm"),
+        ],
+        vec![
+            ev_response_created("resp-1"),
+            ev_assistant_message("msg-1", "hi"),
+            ev_completed("resp-1"),
+        ],
+        vec![],
+        vec![
+            json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "compaction",
+                    "encrypted_content": "ENCRYPTED_CONTEXT_COMPACTION_SUMMARY",
+                }
+            }),
+            ev_completed("resp-compact"),
+        ],
+        vec![],
+    ]])
+    .await;
+
+    let mut builder = test_codex().with_config(|config| {
+        config
+            .features
+            .enable(Feature::RemoteCompactionV2)
+            .expect("test config should allow feature update");
+        config
+            .features
+            .enable(Feature::ResponsesWebsocketResponseProcessed)
+            .expect("test config should allow feature update");
+    });
+    let test = builder
+        .build_with_websocket_server(&server)
+        .await
+        .expect("build websocket codex");
+
+    test.submit_turn("hello")
+        .await
+        .expect("submission should send response.processed after processing");
+
+    test.codex
+        .submit(Op::Compact)
+        .await
+        .expect("compact submission should succeed");
+    wait_for_event(&test.codex, |msg| matches!(msg, EventMsg::TurnComplete(_))).await;
+
+    let compact_processed = server
+        .wait_for_request(/*connection_index*/ 0, /*request_index*/ 4)
+        .await;
+    assert_eq!(
+        compact_processed.body_json(),
+        json!({
+            "type": "response.processed",
+            "response_id": "resp-compact",
+        })
+    );
+
+    let connection = server.single_connection();
+    assert_eq!(connection.len(), 5);
+    assert_eq!(
+        connection[3].body_json()["type"].as_str(),
         Some("response.create")
     );
 
@@ -824,115 +907,6 @@ async fn responses_websocket_v2_wins_when_both_features_enabled() {
             .map(str::trim)
             .any(|value| value == WS_V2_BETA_HEADER_VALUE)
     );
-    server.shutdown().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_v2_prewarm_runs_when_only_v2_feature_enabled() {
-    skip_if_no_network!();
-
-    let server = start_websocket_server(vec![vec![vec![
-        ev_response_created("resp-1"),
-        ev_completed("resp-1"),
-    ]]])
-    .await;
-
-    let harness = websocket_harness_with_options(&server, false).await;
-    let mut client_session = harness.client.new_session();
-    let prompt = prompt_with_input(vec![message_item("hello")]);
-    client_session
-        .prewarm_websocket(
-            &prompt,
-            &harness.model_info,
-            &harness.session_telemetry,
-            harness.effort,
-            harness.summary,
-            None,
-            None,
-        )
-        .await
-        .expect("websocket prewarm failed");
-
-    assert_eq!(server.handshakes().len(), 1);
-    assert_eq!(server.single_connection().len(), 1);
-    stream_until_complete(&mut client_session, &harness, &prompt).await;
-
-    assert_eq!(server.handshakes().len(), 1);
-    assert_eq!(server.single_connection().len(), 1);
-
-    let handshake = server.single_handshake();
-    let openai_beta_header = handshake
-        .header(OPENAI_BETA_HEADER)
-        .expect("missing OpenAI-Beta header");
-    assert!(
-        openai_beta_header
-            .split(',')
-            .map(str::trim)
-            .any(|value| value == WS_V2_BETA_HEADER_VALUE)
-    );
-    assert!(
-        !openai_beta_header
-            .split(',')
-            .map(str::trim)
-            .any(|value| value == OPENAI_BETA_RESPONSES_WEBSOCKETS)
-    );
-
-    server.shutdown().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_v2_requests_use_v2_when_model_prefers_websockets() {
-    skip_if_no_network!();
-
-    let server = start_websocket_server(vec![vec![
-        vec![
-            ev_response_created("resp-1"),
-            ev_assistant_message("msg-1", "assistant output"),
-            ev_completed("resp-1"),
-        ],
-        vec![ev_response_created("resp-2"), ev_completed("resp-2")],
-    ]])
-    .await;
-
-    let harness = websocket_harness_with_options(&server, false).await;
-    let mut client_session = harness.client.new_session();
-    let prompt_one = prompt_with_input(vec![message_item("hello")]);
-    let prompt_two = prompt_with_input(vec![
-        message_item("hello"),
-        assistant_message_item("msg-1", "assistant output"),
-        message_item("second"),
-    ]);
-
-    stream_until_complete(&mut client_session, &harness, &prompt_one).await;
-    stream_until_complete(&mut client_session, &harness, &prompt_two).await;
-
-    let connection = server.single_connection();
-    assert_eq!(connection.len(), 2);
-    let second = connection.get(1).expect("missing request").body_json();
-    assert_eq!(second["type"].as_str(), Some("response.create"));
-    assert_eq!(second["previous_response_id"].as_str(), Some("resp-1"));
-    assert_eq!(
-        second["input"],
-        serde_json::to_value(&prompt_two.input[2..]).unwrap()
-    );
-
-    let handshake = server.single_handshake();
-    let openai_beta_header = handshake
-        .header(OPENAI_BETA_HEADER)
-        .expect("missing OpenAI-Beta header");
-    assert!(
-        openai_beta_header
-            .split(',')
-            .map(str::trim)
-            .any(|value| value == WS_V2_BETA_HEADER_VALUE)
-    );
-    assert!(
-        !openai_beta_header
-            .split(',')
-            .map(str::trim)
-            .any(|value| value == OPENAI_BETA_RESPONSES_WEBSOCKETS)
-    );
-
     server.shutdown().await;
 }
 
@@ -2063,7 +2037,6 @@ async fn websocket_harness_with_provider_options(
         /*auth_manager*/ None,
         session_id,
         thread_id,
-        codex_core::OPENAI_PROVIDER_ID.to_string(),
         /*installation_id*/ TEST_INSTALLATION_ID.to_string(),
         provider.clone(),
         SessionSource::Exec,
@@ -2071,6 +2044,7 @@ async fn websocket_harness_with_provider_options(
         /*enable_request_compression*/ false,
         runtime_metrics_enabled,
         /*beta_features_header*/ None,
+        /*attestation_provider*/ None,
     );
 
     WebsocketTestHarness {

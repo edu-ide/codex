@@ -103,19 +103,6 @@ impl AppEventSender {
         });
     }
 
-    pub(crate) fn resolve_acp_permission(
-        &self,
-        thread_id: ThreadId,
-        id: String,
-        option_id: Option<String>,
-    ) {
-        self.send(AppEvent::ResolveAcpPermission {
-            thread_id,
-            id,
-            option_id,
-        });
-    }
-
     pub(crate) fn patch_approval(
         &self,
         thread_id: ThreadId,

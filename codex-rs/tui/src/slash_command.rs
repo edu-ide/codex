@@ -13,23 +13,6 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     Model,
-    Fast,
-    Profile,
-    Advisor,
-    Auto,
-    Team,
-    Kairos,
-    #[strum(serialize = "dream-bg")]
-    BgDream,
-    Dream,
-    Embed,
-    Improve,
-    #[strum(serialize = "local-server", serialize = "local")]
-    LocalServer,
-    Tmux,
-    Worktree,
-    Remote,
-    Approvals,
     Ide,
     Permissions,
     Keymap,
@@ -53,19 +36,19 @@ pub enum SlashCommand {
     Compact,
     Plan,
     Goal,
-    Collab,
     Agent,
     Side,
     Copy,
     Raw,
     Diff,
     Mention,
-    Help,
     Status,
     DebugConfig,
     Title,
     Statusline,
     Theme,
+    #[strum(to_string = "pets", serialize = "pet")]
+    Pets,
     Mcp,
     Apps,
     Plugins,
@@ -109,7 +92,6 @@ impl SlashCommand {
             SlashCommand::Raw => "toggle raw scrollback mode for copy-friendly terminal selection",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
-            SlashCommand::Help => "show available slash commands",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
             SlashCommand::Hooks => "view and manage lifecycle hooks",
             SlashCommand::Status => "show current session configuration and token usage",
@@ -117,27 +99,12 @@ impl SlashCommand {
             SlashCommand::Title => "configure which items appear in the terminal title",
             SlashCommand::Statusline => "configure which items appear in the status line",
             SlashCommand::Theme => "choose a syntax highlighting theme",
+            SlashCommand::Pets => "choose or hide the terminal pet",
             SlashCommand::Ps => "list background terminals",
             SlashCommand::Stop => "stop all background terminals",
             SlashCommand::MemoryDrop => "DO NOT USE",
             SlashCommand::MemoryUpdate => "DO NOT USE",
             SlashCommand::Model => "choose what model and reasoning effort to use",
-            SlashCommand::Fast => {
-                "toggle Fast mode to enable fastest inference with increased plan usage"
-            }
-            SlashCommand::Profile => "choose the active profile",
-            SlashCommand::Advisor => "cycle the advisor preset",
-            SlashCommand::Auto => "toggle autonomous mode",
-            SlashCommand::Team => "toggle team mode",
-            SlashCommand::Kairos => "toggle kairos scheduling",
-            SlashCommand::Dream => "toggle background dream mode",
-            SlashCommand::Embed => "toggle semantic embedding indexing",
-            SlashCommand::Improve => "toggle self-improvement mode",
-            SlashCommand::LocalServer => "manage local model runtime server (on|off|start|stop)",
-            SlashCommand::Tmux => "show tmux workflow guidance",
-            SlashCommand::Worktree => "show git worktree workflow guidance",
-            SlashCommand::Remote => "show remote-control workflow guidance",
-            SlashCommand::BgDream => "",
             SlashCommand::Ide => {
                 "include current selection, open files, and other context from your IDE"
             }
@@ -146,10 +113,8 @@ impl SlashCommand {
             SlashCommand::Settings => "configure realtime microphone/speaker",
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Goal => "set or view the goal for a long-running task",
-            SlashCommand::Collab => "change collaboration mode (experimental)",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::Side => "start a side conversation in an ephemeral fork",
-            SlashCommand::Approvals => "choose what Codex is allowed to do",
             SlashCommand::Permissions => "choose what Codex is allowed to do",
             SlashCommand::Keymap => "remap TUI shortcuts",
             SlashCommand::Vim => "toggle Vim mode for the composer",
@@ -169,25 +134,6 @@ impl SlashCommand {
         }
     }
 
-    /// User-visible guidance for command arguments.
-    pub fn args_hint(self) -> Option<&'static str> {
-        match self {
-            SlashCommand::Review => Some("diff|commit|staged|unstaged"),
-            SlashCommand::LocalServer => Some("on|off|start|stop|help"),
-            SlashCommand::Plan
-            | SlashCommand::Fast
-            | SlashCommand::Dream
-            | SlashCommand::Embed
-            | SlashCommand::Auto
-            | SlashCommand::Team
-            | SlashCommand::Kairos
-            | SlashCommand::Improve
-            | SlashCommand::Experimental => Some("on|off"),
-            SlashCommand::Mcp => Some("list|config|verbose"),
-            _ => None,
-        }
-    }
-
     /// Command string without the leading '/'. Provided for compatibility with
     /// existing code that expects a method named `command()`.
     pub fn command(self) -> &'static str {
@@ -202,14 +148,11 @@ impl SlashCommand {
                 | SlashCommand::Rename
                 | SlashCommand::Plan
                 | SlashCommand::Goal
-                | SlashCommand::Fast
-                | SlashCommand::Dream
-                | SlashCommand::Embed
-                | SlashCommand::LocalServer
                 | SlashCommand::Ide
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
                 | SlashCommand::Raw
+                | SlashCommand::Pets
                 | SlashCommand::Side
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
@@ -238,21 +181,7 @@ impl SlashCommand {
             | SlashCommand::Init
             | SlashCommand::Compact
             | SlashCommand::Model
-            | SlashCommand::Fast
-            | SlashCommand::Profile
-            | SlashCommand::Advisor
-            | SlashCommand::Auto
-            | SlashCommand::Team
-            | SlashCommand::Kairos
-            | SlashCommand::Dream
-            | SlashCommand::Embed
-            | SlashCommand::Improve
-            | SlashCommand::LocalServer
-            | SlashCommand::Tmux
-            | SlashCommand::Worktree
-            | SlashCommand::Remote
             | SlashCommand::Personality
-            | SlashCommand::Approvals
             | SlashCommand::Permissions
             | SlashCommand::Keymap
             | SlashCommand::Vim
@@ -291,20 +220,16 @@ impl SlashCommand {
             | SlashCommand::Side => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
-            SlashCommand::Help => true,
-            SlashCommand::BgDream => true,
             SlashCommand::Realtime => true,
             SlashCommand::Settings => true,
-            SlashCommand::Collab => true,
             SlashCommand::Agent | SlashCommand::MultiAgents => true,
-            SlashCommand::Theme => false,
+            SlashCommand::Theme | SlashCommand::Pets => false,
         }
     }
 
     fn is_visible(self) -> bool {
         match self {
             SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
-            SlashCommand::BgDream => false,
             SlashCommand::Copy => !cfg!(target_os = "android"),
             SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
             _ => true,
@@ -335,6 +260,12 @@ mod tests {
     #[test]
     fn clean_alias_parses_to_stop_command() {
         assert_eq!(SlashCommand::from_str("clean"), Ok(SlashCommand::Stop));
+    }
+
+    #[test]
+    fn pet_alias_parses_to_pets_command() {
+        assert_eq!(SlashCommand::Pets.command(), "pets");
+        assert_eq!(SlashCommand::from_str("pet"), Ok(SlashCommand::Pets));
     }
 
     #[test]

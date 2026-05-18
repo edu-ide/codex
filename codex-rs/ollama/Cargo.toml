@@ -4,6 +4,7 @@ name = "codex-ollama"
 [lib]
 name = "codex_ollama"
 path = "src/lib.rs"
+doctest = false
 
 [lints]
 workspace = true

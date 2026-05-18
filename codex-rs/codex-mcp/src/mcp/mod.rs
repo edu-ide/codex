@@ -25,17 +25,13 @@ use codex_config::types::ApprovalsReviewer;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_login::CodexAuth;
 use codex_plugin::PluginCapabilitySummary;
-use codex_protocol::mcp::Prompt;
 use codex_protocol::mcp::Resource;
 use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::mcp::Tool;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::McpAuthStatus;
-use rmcp::model::CompleteRequestParams;
-use rmcp::model::CompleteResult;
-use rmcp::model::GetPromptRequestParams;
-use rmcp::model::GetPromptResult;
+use rmcp::model::ElicitationCapability;
 use rmcp::model::ReadResourceRequestParams;
 use rmcp::model::ReadResourceResult;
 use serde_json::Value;
@@ -59,10 +55,6 @@ pub enum McpSnapshotDetail {
 
 impl McpSnapshotDetail {
     fn include_resources(self) -> bool {
-        matches!(self, Self::Full)
-    }
-
-    fn include_prompts(self) -> bool {
         matches!(self, Self::Full)
     }
 }
@@ -115,8 +107,10 @@ pub struct McpPermissionPromptAutoApproveContext {
 pub struct McpConfig {
     /// Base URL for ChatGPT-hosted app MCP servers, copied from the root config.
     pub chatgpt_base_url: String,
-    /// Optional path override for the built-in apps MCP server.
+    /// Optional path override for the host-owned apps MCP server.
     pub apps_mcp_path_override: Option<String>,
+    /// Optional product SKU forwarded to the host-owned apps MCP server.
+    pub apps_mcp_product_sku: Option<String>,
     /// Codex home directory used for MCP OAuth state and app-tool cache files.
     pub codex_home: PathBuf,
     /// Preferred credential store for MCP OAuth tokens.
@@ -135,16 +129,15 @@ pub struct McpConfig {
     pub use_legacy_landlock: bool,
     /// Whether the app MCP integration is enabled by config.
     ///
-    /// ChatGPT auth is checked separately at runtime before the built-in apps
+    /// ChatGPT auth is checked separately at runtime before the host-owned apps
     /// MCP server is added.
     pub apps_enabled: bool,
+    /// Client-side elicitation capabilities advertised during MCP initialization.
+    pub client_elicitation_capability: ElicitationCapability,
     /// Config-backed MCP servers keyed by server name.
     ///
-    /// Product-owned built-ins and runtime-only additions are merged later by
-    /// [`effective_mcp_servers`].
+    /// Runtime-only additions are merged later by [`effective_mcp_servers`].
     pub configured_mcp_servers: HashMap<String, McpServerConfig>,
-    /// Product-owned built-ins enabled for this runtime config.
-    pub builtin_mcp_servers: Vec<codex_builtin_mcps::BuiltinMcpServer>,
     /// Plugin metadata used to attribute MCP tools/connectors to plugin display names.
     pub plugin_capability_summaries: Vec<PluginCapabilitySummary>,
 }
@@ -243,16 +236,10 @@ pub fn effective_mcp_servers_from_configured(
     config: &McpConfig,
     auth: Option<&CodexAuth>,
 ) -> HashMap<String, EffectiveMcpServer> {
-    let mut servers = configured_servers
+    let servers = configured_servers
         .into_iter()
         .map(|(name, server)| (name, EffectiveMcpServer::configured(server)))
         .collect::<HashMap<_, _>>();
-    for builtin_server in &config.builtin_mcp_servers {
-        servers.insert(
-            builtin_server.name().to_string(),
-            EffectiveMcpServer::builtin(*builtin_server),
-        );
-    }
     with_codex_apps_mcp(servers, auth, config)
 }
 
@@ -290,6 +277,7 @@ pub async fn read_mcp_resource(
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
         host_owned_codex_apps_enabled,
+        config.client_elicitation_capability.clone(),
         tool_plugin_provenance(config),
         auth,
         /*elicitation_reviewer*/ None,
@@ -297,90 +285,14 @@ pub async fn read_mcp_resource(
     .await;
 
     let result = manager
-        .read_resource(server, ReadResourceRequestParams::new(uri))
+        .read_resource(
+            server,
+            ReadResourceRequestParams {
+                meta: None,
+                uri: uri.to_string(),
+            },
+        )
         .await;
-    cancel_token.cancel();
-    result
-}
-
-pub async fn get_mcp_prompt(
-    config: &McpConfig,
-    auth: Option<&CodexAuth>,
-    runtime_environment: McpRuntimeEnvironment,
-    server: &str,
-    params: GetPromptRequestParams,
-) -> anyhow::Result<GetPromptResult> {
-    let mut mcp_servers = effective_mcp_servers(config, auth);
-    let host_owned_codex_apps_enabled = host_owned_codex_apps_enabled(config, auth);
-    mcp_servers.retain(|name, _| name == server);
-    let auth_statuses = compute_auth_statuses(
-        mcp_servers.iter(),
-        config.mcp_oauth_credentials_store_mode,
-        auth,
-    )
-    .await;
-    let (tx_event, rx_event) = unbounded();
-    drop(rx_event);
-    let (manager, cancel_token) = McpConnectionManager::new(
-        &mcp_servers,
-        config.mcp_oauth_credentials_store_mode,
-        auth_statuses,
-        &config.approval_policy,
-        String::new(),
-        tx_event,
-        PermissionProfile::default(),
-        runtime_environment,
-        config.codex_home.clone(),
-        codex_apps_tools_cache_key(auth),
-        host_owned_codex_apps_enabled,
-        tool_plugin_provenance(config),
-        auth,
-        /*elicitation_reviewer*/ None,
-    )
-    .await;
-
-    let result = manager.get_prompt(server, params).await;
-    cancel_token.cancel();
-    result
-}
-
-pub async fn complete_mcp(
-    config: &McpConfig,
-    auth: Option<&CodexAuth>,
-    runtime_environment: McpRuntimeEnvironment,
-    server: &str,
-    params: CompleteRequestParams,
-) -> anyhow::Result<CompleteResult> {
-    let mut mcp_servers = effective_mcp_servers(config, auth);
-    let host_owned_codex_apps_enabled = host_owned_codex_apps_enabled(config, auth);
-    mcp_servers.retain(|name, _| name == server);
-    let auth_statuses = compute_auth_statuses(
-        mcp_servers.iter(),
-        config.mcp_oauth_credentials_store_mode,
-        auth,
-    )
-    .await;
-    let (tx_event, rx_event) = unbounded();
-    drop(rx_event);
-    let (manager, cancel_token) = McpConnectionManager::new(
-        &mcp_servers,
-        config.mcp_oauth_credentials_store_mode,
-        auth_statuses,
-        &config.approval_policy,
-        String::new(),
-        tx_event,
-        PermissionProfile::default(),
-        runtime_environment,
-        config.codex_home.clone(),
-        codex_apps_tools_cache_key(auth),
-        host_owned_codex_apps_enabled,
-        tool_plugin_provenance(config),
-        auth,
-        /*elicitation_reviewer*/ None,
-    )
-    .await;
-
-    let result = manager.complete(server, params).await;
     cancel_token.cancel();
     result
 }
@@ -390,7 +302,6 @@ pub struct McpServerStatusSnapshot {
     pub tools_by_server: HashMap<String, HashMap<String, Tool>>,
     pub resources: HashMap<String, Vec<Resource>>,
     pub resource_templates: HashMap<String, Vec<ResourceTemplate>>,
-    pub prompts: HashMap<String, Vec<Prompt>>,
     pub auth_statuses: HashMap<String, McpAuthStatus>,
 }
 
@@ -409,7 +320,6 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
             tools_by_server: HashMap::new(),
             resources: HashMap::new(),
             resource_templates: HashMap::new(),
-            prompts: HashMap::new(),
             auth_statuses: HashMap::new(),
         };
     }
@@ -436,6 +346,7 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
         host_owned_codex_apps_enabled,
+        config.client_elicitation_capability.clone(),
         tool_plugin_provenance,
         auth,
         /*elicitation_reviewer*/ None,
@@ -518,12 +429,15 @@ fn codex_apps_mcp_url_for_base_url(base_url: &str, apps_mcp_path_override: Optio
 
 fn codex_apps_mcp_server_config(config: &McpConfig) -> McpServerConfig {
     let url = codex_apps_mcp_url(config);
+    let http_headers = config.apps_mcp_product_sku.as_ref().map(|product_sku| {
+        HashMap::from([("X-OpenAI-Product-Sku".to_string(), product_sku.clone())])
+    });
 
     McpServerConfig {
         transport: McpServerTransportConfig::StreamableHttp {
             url,
             bearer_token_env_var: codex_apps_mcp_bearer_token_env_var(),
-            http_headers: None,
+            http_headers,
             env_http_headers: None,
         },
         experimental_environment: None,
@@ -537,6 +451,7 @@ fn codex_apps_mcp_server_config(config: &McpConfig) -> McpServerConfig {
         enabled_tools: None,
         disabled_tools: None,
         scopes: None,
+        oauth: None,
         oauth_resource: None,
         tools: HashMap::new(),
     }
@@ -646,48 +561,12 @@ fn convert_mcp_resource_templates(
         .collect::<HashMap<_, _>>()
 }
 
-fn convert_mcp_prompts(
-    prompts: HashMap<String, Vec<rmcp::model::Prompt>>,
-) -> HashMap<String, Vec<Prompt>> {
-    prompts
-        .into_iter()
-        .map(|(name, prompts)| {
-            let prompts = prompts
-                .into_iter()
-                .filter_map(|prompt| match serde_json::to_value(prompt) {
-                    Ok(value) => match Prompt::from_mcp_value(value.clone()) {
-                        Ok(prompt) => Some(prompt),
-                        Err(err) => {
-                            let prompt_name = match value {
-                                Value::Object(obj) => obj
-                                    .get("name")
-                                    .and_then(|v| v.as_str().map(ToString::to_string)),
-                                _ => None,
-                            };
-
-                            tracing::warn!(
-                                "Failed to convert MCP prompt (name={prompt_name:?}): {err}"
-                            );
-                            None
-                        }
-                    },
-                    Err(err) => {
-                        tracing::warn!("Failed to serialize MCP prompt: {err}");
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            (name, prompts)
-        })
-        .collect::<HashMap<_, _>>()
-}
-
 async fn collect_mcp_server_status_snapshot_from_manager(
     mcp_connection_manager: &McpConnectionManager,
     auth_status_entries: HashMap<String, crate::mcp::auth::McpAuthStatusEntry>,
     detail: McpSnapshotDetail,
 ) -> McpServerStatusSnapshot {
-    let (tools, resources, resource_templates, prompts) = tokio::join!(
+    let (tools, resources, resource_templates) = tokio::join!(
         mcp_connection_manager.list_all_tools(),
         async {
             if detail.include_resources() {
@@ -703,17 +582,10 @@ async fn collect_mcp_server_status_snapshot_from_manager(
                 HashMap::new()
             }
         },
-        async {
-            if detail.include_prompts() {
-                mcp_connection_manager.list_all_prompts().await
-            } else {
-                HashMap::new()
-            }
-        },
     );
 
     let mut tools_by_server = HashMap::<String, HashMap<String, Tool>>::new();
-    for (_qualified_name, tool_info) in tools {
+    for tool_info in tools {
         let raw_tool_name = tool_info.tool.name.to_string();
         let Some(tool) = protocol_tool_from_rmcp_tool(&raw_tool_name, &tool_info.tool) else {
             continue;
@@ -729,7 +601,6 @@ async fn collect_mcp_server_status_snapshot_from_manager(
         tools_by_server,
         resources: convert_mcp_resources(resources),
         resource_templates: convert_mcp_resource_templates(resource_templates),
-        prompts: convert_mcp_prompts(prompts),
         auth_statuses: auth_statuses_from_entries(&auth_status_entries),
     }
 }

@@ -95,7 +95,6 @@ brain-artifact-rs = { path = "../../../brain-artifact-rs" }
 brain-rs = { path = "../../../brain-rs" }
 a2a-rs = { path = "../../../a2a-rs", default-features = false, features = ["client", "server"] }
 a2a-acp-adapter = { path = "../../../a2a-acp-adapter" }
-codex-acp = { path = "../../../codex-acp" }
 dsrs = { package = "dspy-rs", path = "../../../DSRs/crates/dspy-rs" }
 shell-words = "1"
 walkdir = "2.5.0"
@@ -117,6 +116,3 @@ uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 dirs = "6"
 tempfile = "3"
-
-[patch.crates-io]
-agent-client-protocol-schema = { path = "../../../acp-schema" }

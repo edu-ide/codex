@@ -15,7 +15,7 @@ use codex_protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use codex_protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
-use codex_protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
+use codex_protocol::models::ImageDetail;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
 use codex_protocol::models::WebSearchAction as CoreWebSearchAction;
@@ -93,6 +93,59 @@ fn turn_defaults_legacy_missing_items_view_to_full() {
     .expect("legacy turn should deserialize");
 
     assert_eq!(turn.items_view, TurnItemsView::Full);
+}
+
+#[test]
+fn thread_turns_list_params_accepts_items_view() {
+    let params = serde_json::from_value::<ThreadTurnsListParams>(json!({
+        "threadId": "thr_123",
+        "cursor": null,
+        "limit": 25,
+        "sortDirection": "desc",
+        "itemsView": "notLoaded",
+    }))
+    .expect("thread turns list params should deserialize");
+
+    assert_eq!(params.thread_id, "thr_123");
+    assert_eq!(params.items_view, Some(TurnItemsView::NotLoaded));
+}
+
+#[test]
+fn thread_turns_items_list_round_trips() {
+    let params = ThreadTurnsItemsListParams {
+        thread_id: "thr_123".to_string(),
+        turn_id: "turn_456".to_string(),
+        cursor: Some("cursor_1".to_string()),
+        limit: Some(50),
+        sort_direction: Some(SortDirection::Asc),
+    };
+
+    assert_eq!(
+        serde_json::to_value(&params).expect("serialize params"),
+        json!({
+            "threadId": "thr_123",
+            "turnId": "turn_456",
+            "cursor": "cursor_1",
+            "limit": 50,
+            "sortDirection": "asc",
+        })
+    );
+    let response = ThreadTurnsItemsListResponse {
+        data: vec![ThreadItem::ContextCompaction {
+            id: "item_1".to_string(),
+        }],
+        next_cursor: None,
+        backwards_cursor: Some("cursor_0".to_string()),
+    };
+
+    assert_eq!(
+        serde_json::to_value(&response).expect("serialize response"),
+        json!({
+            "data": [{"type": "contextCompaction", "id": "item_1"}],
+            "nextCursor": null,
+            "backwardsCursor": "cursor_0",
+        })
+    );
 }
 
 #[test]
@@ -224,6 +277,7 @@ fn command_execution_request_approval_rejects_relative_additional_permission_pat
         "threadId": "thr_123",
         "turnId": "turn_123",
         "itemId": "call_123",
+        "startedAtMs": 1,
         "command": "cat file",
         "cwd": absolute_path_string("tmp"),
         "commandActions": null,
@@ -264,6 +318,7 @@ fn permissions_request_approval_uses_request_permission_profile() {
         "threadId": "thr_123",
         "turnId": "turn_123",
         "itemId": "call_123",
+        "startedAtMs": 1,
         "cwd": absolute_path_string("repo"),
         "reason": "Select a workspace root",
         "permissions": {
@@ -326,6 +381,7 @@ fn permissions_request_approval_rejects_macos_permissions() {
         "threadId": "thr_123",
         "turnId": "turn_123",
         "itemId": "call_123",
+        "startedAtMs": 1,
         "cwd": absolute_path_string("repo"),
         "reason": "Select a workspace root",
         "permissions": {
@@ -450,48 +506,6 @@ fn additional_file_system_permissions_rejects_zero_glob_scan_depth() {
 }
 
 #[test]
-fn permission_profile_file_system_permissions_preserves_glob_scan_depth() {
-    let core_permissions = CoreManagedFileSystemPermissions::Restricted {
-        entries: vec![CoreFileSystemSandboxEntry {
-            path: CoreFileSystemPath::GlobPattern {
-                pattern: "**/*.env".to_string(),
-            },
-            access: CoreFileSystemAccessMode::None,
-        }],
-        glob_scan_max_depth: NonZeroUsize::new(2),
-    };
-
-    let permissions = PermissionProfileFileSystemPermissions::from(core_permissions.clone());
-
-    assert_eq!(
-        permissions,
-        PermissionProfileFileSystemPermissions::Restricted {
-            entries: vec![FileSystemSandboxEntry {
-                path: FileSystemPath::GlobPattern {
-                    pattern: "**/*.env".to_string(),
-                },
-                access: FileSystemAccessMode::None,
-            }],
-            glob_scan_max_depth: NonZeroUsize::new(2),
-        }
-    );
-    assert_eq!(
-        CoreManagedFileSystemPermissions::from(permissions),
-        core_permissions
-    );
-}
-
-#[test]
-fn permission_profile_file_system_permissions_rejects_zero_glob_scan_depth() {
-    serde_json::from_value::<PermissionProfileFileSystemPermissions>(json!({
-        "type": "restricted",
-        "entries": [],
-        "globScanMaxDepth": 0,
-    }))
-    .expect_err("zero glob scan depth should fail deserialization");
-}
-
-#[test]
 fn legacy_current_working_directory_special_path_deserializes_as_project_roots() {
     let special_path = serde_json::from_value::<FileSystemSpecialPath>(json!({
         "kind": "current_working_directory",
@@ -600,6 +614,61 @@ fn permissions_request_approval_response_accepts_strict_auto_review() {
 }
 
 #[test]
+fn permission_profile_selection_accepts_legacy_object_shape() {
+    let additional_root = absolute_path("additional-root");
+    let params = json!({
+        "permissions": {
+            "type": "profile",
+            "id": ":workspace",
+            "modifications": [
+                {
+                    "type": "additionalWritableRoot",
+                    "path": additional_root,
+                }
+            ],
+        },
+    });
+
+    let start: ThreadStartParams =
+        serde_json::from_value(params.clone()).expect("thread/start params deserialize");
+    assert_legacy_permission_profile_selection(start.permissions, &additional_root);
+
+    let resume: ThreadResumeParams = serde_json::from_value(json!({
+        "threadId": "thread-1",
+        "permissions": params["permissions"].clone(),
+    }))
+    .expect("thread/resume params deserialize");
+    assert_legacy_permission_profile_selection(resume.permissions, &additional_root);
+
+    let fork: ThreadForkParams = serde_json::from_value(json!({
+        "threadId": "thread-1",
+        "permissions": params["permissions"].clone(),
+    }))
+    .expect("thread/fork params deserialize");
+    assert_legacy_permission_profile_selection(fork.permissions, &additional_root);
+
+    let turn: TurnStartParams = serde_json::from_value(json!({
+        "threadId": "thread-1",
+        "input": [],
+        "permissions": params["permissions"].clone(),
+    }))
+    .expect("turn/start params deserialize");
+    assert_legacy_permission_profile_selection(turn.permissions, &additional_root);
+}
+
+fn assert_legacy_permission_profile_selection(
+    selection: Option<PermissionProfileSelectionParams>,
+    additional_root: &AbsolutePathBuf,
+) {
+    let selection = selection.expect("permissions should be present");
+    assert_eq!(selection.id(), ":workspace");
+    assert_eq!(
+        selection.legacy_additional_writable_roots(),
+        std::slice::from_ref(additional_root)
+    );
+}
+
+#[test]
 fn fs_get_metadata_response_round_trips_minimal_fields() {
     let response = FsGetMetadataResponse {
         is_directory: false,
@@ -662,181 +731,6 @@ fn fs_read_file_params_round_trip() {
     let decoded =
         serde_json::from_value::<FsReadFileParams>(value).expect("deserialize fs/readFile params");
     assert_eq!(decoded, params);
-}
-
-#[test]
-fn device_key_create_params_round_trip_uses_protection_policy() {
-    let params = DeviceKeyCreateParams {
-        protection_policy: None,
-        account_user_id: "account-user-1".to_string(),
-        client_id: "cli_123".to_string(),
-    };
-
-    let value = serde_json::to_value(&params).expect("serialize device/key/create params");
-    assert_eq!(
-        value,
-        json!({
-            "accountUserId": "account-user-1",
-            "clientId": "cli_123",
-            "protectionPolicy": null,
-        })
-    );
-
-    let decoded = serde_json::from_value::<DeviceKeyCreateParams>(value)
-        .expect("deserialize device/key/create params");
-    assert_eq!(decoded, params);
-
-    let params = DeviceKeyCreateParams {
-        protection_policy: Some(DeviceKeyProtectionPolicy::AllowOsProtectedNonextractable),
-        account_user_id: "account-user-1".to_string(),
-        client_id: "cli_123".to_string(),
-    };
-    let value = serde_json::to_value(&params)
-        .expect("serialize device/key/create params with protection policy");
-    assert_eq!(
-        value,
-        json!({
-            "accountUserId": "account-user-1",
-            "clientId": "cli_123",
-            "protectionPolicy": "allow_os_protected_nonextractable",
-        })
-    );
-}
-
-#[test]
-fn device_key_create_response_round_trips_protection_class() {
-    let response = DeviceKeyCreateResponse {
-        key_id: "dk_123".to_string(),
-        public_key_spki_der_base64: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE".to_string(),
-        algorithm: DeviceKeyAlgorithm::EcdsaP256Sha256,
-        protection_class: DeviceKeyProtectionClass::OsProtectedNonextractable,
-    };
-
-    let value = serde_json::to_value(&response).expect("serialize device/key/create response");
-    assert_eq!(
-        value,
-        json!({
-            "keyId": "dk_123",
-            "publicKeySpkiDerBase64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE",
-            "algorithm": "ecdsa_p256_sha256",
-            "protectionClass": "os_protected_nonextractable",
-        })
-    );
-
-    let decoded = serde_json::from_value::<DeviceKeyCreateResponse>(value)
-        .expect("deserialize device/key/create response");
-    assert_eq!(decoded, response);
-}
-
-#[test]
-fn device_key_sign_params_round_trip_uses_accepted_payload_enum() {
-    let params = DeviceKeySignParams {
-        key_id: "dk_123".to_string(),
-        payload: DeviceKeySignPayload::RemoteControlClientConnection {
-            nonce: "nonce-1".to_string(),
-            audience: RemoteControlClientConnectionAudience::RemoteControlClientWebsocket,
-            session_id: "wssess_123".to_string(),
-            target_origin: "https://chatgpt.com".to_string(),
-            target_path: "/api/codex/remote/control/client".to_string(),
-            account_user_id: "account-user-1".to_string(),
-            client_id: "cli_123".to_string(),
-            token_sha256_base64url: "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU".to_string(),
-            token_expires_at: 1_700_000_000,
-            scopes: vec!["remote_control_controller_websocket".to_string()],
-        },
-    };
-
-    let value = serde_json::to_value(&params).expect("serialize device/key/sign params");
-    assert_eq!(
-        value,
-        json!({
-            "keyId": "dk_123",
-            "payload": {
-                "type": "remoteControlClientConnection",
-                "nonce": "nonce-1",
-                "audience": "remote_control_client_websocket",
-                "sessionId": "wssess_123",
-                "targetOrigin": "https://chatgpt.com",
-                "targetPath": "/api/codex/remote/control/client",
-                "accountUserId": "account-user-1",
-                "clientId": "cli_123",
-                "tokenSha256Base64url": "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
-                "tokenExpiresAt": 1_700_000_000,
-                "scopes": ["remote_control_controller_websocket"],
-            },
-        })
-    );
-
-    let decoded = serde_json::from_value::<DeviceKeySignParams>(value)
-        .expect("deserialize device/key/sign params");
-    assert_eq!(decoded, params);
-}
-
-#[test]
-fn device_key_sign_params_round_trip_uses_enrollment_payload() {
-    let params = DeviceKeySignParams {
-        key_id: "dk_123".to_string(),
-        payload: DeviceKeySignPayload::RemoteControlClientEnrollment {
-            nonce: "nonce-1".to_string(),
-            audience: RemoteControlClientEnrollmentAudience::RemoteControlClientEnrollment,
-            challenge_id: "rch_123".to_string(),
-            target_origin: "https://chatgpt.com".to_string(),
-            target_path: "/wham/remote/control/client/enroll".to_string(),
-            account_user_id: "account-user-1".to_string(),
-            client_id: "cli_123".to_string(),
-            device_identity_sha256_base64url: "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU"
-                .to_string(),
-            challenge_expires_at: 1_700_000_000,
-        },
-    };
-
-    let value = serde_json::to_value(&params)
-        .expect("serialize device/key/sign params with enrollment payload");
-    assert_eq!(
-        value,
-        json!({
-            "keyId": "dk_123",
-            "payload": {
-                "type": "remoteControlClientEnrollment",
-                "nonce": "nonce-1",
-                "audience": "remote_control_client_enrollment",
-                "challengeId": "rch_123",
-                "targetOrigin": "https://chatgpt.com",
-                "targetPath": "/wham/remote/control/client/enroll",
-                "accountUserId": "account-user-1",
-                "clientId": "cli_123",
-                "deviceIdentitySha256Base64url": "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
-                "challengeExpiresAt": 1_700_000_000,
-            },
-        })
-    );
-
-    let decoded = serde_json::from_value::<DeviceKeySignParams>(value)
-        .expect("deserialize device/key/sign params with enrollment payload");
-    assert_eq!(decoded, params);
-}
-
-#[test]
-fn device_key_sign_response_returns_signed_payload_bytes() {
-    let response = DeviceKeySignResponse {
-        signature_der_base64: "MEUCIQD".to_string(),
-        signed_payload_base64: "eyJkb21haW4iOiJjb2RleA".to_string(),
-        algorithm: DeviceKeyAlgorithm::EcdsaP256Sha256,
-    };
-
-    let value = serde_json::to_value(&response).expect("serialize device/key/sign response");
-    assert_eq!(
-        value,
-        json!({
-            "signatureDerBase64": "MEUCIQD",
-            "signedPayloadBase64": "eyJkb21haW4iOiJjb2RleA",
-            "algorithm": "ecdsa_p256_sha256",
-        })
-    );
-
-    let decoded = serde_json::from_value::<DeviceKeySignResponse>(value)
-        .expect("deserialize device/key/sign response");
-    assert_eq!(decoded, response);
 }
 
 #[test]
@@ -1650,6 +1544,7 @@ fn config_granular_approval_policy_is_marked_experimental() {
         service_tier: None,
         analytics: None,
         apps: None,
+        desktop: None,
         additional: HashMap::new(),
     });
 
@@ -1683,6 +1578,7 @@ fn config_approvals_reviewer_is_marked_experimental() {
         service_tier: None,
         analytics: None,
         apps: None,
+        desktop: None,
         additional: HashMap::new(),
     });
 
@@ -1738,6 +1634,7 @@ fn config_nested_profile_granular_approval_policy_is_marked_experimental() {
         service_tier: None,
         analytics: None,
         apps: None,
+        desktop: None,
         additional: HashMap::new(),
     });
 
@@ -1787,6 +1684,7 @@ fn config_nested_profile_approvals_reviewer_is_marked_experimental() {
         service_tier: None,
         analytics: None,
         apps: None,
+        desktop: None,
         additional: HashMap::new(),
     });
 
@@ -1807,6 +1705,7 @@ fn config_requirements_granular_allowed_approval_policy_is_marked_experimental()
             allowed_approvals_reviewers: None,
             allowed_sandbox_modes: None,
             allowed_web_search_modes: None,
+            allow_managed_hooks_only: None,
             feature_requirements: None,
             hooks: None,
             enforce_residency: None,
@@ -1911,7 +1810,6 @@ fn mcp_server_elicitation_response_round_trips_rmcp_result() {
         content: Some(json!({
             "confirmed": true,
         })),
-        meta: None,
     };
 
     let v2_response = McpServerElicitationRequestResponse::from(rmcp_result.clone());
@@ -2379,9 +2277,11 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
             },
             CoreUserInput::Image {
                 image_url: "https://example.com/image.png".to_string(),
+                detail: Some(ImageDetail::Original),
             },
             CoreUserInput::LocalImage {
                 path: PathBuf::from("local/image.png"),
+                detail: Some(ImageDetail::Original),
             },
             CoreUserInput::Skill {
                 name: "skill-creator".to_string(),
@@ -2405,9 +2305,11 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
                 },
                 UserInput::Image {
                     url: "https://example.com/image.png".to_string(),
+                    detail: Some(ImageDetail::Original),
                 },
                 UserInput::LocalImage {
                     path: PathBuf::from("local/image.png"),
+                    detail: Some(ImageDetail::Original),
                 },
                 UserInput::Skill {
                     name: "skill-creator".to_string(),
@@ -2623,38 +2525,52 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
 }
 
 #[test]
+fn user_input_into_core_preserves_image_detail() {
+    assert_eq!(
+        UserInput::Image {
+            url: "https://example.com/image.png".to_string(),
+            detail: Some(ImageDetail::Original),
+        }
+        .into_core(),
+        CoreUserInput::Image {
+            image_url: "https://example.com/image.png".to_string(),
+            detail: Some(ImageDetail::Original),
+        }
+    );
+
+    assert_eq!(
+        UserInput::LocalImage {
+            path: PathBuf::from("local/image.png"),
+            detail: Some(ImageDetail::Original),
+        }
+        .into_core(),
+        CoreUserInput::LocalImage {
+            path: PathBuf::from("local/image.png"),
+            detail: Some(ImageDetail::Original),
+        }
+    );
+}
+
+#[test]
 fn skills_list_params_serialization_uses_force_reload() {
     assert_eq!(
         serde_json::to_value(SkillsListParams {
             cwds: Vec::new(),
             force_reload: false,
-            per_cwd_extra_user_roots: None,
         })
         .unwrap(),
-        json!({
-            "perCwdExtraUserRoots": null,
-        }),
+        json!({}),
     );
 
     assert_eq!(
         serde_json::to_value(SkillsListParams {
             cwds: vec![PathBuf::from("/repo")],
             force_reload: true,
-            per_cwd_extra_user_roots: Some(vec![SkillsListExtraRootsForCwd {
-                cwd: PathBuf::from("/repo"),
-                extra_user_roots: vec![PathBuf::from("/shared/skills"), PathBuf::from("/tmp/x")],
-            }]),
         })
         .unwrap(),
         json!({
             "cwds": ["/repo"],
             "forceReload": true,
-            "perCwdExtraUserRoots": [
-                {
-                    "cwd": "/repo",
-                    "extraUserRoots": ["/shared/skills", "/tmp/x"],
-                }
-            ],
         }),
     );
 }
@@ -3029,10 +2945,12 @@ fn plugin_share_params_and_response_serialization_use_camel_case_fields() {
                 PluginShareTarget {
                     principal_type: PluginSharePrincipalType::User,
                     principal_id: "user-1".to_string(),
+                    role: PluginShareTargetRole::Reader,
                 },
                 PluginShareTarget {
-                    principal_type: PluginSharePrincipalType::Workspace,
-                    principal_id: "workspace-1".to_string(),
+                    principal_type: PluginSharePrincipalType::Group,
+                    principal_id: "group-1".to_string(),
+                    role: PluginShareTargetRole::Reader,
                 },
             ]),
         })
@@ -3045,10 +2963,12 @@ fn plugin_share_params_and_response_serialization_use_camel_case_fields() {
                 {
                     "principalType": "user",
                     "principalId": "user-1",
+                    "role": "reader",
                 },
                 {
-                    "principalType": "workspace",
-                    "principalId": "workspace-1",
+                    "principalType": "group",
+                    "principalId": "group-1",
+                    "role": "reader",
                 },
             ],
         }),
@@ -3069,17 +2989,21 @@ fn plugin_share_params_and_response_serialization_use_camel_case_fields() {
     assert_eq!(
         serde_json::to_value(PluginShareUpdateTargetsParams {
             remote_plugin_id: "plugins~Plugin_00000000000000000000000000000000".to_string(),
+            discoverability: PluginShareUpdateDiscoverability::Unlisted,
             share_targets: vec![PluginShareTarget {
                 principal_type: PluginSharePrincipalType::Group,
                 principal_id: "group-1".to_string(),
+                role: PluginShareTargetRole::Editor,
             }],
         })
         .unwrap(),
         json!({
             "remotePluginId": "plugins~Plugin_00000000000000000000000000000000",
+            "discoverability": "UNLISTED",
             "shareTargets": [{
                 "principalType": "group",
                 "principalId": "group-1",
+                "role": "editor",
             }],
         }),
     );
@@ -3089,22 +3013,72 @@ fn plugin_share_params_and_response_serialization_use_camel_case_fields() {
             principals: vec![PluginSharePrincipal {
                 principal_type: PluginSharePrincipalType::User,
                 principal_id: "user-1".to_string(),
+                role: PluginSharePrincipalRole::Owner,
                 name: "Gavin".to_string(),
             }],
+            discoverability: PluginShareDiscoverability::Unlisted,
         })
         .unwrap(),
         json!({
             "principals": [{
                 "principalType": "user",
                 "principalId": "user-1",
+                "role": "owner",
                 "name": "Gavin",
             }],
+            "discoverability": "UNLISTED",
         }),
     );
 
     assert_eq!(
         serde_json::from_value::<PluginShareListParams>(json!({})).unwrap(),
         PluginShareListParams {},
+    );
+
+    assert_eq!(
+        serde_json::to_value(PluginShareCheckoutParams {
+            remote_plugin_id: "plugins~Plugin_00000000000000000000000000000000".to_string(),
+        })
+        .unwrap(),
+        json!({
+            "remotePluginId": "plugins~Plugin_00000000000000000000000000000000",
+        }),
+    );
+
+    let plugin_path = if cfg!(windows) {
+        r"C:\Users\me\plugins\gmail"
+    } else {
+        "/Users/me/plugins/gmail"
+    };
+    let plugin_path = AbsolutePathBuf::try_from(PathBuf::from(plugin_path)).unwrap();
+    let plugin_path_json = plugin_path.as_path().display().to_string();
+    let marketplace_path = if cfg!(windows) {
+        r"C:\Users\me\.agents\plugins\marketplace.json"
+    } else {
+        "/Users/me/.agents/plugins/marketplace.json"
+    };
+    let marketplace_path = AbsolutePathBuf::try_from(PathBuf::from(marketplace_path)).unwrap();
+    let marketplace_path_json = marketplace_path.as_path().display().to_string();
+    assert_eq!(
+        serde_json::to_value(PluginShareCheckoutResponse {
+            remote_plugin_id: "plugins~Plugin_00000000000000000000000000000000".to_string(),
+            plugin_id: "gmail@codex-curated".to_string(),
+            plugin_name: "gmail".to_string(),
+            plugin_path,
+            marketplace_name: "codex-curated".to_string(),
+            marketplace_path,
+            remote_version: Some("1.2.3".to_string()),
+        })
+        .unwrap(),
+        json!({
+            "remotePluginId": "plugins~Plugin_00000000000000000000000000000000",
+            "pluginId": "gmail@codex-curated",
+            "pluginName": "gmail",
+            "pluginPath": plugin_path_json,
+            "marketplaceName": "codex-curated",
+            "marketplacePath": marketplace_path_json,
+            "remoteVersion": "1.2.3",
+        }),
     );
 
     assert_eq!(
@@ -3124,7 +3098,11 @@ fn plugin_share_list_response_serializes_share_items() {
         serde_json::to_value(PluginShareListResponse {
             data: vec![PluginShareListItem {
                 plugin: PluginSummary {
-                    id: "plugins~Plugin_00000000000000000000000000000000".to_string(),
+                    id: "gmail@chatgpt-global".to_string(),
+                    remote_plugin_id: Some(
+                        "plugins~Plugin_00000000000000000000000000000000".to_string(),
+                    ),
+                    local_version: None,
                     name: "gmail".to_string(),
                     share_context: None,
                     source: PluginSource::Remote,
@@ -3136,7 +3114,6 @@ fn plugin_share_list_response_serializes_share_items() {
                     interface: None,
                     keywords: Vec::new(),
                 },
-                share_url: "https://chatgpt.example/plugins/share/share-key-1".to_string(),
                 local_plugin_path: None,
             }],
         })
@@ -3144,7 +3121,9 @@ fn plugin_share_list_response_serializes_share_items() {
         json!({
             "data": [{
                 "plugin": {
-                    "id": "plugins~Plugin_00000000000000000000000000000000",
+                    "id": "gmail@chatgpt-global",
+                    "remotePluginId": "plugins~Plugin_00000000000000000000000000000000",
+                    "localVersion": null,
                     "name": "gmail",
                     "shareContext": null,
                     "source": { "type": "remote" },
@@ -3156,7 +3135,6 @@ fn plugin_share_list_response_serializes_share_items() {
                     "interface": null,
                     "keywords": [],
                 },
-                "shareUrl": "https://chatgpt.example/plugins/share/share-key-1",
                 "localPluginPath": null,
             }],
         }),
@@ -3178,6 +3156,7 @@ fn plugin_summary_defaults_missing_availability_to_available() {
     .unwrap();
 
     assert_eq!(summary.availability, PluginAvailability::Available);
+    assert_eq!(summary.local_version, None);
     assert_eq!(summary.share_context, None);
 }
 
@@ -3428,10 +3407,6 @@ fn dynamic_tool_spec_deserializes_defer_loading() {
                 }
             }),
             defer_loading: true,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }
     );
 }
@@ -3512,9 +3487,6 @@ fn thread_lifecycle_responses_default_missing_optional_fields() {
     assert_eq!(start.instruction_sources, Vec::<AbsolutePathBuf>::new());
     assert_eq!(resume.instruction_sources, Vec::<AbsolutePathBuf>::new());
     assert_eq!(fork.instruction_sources, Vec::<AbsolutePathBuf>::new());
-    assert_eq!(start.permission_profile, None);
-    assert_eq!(resume.permission_profile, None);
-    assert_eq!(fork.permission_profile, None);
     assert_eq!(start.active_permission_profile, None);
     assert_eq!(resume.active_permission_profile, None);
     assert_eq!(fork.active_permission_profile, None);
@@ -3542,6 +3514,7 @@ fn turn_start_params_preserve_explicit_null_service_tier() {
         responsesapi_client_metadata: None,
         environments: None,
         cwd: None,
+        runtime_workspace_roots: None,
         approval_policy: None,
         approvals_reviewer: None,
         sandbox_policy: None,

@@ -1,5 +1,6 @@
 use super::*;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
+use codex_protocol::models::SearchToolCallParams;
 use core_test_support::assert_regex_match;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -61,10 +62,8 @@ fn mcp_code_mode_result_serializes_full_call_tool_result() {
         })),
     };
 
-    let result = output.code_mode_result(&ToolPayload::Mcp {
-        server: "server".to_string(),
-        tool: "tool".to_string(),
-        raw_arguments: "{}".to_string(),
+    let result = output.code_mode_result(&ToolPayload::Function {
+        arguments: "{}".to_string(),
     });
 
     assert_eq!(
@@ -106,10 +105,8 @@ fn mcp_tool_output_response_item_includes_wall_time() {
 
     let response = output.to_response_item(
         "mcp-call-1",
-        &ToolPayload::Mcp {
-            server: "server".to_string(),
-            tool: "tool".to_string(),
-            raw_arguments: "{}".to_string(),
+        &ToolPayload::Function {
+            arguments: "{}".to_string(),
         },
     );
 
@@ -160,10 +157,8 @@ fn mcp_tool_output_response_item_truncates_large_structured_content() {
 
     let response = output.to_response_item(
         "mcp-call-large",
-        &ToolPayload::Mcp {
-            server: "server".to_string(),
-            tool: "tool".to_string(),
-            raw_arguments: "{}".to_string(),
+        &ToolPayload::Function {
+            arguments: "{}".to_string(),
         },
     );
 
@@ -205,10 +200,8 @@ fn mcp_tool_output_response_item_preserves_content_items() {
 
     let response = output.to_response_item(
         "mcp-call-2",
-        &ToolPayload::Mcp {
-            server: "server".to_string(),
-            tool: "tool".to_string(),
-            raw_arguments: "{}".to_string(),
+        &ToolPayload::Function {
+            arguments: "{}".to_string(),
         },
     );
 
@@ -259,10 +252,8 @@ fn mcp_tool_output_code_mode_result_stays_raw_call_tool_result() {
         truncation_policy: TruncationPolicy::Bytes(64),
     };
 
-    let result = output.code_mode_result(&ToolPayload::Mcp {
-        server: "server".to_string(),
-        tool: "tool".to_string(),
-        raw_arguments: "{}".to_string(),
+    let result = output.code_mode_result(&ToolPayload::Function {
+        arguments: "{}".to_string(),
     });
 
     assert_eq!(
@@ -377,53 +368,6 @@ fn tool_search_payloads_roundtrip_as_tool_search_outputs() {
             );
         }
         other => panic!("expected ToolSearchOutput, got {other:?}"),
-    }
-}
-
-#[test]
-fn tool_search_function_payloads_roundtrip_as_function_outputs() {
-    let payload = ToolPayload::Function {
-        arguments: json!({"query": "calendar"}).to_string(),
-    };
-    let response = ToolSearchOutput {
-        tools: vec![LoadableToolSpec::Function(codex_tools::ResponsesApiTool {
-            name: "create_event".to_string(),
-            description: String::new(),
-            strict: false,
-            defer_loading: Some(true),
-            parameters: codex_tools::JsonSchema::object(
-                /*properties*/ Default::default(),
-                /*required*/ None,
-                /*additional_properties*/ None,
-            ),
-            output_schema: None,
-        })],
-    }
-    .to_response_item("search-1", &payload);
-
-    match response {
-        ResponseInputItem::FunctionCallOutput { call_id, output } => {
-            assert_eq!(call_id, "search-1");
-            let tools: serde_json::Value =
-                serde_json::from_str(&output.body.to_text().expect("tool output text"))
-                    .expect("tool_search function output should be JSON");
-            assert_eq!(
-                tools,
-                json!([{
-                    "type": "function",
-                    "name": "create_event",
-                    "description": "",
-                    "strict": false,
-                    "defer_loading": true,
-                    "parameters": {
-                        "type": "object",
-                        "properties": {}
-                    }
-                }])
-            );
-            assert_eq!(output.success, Some(true));
-        }
-        other => panic!("expected FunctionCallOutput, got {other:?}"),
     }
 }
 

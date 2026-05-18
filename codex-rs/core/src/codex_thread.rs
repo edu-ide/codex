@@ -1,12 +1,12 @@
 use crate::agent::AgentStatus;
 use crate::config::ConstraintResult;
-use crate::file_watcher::WatchRegistration;
 use crate::goals::ExternalGoalSet;
 use crate::goals::GoalRuntimeEvent;
 use crate::session::Codex;
 use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
 use codex_features::Feature;
+use codex_otel::SessionTelemetry;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
@@ -23,7 +23,6 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
-use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
@@ -32,6 +31,7 @@ use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsageInfo;
+use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::user_input::UserInput;
 use codex_thread_store::StoredThread;
@@ -59,6 +59,8 @@ pub struct ThreadConfigSnapshot {
     pub permission_profile: PermissionProfile,
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub cwd: AbsolutePathBuf,
+    pub workspace_roots: Vec<AbsolutePathBuf>,
+    pub profile_workspace_roots: Vec<AbsolutePathBuf>,
     pub ephemeral: bool,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub personality: Option<Personality>,
@@ -82,6 +84,8 @@ impl ThreadConfigSnapshot {
 #[derive(Clone, Default)]
 pub struct CodexThreadTurnContextOverrides {
     pub cwd: Option<PathBuf>,
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
+    pub profile_workspace_roots: Option<Vec<AbsolutePathBuf>>,
     pub approval_policy: Option<AskForApproval>,
     pub approvals_reviewer: Option<ApprovalsReviewer>,
     pub sandbox_policy: Option<SandboxPolicy>,
@@ -102,7 +106,6 @@ pub struct CodexThread {
     session_configured: SessionConfiguredEvent,
     rollout_path: Option<PathBuf>,
     out_of_band_elicitation_count: Mutex<u64>,
-    _watch_registration: WatchRegistration,
 }
 
 /// Conduit for the bidirectional stream of messages that compose a thread
@@ -113,7 +116,6 @@ impl CodexThread {
         session_configured: SessionConfiguredEvent,
         rollout_path: Option<PathBuf>,
         session_source: SessionSource,
-        watch_registration: WatchRegistration,
     ) -> Self {
         Self {
             codex,
@@ -121,12 +123,16 @@ impl CodexThread {
             session_configured,
             rollout_path,
             out_of_band_elicitation_count: Mutex::new(0),
-            _watch_registration: watch_registration,
         }
     }
 
     pub async fn submit(&self, op: Op) -> CodexResult<String> {
         self.codex.submit(op).await
+    }
+
+    /// Returns the session telemetry handle for thread-scoped production instrumentation.
+    pub fn session_telemetry(&self) -> SessionTelemetry {
+        self.codex.session.services.session_telemetry.clone()
     }
 
     pub async fn shutdown_and_wait(&self) -> CodexResult<()> {
@@ -136,6 +142,21 @@ impl CodexThread {
     /// Wait until the underlying session loop has terminated.
     pub async fn wait_until_terminated(&self) {
         self.codex.session_loop_termination.clone().await;
+    }
+
+    pub(crate) fn emit_thread_resume_lifecycle(&self) {
+        for contributor in self
+            .codex
+            .session
+            .services
+            .extensions
+            .thread_lifecycle_contributors()
+        {
+            contributor.on_thread_resume(codex_extension_api::ThreadResumeInput {
+                session_store: &self.codex.session.services.session_extension_data,
+                thread_store: &self.codex.session.services.thread_extension_data,
+            });
+        }
     }
 
     pub async fn apply_goal_resume_runtime_effects(&self) -> anyhow::Result<()> {
@@ -241,6 +262,8 @@ impl CodexThread {
     ) -> ConstraintResult<()> {
         let CodexThreadTurnContextOverrides {
             cwd,
+            workspace_roots,
+            profile_workspace_roots,
             approval_policy,
             approvals_reviewer,
             sandbox_policy,
@@ -266,6 +289,8 @@ impl CodexThread {
 
         let updates = SessionSettingsUpdate {
             cwd,
+            workspace_roots,
+            profile_workspace_roots,
             approval_policy,
             approvals_reviewer,
             sandbox_policy,
@@ -465,54 +490,34 @@ impl CodexThread {
         self.codex.session.get_config().await
     }
 
+    /// Refresh the thread's layer-backed user config state from a caller-supplied
+    /// config snapshot. Thread-scoped layers and session-static settings remain
+    /// unchanged.
+    pub async fn refresh_runtime_config(&self, next_config: crate::config::Config) {
+        self.codex.session.refresh_runtime_config(next_config).await;
+    }
+
+    pub async fn environment_selections(&self) -> Vec<TurnEnvironmentSelection> {
+        self.codex.thread_environment_selections().await
+    }
+
     pub async fn read_mcp_resource(
         &self,
         server: &str,
         uri: &str,
     ) -> anyhow::Result<serde_json::Value> {
-        self.refresh_mcp_servers_if_requested_for_out_of_band_call()
-            .await;
         let result = self
             .codex
             .session
-            .read_resource(server, ReadResourceRequestParams::new(uri.to_string()))
+            .read_resource(
+                server,
+                ReadResourceRequestParams {
+                    meta: None,
+                    uri: uri.to_string(),
+                },
+            )
             .await?;
 
-        Ok(serde_json::to_value(result)?)
-    }
-
-    pub async fn get_mcp_prompt(
-        &self,
-        server: &str,
-        name: &str,
-        arguments: Option<serde_json::Value>,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.refresh_mcp_servers_if_requested_for_out_of_band_call()
-            .await;
-        let arguments = match arguments {
-            Some(serde_json::Value::Object(map)) => Some(map),
-            Some(other) => {
-                return Err(anyhow::anyhow!(
-                    "MCP prompt arguments must be a JSON object, got {other}"
-                ));
-            }
-            None => None,
-        };
-        let mut prompt_params = rmcp::model::GetPromptRequestParams::new(name.to_string());
-        prompt_params.arguments = arguments;
-        let result = self.codex.session.get_prompt(server, prompt_params).await?;
-
-        Ok(serde_json::to_value(result)?)
-    }
-
-    pub async fn complete_mcp(
-        &self,
-        server: &str,
-        params: rmcp::model::CompleteRequestParams,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.refresh_mcp_servers_if_requested_for_out_of_band_call()
-            .await;
-        let result = self.codex.session.complete(server, params).await?;
         Ok(serde_json::to_value(result)?)
     }
 
@@ -523,34 +528,10 @@ impl CodexThread {
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) -> anyhow::Result<CallToolResult> {
-        self.refresh_mcp_servers_if_requested_for_out_of_band_call()
-            .await;
         self.codex
             .session
             .call_tool(server, tool, arguments, meta)
             .await
-    }
-
-    async fn refresh_mcp_servers_if_requested_for_out_of_band_call(&self) {
-        let turn_context = self.codex.session.new_default_turn().await;
-        self.codex
-            .session
-            .refresh_mcp_servers_if_requested(
-                turn_context.as_ref(),
-                /*elicitation_reviewer*/ None,
-            )
-            .await;
-    }
-
-    pub async fn queue_mcp_server_refresh_for_out_of_band_call(
-        &self,
-        refresh_config: McpServerRefreshConfig,
-    ) {
-        self.codex
-            .session
-            .queue_mcp_server_refresh_for_out_of_band_call(refresh_config)
-            .await;
-        self.codex.session.reload_user_config_layer().await;
     }
 
     pub fn enabled(&self, feature: Feature) -> bool {

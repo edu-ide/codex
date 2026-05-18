@@ -1,10 +1,10 @@
 use crate::context_proxy::autonomy::state::AutonomousPhase;
 use crate::context_proxy::autonomy::state::AutonomousSessionState;
 use crate::settings_store::SettingsStore;
+use crate::types::LoopLifecycleItem;
+use crate::types::LoopLifecycleKind;
+use crate::types::LoopLifecycleStatus;
 use brain_rs::BrainService;
-use codex_protocol::items::LoopLifecycleItem;
-use codex_protocol::protocol::LoopLifecycleKind;
-use codex_protocol::protocol::LoopLifecycleStatus;
 use dsrs::ChatAdapter;
 use dsrs::LM;
 use dsrs::Predict;

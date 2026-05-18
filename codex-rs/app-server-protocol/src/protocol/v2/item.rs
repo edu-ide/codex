@@ -27,8 +27,6 @@ use codex_protocol::protocol::ExecCommandSource as CoreExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 use codex_protocol::protocol::GuardianRiskLevel as CoreGuardianRiskLevel;
 use codex_protocol::protocol::GuardianUserAuthorization as CoreGuardianUserAuthorization;
-use codex_protocol::protocol::LoopLifecycleKind;
-use codex_protocol::protocol::LoopLifecycleStatus;
 use codex_protocol::protocol::PatchApplyStatus as CorePatchApplyStatus;
 use codex_protocol::protocol::ReviewDecision as CoreReviewDecision;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -37,7 +35,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use serde_with::serde_as;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use ts_rs::TS;
@@ -355,33 +352,6 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
-    LoopLifecycle {
-        id: String,
-        kind: LoopLifecycleKind,
-        title: String,
-        summary: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        detail: Option<String>,
-        status: LoopLifecycleStatus,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        reason: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        counts: Option<BTreeMap<String, i64>>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        error: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        duration_ms: Option<i64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        target_profile: Option<String>,
-    },
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
     EnteredReviewMode { id: String, review: String },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
@@ -415,7 +385,6 @@ impl ThreadItem {
             | ThreadItem::WebSearch { id, .. }
             | ThreadItem::ImageView { id, .. }
             | ThreadItem::ImageGeneration { id, .. }
-            | ThreadItem::LoopLifecycle { id, .. }
             | ThreadItem::EnteredReviewMode { id, .. }
             | ThreadItem::ExitedReviewMode { id, .. }
             | ThreadItem::ContextCompaction { id, .. } => id,
@@ -856,19 +825,6 @@ impl From<CoreTurnItem> for ThreadItem {
                 result: image.result,
                 saved_path: image.saved_path,
             },
-            CoreTurnItem::LoopLifecycle(loop_item) => ThreadItem::LoopLifecycle {
-                id: loop_item.id,
-                kind: loop_item.kind,
-                title: loop_item.title,
-                summary: loop_item.summary,
-                detail: loop_item.detail,
-                status: loop_item.status,
-                reason: loop_item.reason,
-                counts: loop_item.counts,
-                error: loop_item.error,
-                duration_ms: loop_item.duration_ms,
-                target_profile: loop_item.target_profile,
-            },
             CoreTurnItem::FileChange(file_change) => ThreadItem::FileChange {
                 id: file_change.id,
                 changes: convert_patch_changes(&file_change.changes),
@@ -1117,6 +1073,9 @@ pub struct ItemStartedNotification {
 pub struct ItemGuardianApprovalReviewStartedNotification {
     pub thread_id: String,
     pub turn_id: String,
+    /// Unix timestamp (in milliseconds) when this review started.
+    #[ts(type = "number")]
+    pub started_at_ms: i64,
     /// Stable identifier for this review.
     pub review_id: String,
     /// Identifier for the reviewed item or tool call when one exists.
@@ -1143,6 +1102,12 @@ pub struct ItemGuardianApprovalReviewStartedNotification {
 pub struct ItemGuardianApprovalReviewCompletedNotification {
     pub thread_id: String,
     pub turn_id: String,
+    /// Unix timestamp (in milliseconds) when this review started.
+    #[ts(type = "number")]
+    pub started_at_ms: i64,
+    /// Unix timestamp (in milliseconds) when this review completed.
+    #[ts(type = "number")]
+    pub completed_at_ms: i64,
     /// Stable identifier for this review.
     pub review_id: String,
     /// Identifier for the reviewed item or tool call when one exists.
@@ -1292,6 +1257,9 @@ pub struct CommandExecutionRequestApprovalParams {
     pub thread_id: String,
     pub turn_id: String,
     pub item_id: String,
+    /// Unix timestamp (in milliseconds) when this approval request started.
+    #[ts(type = "number")]
+    pub started_at_ms: i64,
     /// Unique identifier for this specific approval callback.
     ///
     /// For regular shell/unified_exec approvals, this is null.
@@ -1365,6 +1333,9 @@ pub struct FileChangeRequestApprovalParams {
     pub thread_id: String,
     pub turn_id: String,
     pub item_id: String,
+    /// Unix timestamp (in milliseconds) when this approval request started.
+    #[ts(type = "number")]
+    pub started_at_ms: i64,
     /// Optional explanatory reason (e.g. request for extra write access).
     #[ts(optional = nullable)]
     pub reason: Option<String>,

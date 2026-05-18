@@ -10,21 +10,21 @@ use crate::version::CODEX_CLI_VERSION;
 use chrono::DateTime;
 use chrono::Local;
 use codex_app_server_protocol::AskForApproval;
-use codex_git_utils::get_git_repo_root;
-use codex_ilhae::native_runtime_context;
 use codex_model_provider_info::WireApi;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::ActivePermissionProfileModification;
+use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
+use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
+use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_sandbox_summary::summarize_permission_profile;
 use ratatui::prelude::*;
 use ratatui::style::Stylize;
 use std::collections::BTreeSet;
-use std::path::Path;
 use std::path::PathBuf;
 use url::Url;
 
@@ -72,24 +72,6 @@ struct StatusRateLimitState {
 }
 
 #[derive(Debug, Clone)]
-struct StatusExecutionLoopData {
-    profile: String,
-    advisor_mode: String,
-    auto_mode: String,
-    team_mode: String,
-    kairos: String,
-    self_improvement: String,
-    knowledge: String,
-}
-
-#[derive(Debug, Clone)]
-struct StatusWorkflowSurfaceData {
-    tmux: String,
-    worktree: String,
-    remote: String,
-}
-
-#[derive(Debug, Clone)]
 pub(crate) struct StatusHistoryHandle {
     rate_limit_state: Arc<RwLock<StatusRateLimitState>>,
 }
@@ -123,8 +105,6 @@ struct StatusHistoryCell {
     permissions: String,
     agents_summary: Arc<RwLock<String>>,
     collaboration_mode: Option<String>,
-    workflow_surface: StatusWorkflowSurfaceData,
-    execution_loop: Option<StatusExecutionLoopData>,
     model_provider: Option<String>,
     account: Option<StatusAccountDisplay>,
     thread_name: Option<String>,
@@ -255,174 +235,6 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
 }
 
 impl StatusHistoryCell {
-    fn advisor_preset_label(advisor_preset: &str) -> &'static str {
-        match advisor_preset {
-            "risk_first" => "risk-first",
-            "plan_first" => "plan-first",
-            _ => "review-first",
-        }
-    }
-
-    fn pause_policy_label(pause_on_error: bool) -> &'static str {
-        if pause_on_error {
-            "pause on error"
-        } else {
-            "continue on error"
-        }
-    }
-
-    fn knowledge_mode_label(mode: &str) -> &'static str {
-        match mode {
-            "worker" => "worker",
-            "kairos" => "kairos",
-            "both" => "both",
-            _ => "off",
-        }
-    }
-
-    fn team_merge_policy_label(team_merge_policy: &str) -> &str {
-        match team_merge_policy {
-            "leader_only" => "leader-only",
-            "append_all" => "append-all",
-            other => other,
-        }
-    }
-
-    fn execution_loop_data() -> Option<StatusExecutionLoopData> {
-        let runtime = native_runtime_context()?;
-        let settings = runtime.settings_store.get();
-        let agent = &settings.agent;
-
-        let advisor_mode = format_runtime_mode_value(
-            agent.advisor_mode,
-            agent
-                .advisor_mode
-                .then(|| Self::advisor_preset_label(&agent.advisor_preset).to_string()),
-            "/advisor",
-        );
-
-        let auto_mode = format_runtime_mode_value(
-            agent.autonomous_mode,
-            agent.autonomous_mode.then(|| {
-                format!(
-                    "{} turns, {}m, {}",
-                    agent.auto_max_turns.max(1),
-                    agent.auto_timebox_minutes.max(1),
-                    Self::pause_policy_label(agent.auto_pause_on_error)
-                )
-            }),
-            "/auto",
-        );
-
-        let team_mode = format_runtime_mode_value(
-            agent.team_mode,
-            agent.team_mode.then(|| {
-                format!(
-                    "{}, retries {}, {}",
-                    Self::team_merge_policy_label(&agent.team_merge_policy),
-                    agent.team_max_retries.max(1),
-                    Self::pause_policy_label(agent.team_pause_on_error)
-                )
-            }),
-            "/team",
-        );
-
-        let kairos = format_scoped_runtime_mode_value(
-            agent.kairos_enabled,
-            agent
-                .task_scope
-                .as_deref()
-                .filter(|scope| !scope.trim().is_empty())
-                .map(ToString::to_string),
-            "/kairos",
-        );
-
-        let self_improvement = format_scoped_runtime_mode_value(
-            agent.self_improvement_enabled,
-            agent
-                .memory_scope
-                .as_deref()
-                .filter(|scope| !scope.trim().is_empty())
-                .map(ToString::to_string),
-            "/improve",
-        );
-
-        let knowledge = if agent.knowledge_mode == "off" {
-            "disabled".to_string()
-        } else {
-            let runtime = &agent.knowledge_runtime;
-            let result = if runtime.last_result.trim().is_empty() {
-                "idle".to_string()
-            } else {
-                runtime.last_result.clone()
-            };
-            let mut details = vec![
-                format!("mode {}", Self::knowledge_mode_label(&agent.knowledge_mode)),
-                format!("result {result}"),
-            ];
-            if let Some(driver) = runtime
-                .last_driver
-                .as_deref()
-                .filter(|driver| !driver.trim().is_empty())
-            {
-                details.push(format!("driver {driver}"));
-            }
-            if let Some(workspace_id) = runtime
-                .last_workspace_id
-                .as_deref()
-                .filter(|workspace_id| !workspace_id.trim().is_empty())
-            {
-                details.push(format!("workspace {workspace_id}"));
-            }
-            if runtime.last_issue_count > 0 {
-                details.push(format!("issues {}", runtime.last_issue_count));
-            }
-            if let Some(run_reason) = runtime
-                .last_run_reason
-                .as_deref()
-                .filter(|run_reason| !run_reason.trim().is_empty())
-            {
-                details.push(format!("trigger {run_reason}"));
-            }
-            format!("enabled ({})", details.join(", "))
-        };
-
-        Some(StatusExecutionLoopData {
-            profile: format_runtime_profile_value(
-                agent.active_profile.as_deref().unwrap_or("default"),
-            ),
-            advisor_mode,
-            auto_mode,
-            team_mode,
-            kairos,
-            self_improvement,
-            knowledge,
-        })
-    }
-
-    fn workflow_surface_data(cwd: &Path) -> StatusWorkflowSurfaceData {
-        StatusWorkflowSurfaceData {
-            tmux: if std::env::var_os("TMUX").is_some() {
-                "on".to_string()
-            } else {
-                "off".to_string()
-            },
-            worktree: Self::workflow_surface_worktree_status(cwd).to_string(),
-            remote: if native_runtime_context().is_some() {
-                "native".to_string()
-            } else {
-                "remote".to_string()
-            },
-        }
-    }
-
-    fn workflow_surface_worktree_status(cwd: &Path) -> &'static str {
-        let Some(repo_root) = get_git_repo_root(cwd) else {
-            return "none";
-        };
-        if repo_root == cwd { "repo" } else { "linked" }
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn new(
         config: &Config,
@@ -443,7 +255,8 @@ impl StatusHistoryCell {
         refreshing_rate_limits: bool,
     ) -> (Self, StatusHistoryHandle) {
         let approval_policy = AskForApproval::from(config.permissions.approval_policy.value());
-        let permission_profile = config.permissions.permission_profile();
+        let permission_profile = config.permissions.effective_permission_profile();
+        let workspace_roots = config.effective_workspace_roots();
         let mut config_entries = vec![
             ("workdir", config.cwd.display().to_string()),
             ("model", model_name.to_string()),
@@ -454,7 +267,11 @@ impl StatusHistoryCell {
             ),
             (
                 "sandbox",
-                summarize_permission_profile(&permission_profile, config.cwd.as_path()),
+                summarize_permission_profile(
+                    &permission_profile,
+                    &config.cwd,
+                    workspace_roots.as_slice(),
+                ),
             ),
         ];
         if config.model_provider.wire_api == WireApi::Responses {
@@ -478,7 +295,9 @@ impl StatusHistoryCell {
             .map(|(_, v)| v.clone())
             .unwrap_or_else(|| "<unknown>".to_string());
         let active_permission_profile = config.permissions.active_permission_profile();
-        let sandbox = status_permission_summary(&permission_profile, config.cwd.as_path());
+        let sandbox =
+            status_permission_summary(&permission_profile, &config.cwd, workspace_roots.as_slice());
+        let workspace_root_suffix = workspace_root_suffix(workspace_roots.as_slice(), &config.cwd);
         let approval = status_approval_label(approval_policy, config.approvals_reviewer, &approval);
         let permissions = status_permissions_label(
             active_permission_profile.as_ref(),
@@ -486,10 +305,9 @@ impl StatusHistoryCell {
             approval_policy,
             &sandbox,
             &approval,
+            workspace_root_suffix.as_deref(),
         );
         let model_provider = format_model_provider(config, runtime_model_provider_base_url);
-        let execution_loop = Self::execution_loop_data();
-        let workflow_surface = Self::workflow_surface_data(&config.cwd);
         let account = compose_account_display(account_display);
         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
         let forked_from = forked_from.map(|id| id.to_string());
@@ -528,8 +346,6 @@ impl StatusHistoryCell {
                 directory: config.cwd.to_path_buf(),
                 permissions,
                 collaboration_mode: collaboration_mode.map(ToString::to_string),
-                workflow_surface,
-                execution_loop,
                 model_provider,
                 account,
                 thread_name,
@@ -733,8 +549,12 @@ impl StatusHistoryCell {
     }
 }
 
-fn status_permission_summary(permission_profile: &PermissionProfile, cwd: &Path) -> String {
-    let summary = summarize_permission_profile(permission_profile, cwd);
+fn status_permission_summary(
+    permission_profile: &PermissionProfile,
+    cwd: &AbsolutePathBuf,
+    workspace_roots: &[AbsolutePathBuf],
+) -> String {
+    let summary = summarize_permission_profile(permission_profile, cwd, workspace_roots);
     if let Some(details) = summary.strip_prefix("read-only") {
         if details.contains("(network access enabled)") {
             return "read-only with network access".to_string();
@@ -753,57 +573,68 @@ fn status_permission_summary(permission_profile: &PermissionProfile, cwd: &Path)
     summary
 }
 
+fn workspace_root_suffix(
+    workspace_roots: &[AbsolutePathBuf],
+    cwd: &AbsolutePathBuf,
+) -> Option<String> {
+    let extra_roots = workspace_roots
+        .iter()
+        .filter(|root| *root != cwd)
+        .map(|root| root.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    if extra_roots.is_empty() {
+        None
+    } else {
+        Some(format!(" [{}]", extra_roots.join(", ")))
+    }
+}
+
 fn status_permissions_label(
     active_permission_profile: Option<&ActivePermissionProfile>,
     permission_profile: &PermissionProfile,
     approval_policy: AskForApproval,
     sandbox: &str,
     approval: &str,
+    workspace_root_suffix: Option<&str>,
 ) -> String {
     let active_id = active_permission_profile.map(|active| active.id.as_str());
-    let writable_root_modifications = active_permission_profile
-        .map(|active| {
-            active
-                .modifications
-                .iter()
-                .filter(|modification| {
-                    matches!(
-                        modification,
-                        ActivePermissionProfileModification::AdditionalWritableRoot { .. }
-                    )
-                })
-                .count()
-        })
-        .unwrap_or(0);
-    let modification_suffix = match writable_root_modifications {
-        0 => String::new(),
-        1 => " + 1 writable root".to_string(),
-        count => format!(" + {count} writable roots"),
-    };
     match active_id {
-        Some(":read-only") => {
+        Some(BUILT_IN_PERMISSION_PROFILE_READ_ONLY) => {
             let label = if sandbox == "read-only with network access" {
                 "Read Only with network access"
             } else {
                 "Read Only"
             };
-            return format!("{label}{modification_suffix} ({approval})");
+            return format!("{label} ({approval})");
         }
-        Some(":workspace") => match sandbox {
-            "workspace" => return format!("Workspace{modification_suffix} ({approval})"),
+        Some(BUILT_IN_PERMISSION_PROFILE_WORKSPACE) => match sandbox {
+            "workspace" => {
+                return format!(
+                    "Workspace{} ({approval})",
+                    workspace_root_suffix.unwrap_or("")
+                );
+            }
             "workspace with network access" => {
-                return format!("Workspace with network access{modification_suffix} ({approval})");
+                return format!(
+                    "Workspace with network access{} ({approval})",
+                    workspace_root_suffix.unwrap_or("")
+                );
             }
             _ => {}
         },
-        Some(":danger-no-sandbox") if permission_profile == &PermissionProfile::Disabled => {
+        Some(BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS)
+            if permission_profile == &PermissionProfile::Disabled =>
+        {
             return if approval_policy == AskForApproval::Never {
                 "Full Access".to_string()
             } else {
                 format!("No Sandbox ({approval})")
             };
         }
-        Some(id) => return format!("Profile {id}{modification_suffix} ({sandbox}, {approval})"),
+        Some(id) => {
+            let sandbox = decorate_workspace_sandbox_label(sandbox, workspace_root_suffix);
+            return format!("Profile {id} ({sandbox}, {approval})");
+        }
         None => {}
     }
 
@@ -811,14 +642,25 @@ fn status_permissions_label(
         return format!("Read Only ({approval})");
     }
     if approval_policy == AskForApproval::OnRequest && sandbox == "workspace" {
-        return format!("Workspace ({approval})");
+        return format!(
+            "Workspace{} ({approval})",
+            workspace_root_suffix.unwrap_or("")
+        );
     }
     if approval_policy == AskForApproval::Never
         && permission_profile == &PermissionProfile::Disabled
     {
         return "Full Access".to_string();
     }
+    let sandbox = decorate_workspace_sandbox_label(sandbox, workspace_root_suffix);
     format!("Custom ({sandbox}, {approval})")
+}
+
+fn decorate_workspace_sandbox_label(sandbox: &str, workspace_root_suffix: Option<&str>) -> String {
+    match workspace_root_suffix {
+        Some(suffix) if sandbox.starts_with("workspace") => format!("{sandbox}{suffix}"),
+        _ => sandbox.to_string(),
+    }
 }
 
 fn status_approval_label(
@@ -840,7 +682,7 @@ impl HistoryCell for StatusHistoryCell {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from(vec![
             Span::from(format!("{}>_ ", FieldFormatter::INDENT)).dim(),
-            Span::from("Ilhae").bold(),
+            Span::from("OpenAI Codex").bold(),
             Span::from(" ").dim(),
             Span::from(format!("(v{CODEX_CLI_VERSION})")).dim(),
         ]));
@@ -899,18 +741,6 @@ impl HistoryCell for StatusHistoryCell {
         if self.collaboration_mode.is_some() {
             push_label(&mut labels, &mut seen, "Collaboration mode");
         }
-        push_label(&mut labels, &mut seen, "TMUX");
-        push_label(&mut labels, &mut seen, "Worktree");
-        push_label(&mut labels, &mut seen, "Remote");
-        if self.execution_loop.is_some() {
-            push_label(&mut labels, &mut seen, "Runtime profile");
-            push_label(&mut labels, &mut seen, "Advisor");
-            push_label(&mut labels, &mut seen, "Auto mode");
-            push_label(&mut labels, &mut seen, "Team mode");
-            push_label(&mut labels, &mut seen, "Kairos");
-            push_label(&mut labels, &mut seen, "Self-improvement");
-            push_label(&mut labels, &mut seen, "Knowledge loop");
-        }
         push_label(&mut labels, &mut seen, "Token usage");
         if self.token_usage.context_window.is_some() {
             push_label(&mut labels, &mut seen, "Context window");
@@ -964,42 +794,6 @@ impl HistoryCell for StatusHistoryCell {
         }
         if let Some(collab_mode) = self.collaboration_mode.as_ref() {
             lines.push(formatter.line("Collaboration mode", vec![Span::from(collab_mode.clone())]));
-        }
-        lines.push(formatter.line("TMUX", vec![Span::from(self.workflow_surface.tmux.clone())]));
-        lines.push(formatter.line(
-            "Worktree",
-            vec![Span::from(self.workflow_surface.worktree.clone())],
-        ));
-        lines.push(formatter.line(
-            "Remote",
-            vec![Span::from(self.workflow_surface.remote.clone())],
-        ));
-        if let Some(execution_loop) = self.execution_loop.as_ref() {
-            lines.push(formatter.line(
-                "Runtime profile",
-                vec![Span::from(execution_loop.profile.clone())],
-            ));
-            lines.push(formatter.line(
-                "Advisor",
-                vec![Span::from(execution_loop.advisor_mode.clone())],
-            ));
-            lines.push(formatter.line(
-                "Auto mode",
-                vec![Span::from(execution_loop.auto_mode.clone())],
-            ));
-            lines.push(formatter.line(
-                "Team mode",
-                vec![Span::from(execution_loop.team_mode.clone())],
-            ));
-            lines.push(formatter.line("Kairos", vec![Span::from(execution_loop.kairos.clone())]));
-            lines.push(formatter.line(
-                "Self-improvement",
-                vec![Span::from(execution_loop.self_improvement.clone())],
-            ));
-            lines.push(formatter.line(
-                "Knowledge loop",
-                vec![Span::from(execution_loop.knowledge.clone())],
-            ));
         }
         if let Some(session) = self.session_id.as_ref() {
             lines.push(formatter.line("Session", vec![Span::from(session.clone())]));
@@ -1071,80 +865,4 @@ fn sanitize_base_url(raw: &str) -> Option<String> {
     url.set_query(None);
     url.set_fragment(None);
     Some(url.to_string().trim_end_matches('/').to_string()).filter(|value| !value.is_empty())
-}
-
-fn format_runtime_profile_value(profile: &str) -> String {
-    format!("{profile} (use /profile)")
-}
-
-fn format_runtime_mode_value(enabled: bool, detail: Option<String>, command: &str) -> String {
-    if !enabled {
-        return format!("disabled (use {command})");
-    }
-
-    match detail {
-        Some(detail) => format!("enabled ({detail}; use {command})"),
-        None => format!("enabled (use {command})"),
-    }
-}
-
-fn format_scoped_runtime_mode_value(enabled: bool, scope: Option<String>, command: &str) -> String {
-    if !enabled {
-        return format!("disabled (use {command})");
-    }
-
-    match scope {
-        Some(scope) => format!("enabled (scope: {scope}; use {command})"),
-        None => format!("enabled (use {command})"),
-    }
-}
-
-#[cfg(test)]
-fn format_workflow_surface_value(tmux: &str, worktree: &str, remote: &str) -> String {
-    format!("wf:tmux:{tmux} worktree:{worktree} remote:{remote}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn runtime_control_hints_are_spelled_out_in_status_values() {
-        assert_eq!(
-            format_runtime_profile_value("default"),
-            "default (use /profile)"
-        );
-        assert_eq!(
-            format_runtime_mode_value(
-                /*enabled*/ true,
-                Some("risk-first".to_string()),
-                "/advisor"
-            ),
-            "enabled (risk-first; use /advisor)"
-        );
-        assert_eq!(
-            format_runtime_mode_value(/*enabled*/ false, None, "/auto"),
-            "disabled (use /auto)"
-        );
-        assert_eq!(
-            format_scoped_runtime_mode_value(
-                /*enabled*/ true,
-                Some("repo".to_string()),
-                "/kairos"
-            ),
-            "enabled (scope: repo; use /kairos)"
-        );
-        assert_eq!(
-            format_scoped_runtime_mode_value(/*enabled*/ false, None, "/improve"),
-            "disabled (use /improve)"
-        );
-    }
-
-    #[test]
-    fn workflow_surface_summary_is_structured() {
-        assert_eq!(
-            format_workflow_surface_value("on", "linked", "native"),
-            "wf:tmux:on worktree:linked remote:native"
-        );
-    }
 }

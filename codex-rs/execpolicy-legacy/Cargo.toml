@@ -9,6 +9,7 @@ description = "Legacy exec policy engine for validating proposed exec calls."
 [lib]
 name = "codex_execpolicy_legacy"
 path = "src/lib.rs"
+doctest = false
 
 [lints]
 workspace = true

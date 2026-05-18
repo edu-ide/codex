@@ -1,11 +1,7 @@
 use codex_protocol::config_types::WebSearchConfig;
-use codex_protocol::config_types::WebSearchEngine;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::openai_models::WebSearchToolType;
-use codex_tools::AdditionalProperties;
-use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
-use std::collections::BTreeMap;
 
 const WEB_SEARCH_TEXT_AND_IMAGE_CONTENT_TYPES: [&str; 2] = ["text", "image"];
 
@@ -27,10 +23,6 @@ pub fn create_web_search_tool(options: WebSearchToolOptions<'_>) -> Option<ToolS
         Some(WebSearchMode::Live) => Some(true),
         Some(WebSearchMode::Disabled) | None => None,
     }?;
-
-    if should_use_local_web_search(options.web_search_config) {
-        return Some(create_local_web_search_tool());
-    }
 
     let search_content_types = match options.web_search_tool_type {
         WebSearchToolType::Text => None,
@@ -54,46 +46,6 @@ pub fn create_web_search_tool(options: WebSearchToolOptions<'_>) -> Option<ToolS
             .web_search_config
             .and_then(|config| config.search_context_size),
         search_content_types,
-    })
-}
-
-fn should_use_local_web_search(config: Option<&WebSearchConfig>) -> bool {
-    let Some(config) = config else {
-        return false;
-    };
-
-    matches!(
-        config.engine,
-        Some(WebSearchEngine::Duckduckgo | WebSearchEngine::Searxng)
-    ) || config
-        .searxng_url
-        .as_deref()
-        .is_some_and(|url| !url.trim().is_empty())
-        || config.use_duckduckgo_fallback.is_some()
-}
-
-fn create_local_web_search_tool() -> ToolSpec {
-    let mut properties = BTreeMap::new();
-    properties.insert(
-        "query".to_string(),
-        codex_tools::JsonSchema::string(Some(
-            "Search query. Extract dates, times, scores, names, numbers, prices, and facts. Be specific, direct, and detailed.".to_string(),
-        )),
-    );
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "web_search".to_string(),
-        description:
-            "Perform a web search using DuckDuckGo or SearXNG and read the content using Jina.ai."
-                .to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: codex_tools::JsonSchema::object(
-            properties,
-            Some(vec!["query".to_string()]),
-            Some(AdditionalProperties::Boolean(false)),
-        ),
-        output_schema: None,
     })
 }
 

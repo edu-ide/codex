@@ -46,7 +46,6 @@ use crate::key_hint::KeyBinding;
 use crate::render::line_utils::prefix_lines;
 use crate::status::format_tokens_compact;
 use crate::ui_consts::FOOTER_INDENT_COLS;
-use codex_ilhae::native_runtime_context;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -791,13 +790,6 @@ pub(crate) fn passive_footer_status_line(props: &FooterProps) -> Option<Line<'st
         }
     }
 
-    if let Some(runtime_modes) = runtime_mode_footer_line()
-        && let Some(existing) = line.as_mut()
-    {
-        existing.spans.push(" · ".into());
-        existing.spans.extend(runtime_modes.spans);
-    }
-
     line
 }
 
@@ -823,107 +815,6 @@ pub(crate) fn shows_passive_footer_line(props: &FooterProps) -> bool {
 /// feature is enabled and the current mode allows contextual footer content.
 pub(crate) fn uses_passive_footer_status_layout(props: &FooterProps) -> bool {
     props.status_line_enabled && shows_passive_footer_line(props)
-}
-
-fn runtime_mode_footer_line() -> Option<Line<'static>> {
-    let runtime = native_runtime_context()?;
-    let settings = runtime.settings_store.get();
-    let agent = &settings.agent;
-
-    let mut parts = Vec::new();
-    parts.push(format!(
-        "pf:{}",
-        agent.active_profile.as_deref().unwrap_or("default")
-    ));
-
-    if agent.advisor_mode {
-        parts.push(format!(
-            "adv:{}",
-            advisor_preset_short_label(&agent.advisor_preset)
-        ));
-    }
-
-    if agent.autonomous_mode {
-        parts.push(format!(
-            "au:{}t/{}m/{}",
-            agent.auto_max_turns.max(1),
-            agent.auto_timebox_minutes.max(1),
-            pause_policy_short_label(agent.auto_pause_on_error)
-        ));
-    }
-
-    if agent.team_mode {
-        parts.push(format!(
-            "tm:{}/{}/{}",
-            team_merge_policy_short_label(&agent.team_merge_policy),
-            agent.team_max_retries.max(1),
-            pause_policy_short_label(agent.team_pause_on_error)
-        ));
-    }
-
-    if agent.kairos_enabled {
-        parts.push("kx".to_string());
-    }
-
-    if !agent.thinking_mode.is_empty() {
-        parts.push(format!("ls:{}", agent.thinking_mode));
-    }
-
-    if agent.self_improvement_enabled {
-        parts.push("im".to_string());
-    }
-
-    if agent.knowledge_mode != "off" {
-        let runtime = &agent.knowledge_runtime;
-        let mut knowledge = format!(
-            "kb:{}:{}",
-            knowledge_mode_short_label(&agent.knowledge_mode),
-            knowledge_result_short_label(&runtime.last_result)
-        );
-        if runtime.last_issue_count > 0 {
-            knowledge.push_str(&format!("/{}i", runtime.last_issue_count));
-        }
-        parts.push(knowledge);
-    }
-
-    Some(Line::from(format!("ilhae {}", parts.join(" "))).dim())
-}
-
-fn advisor_preset_short_label(advisor_preset: &str) -> &'static str {
-    match advisor_preset {
-        "risk_first" => "risk",
-        "plan_first" => "plan",
-        _ => "review",
-    }
-}
-
-fn team_merge_policy_short_label(team_merge_policy: &str) -> &'static str {
-    match team_merge_policy {
-        "leader_only" => "leader",
-        "append_all" => "append",
-        _ => "custom",
-    }
-}
-
-fn pause_policy_short_label(pause_on_error: bool) -> &'static str {
-    if pause_on_error { "pause" } else { "cont" }
-}
-
-fn knowledge_mode_short_label(mode: &str) -> &'static str {
-    match mode {
-        "worker" => "wk",
-        "kairos" => "kx",
-        "both" => "both",
-        _ => "off",
-    }
-}
-
-fn knowledge_result_short_label(result: &str) -> &'static str {
-    match result {
-        "ok" => "ok",
-        "error" => "err",
-        _ => "idle",
-    }
 }
 
 pub(crate) fn footer_line_width(
@@ -1226,7 +1117,7 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
             condition: DisplayCondition::Always,
         }],
         prefix: "",
-        label: " for /status and runtime controls",
+        label: " for commands",
     },
     ShortcutDescriptor {
         id: ShortcutId::ShellCommands,
@@ -2122,37 +2013,5 @@ mod tests {
             .key;
 
         assert_eq!(actual_key, expected_key);
-    }
-
-    #[test]
-    fn commands_shortcut_mentions_status_and_runtime_controls() {
-        let descriptor = SHORTCUTS
-            .iter()
-            .find(|descriptor| descriptor.id == ShortcutId::Commands)
-            .expect("commands shortcut");
-
-        let rendered = descriptor
-            .overlay_entry(ShortcutsState {
-                use_shift_enter_hint: false,
-                esc_backtrack_hint: false,
-                is_wsl: false,
-                collaboration_modes_enabled: false,
-                key_hints: FooterKeyHints::default_bindings(),
-            })
-            .expect("commands overlay entry");
-        let text = rendered
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect::<String>();
-
-        assert!(
-            text.contains("/status"),
-            "expected commands shortcut to mention /status, got: {text}"
-        );
-        assert!(
-            text.contains("runtime"),
-            "expected commands shortcut to mention runtime controls, got: {text}"
-        );
     }
 }

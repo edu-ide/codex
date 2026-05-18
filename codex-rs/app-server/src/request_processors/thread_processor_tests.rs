@@ -62,6 +62,9 @@ mod thread_processor_behavior_tests {
     use codex_model_provider_info::ModelProviderInfo;
     use codex_model_provider_info::WireApi;
     use codex_protocol::ThreadId;
+    use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
+    use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
+    use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
     use codex_protocol::openai_models::ReasoningEffort;
     use codex_protocol::permissions::FileSystemAccessMode;
     use codex_protocol::permissions::FileSystemPath;
@@ -90,10 +93,6 @@ mod thread_processor_behavior_tests {
             description: "test".to_string(),
             input_schema: json!({"type": "null"}),
             defer_loading: false,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         let err = validate_dynamic_tools(&tools).expect_err("invalid schema");
         assert!(err.contains("my_tool"), "unexpected error: {err}");
@@ -108,10 +107,6 @@ mod thread_processor_behavior_tests {
             // Missing `type` is common; core sanitizes these to a supported schema.
             input_schema: json!({"properties": {}}),
             defer_loading: false,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         validate_dynamic_tools(&tools).expect("valid schema");
     }
@@ -131,10 +126,6 @@ mod thread_processor_behavior_tests {
                 "additionalProperties": false
             }),
             defer_loading: false,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         validate_dynamic_tools(&tools).expect("valid schema");
     }
@@ -152,10 +143,6 @@ mod thread_processor_behavior_tests {
                     "additionalProperties": false
                 }),
                 defer_loading: true,
-                tags: None,
-                linked_files: None,
-                version: None,
-                compatibility: None,
             },
             ApiDynamicToolSpec {
                 namespace: Some("other_app".to_string()),
@@ -167,10 +154,6 @@ mod thread_processor_behavior_tests {
                     "additionalProperties": false
                 }),
                 defer_loading: true,
-                tags: None,
-                linked_files: None,
-                version: None,
-                compatibility: None,
             },
         ];
         validate_dynamic_tools(&tools).expect("valid schema");
@@ -188,10 +171,6 @@ mod thread_processor_behavior_tests {
                 "additionalProperties": false
             }),
             defer_loading: true,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         validate_dynamic_tools(&tools).expect("valid schema");
     }
@@ -209,10 +188,6 @@ mod thread_processor_behavior_tests {
                     "additionalProperties": false
                 }),
                 defer_loading: true,
-                tags: None,
-                linked_files: None,
-                version: None,
-                compatibility: None,
             },
             ApiDynamicToolSpec {
                 namespace: Some("codex_app".to_string()),
@@ -224,10 +199,6 @@ mod thread_processor_behavior_tests {
                     "additionalProperties": false
                 }),
                 defer_loading: true,
-                tags: None,
-                linked_files: None,
-                version: None,
-                compatibility: None,
             },
         ];
         let err = validate_dynamic_tools(&tools).expect_err("duplicate name");
@@ -243,6 +214,7 @@ mod thread_processor_behavior_tests {
                 images: None,
                 local_images: Vec::new(),
                 text_elements: Vec::new(),
+                ..Default::default()
             },
         ))];
         let active_turn = Turn {
@@ -284,10 +256,6 @@ mod thread_processor_behavior_tests {
                 "additionalProperties": false
             }),
             defer_loading: false,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         let err = validate_dynamic_tools(&tools).expect_err("empty namespace");
         assert!(err.contains("my_tool"), "unexpected error: {err}");
@@ -306,10 +274,6 @@ mod thread_processor_behavior_tests {
                 "additionalProperties": false
             }),
             defer_loading: false,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         let err = validate_dynamic_tools(&tools).expect_err("reserved namespace");
         assert!(err.contains("my_tool"), "unexpected error: {err}");
@@ -328,10 +292,6 @@ mod thread_processor_behavior_tests {
                 "additionalProperties": false
             }),
             defer_loading: false,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         let err = validate_dynamic_tools(&tools).expect_err("invalid name");
         assert!(err.contains("lookup.ticket"), "unexpected error: {err}");
@@ -353,10 +313,6 @@ mod thread_processor_behavior_tests {
                 "additionalProperties": false
             }),
             defer_loading: true,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         let err = validate_dynamic_tools(&tools).expect_err("invalid namespace");
         assert!(err.contains("codex.app"), "unexpected error: {err}");
@@ -379,10 +335,6 @@ mod thread_processor_behavior_tests {
                 "additionalProperties": false
             }),
             defer_loading: false,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         let err = validate_dynamic_tools(&tools).expect_err("name too long");
         assert!(err.contains("at most 128"), "unexpected error: {err}");
@@ -402,10 +354,6 @@ mod thread_processor_behavior_tests {
                 "additionalProperties": false
             }),
             defer_loading: true,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         let err = validate_dynamic_tools(&tools).expect_err("namespace too long");
         assert!(err.contains("at most 64"), "unexpected error: {err}");
@@ -424,10 +372,6 @@ mod thread_processor_behavior_tests {
                 "additionalProperties": false
             }),
             defer_loading: true,
-            tags: None,
-            linked_files: None,
-            version: None,
-            compatibility: None,
         }];
         let err = validate_dynamic_tools(&tools).expect_err("reserved Responses namespace");
         assert!(err.contains("functions"), "unexpected error: {err}");
@@ -469,8 +413,7 @@ mod thread_processor_behavior_tests {
             history: None,
         };
 
-        let summary =
-            summary_from_stored_thread(stored_thread, "fallback").expect("summary should exist");
+        let summary = summary_from_stored_thread(stored_thread, "fallback");
 
         assert_eq!(
             summary.timestamp.as_deref(),
@@ -528,14 +471,16 @@ mod thread_processor_behavior_tests {
         ));
         assert!(requested_permissions_trust_project(
             &ConfigOverrides {
-                default_permissions: Some(":workspace".to_string()),
+                default_permissions: Some(BUILT_IN_PERMISSION_PROFILE_WORKSPACE.to_string()),
                 ..Default::default()
             },
             cwd.as_path()
         ));
         assert!(requested_permissions_trust_project(
             &ConfigOverrides {
-                default_permissions: Some(":danger-no-sandbox".to_string()),
+                default_permissions: Some(
+                    BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS.to_string()
+                ),
                 ..Default::default()
             },
             cwd.as_path()
@@ -549,7 +494,7 @@ mod thread_processor_behavior_tests {
         ));
         assert!(!requested_permissions_trust_project(
             &ConfigOverrides {
-                default_permissions: Some(":read-only".to_string()),
+                default_permissions: Some(BUILT_IN_PERMISSION_PROFILE_READ_ONLY.to_string()),
                 ..Default::default()
             },
             cwd.as_path()
@@ -643,6 +588,7 @@ mod thread_processor_behavior_tests {
             temp_dir.path().to_path_buf(),
             Vec::new(),
             LoaderOverrides::default(),
+            /*strict_config*/ false,
             CloudRequirementsLoader::default(),
             Arg0DispatchPaths::default(),
             Arc::new(StaticThreadConfigLoader::new(vec![
@@ -691,6 +637,7 @@ mod thread_processor_behavior_tests {
             model_provider: None,
             service_tier: Some(Some("priority".to_string())),
             cwd: None,
+            runtime_workspace_roots: None,
             approval_policy: None,
             approvals_reviewer: None,
             sandbox: None,
@@ -711,6 +658,8 @@ mod thread_processor_behavior_tests {
             permission_profile: codex_protocol::models::PermissionProfile::Disabled,
             active_permission_profile: None,
             cwd,
+            workspace_roots: Vec::new(),
+            profile_workspace_roots: Vec::new(),
             ephemeral: false,
             reasoning_effort: None,
             personality: None,
@@ -1147,6 +1096,7 @@ mod thread_processor_behavior_tests {
             conversation_id,
             PathBuf::from("/tmp/rollout.jsonl"),
             Some("hi".to_string()),
+            /*preview*/ None,
             "2025-09-05T16:53:11Z".to_string(),
             "2025-09-05T16:53:12Z".to_string(),
             "test-provider".to_string(),
@@ -1176,7 +1126,9 @@ mod thread_processor_behavior_tests {
         let connection = ConnectionId(1);
         let (cancel_tx, cancel_rx) = oneshot::channel();
 
-        manager.connection_initialized(connection).await;
+        manager
+            .connection_initialized(connection, ConnectionCapabilities::default())
+            .await;
         manager
             .try_ensure_connection_subscribed(
                 thread_id, connection, /*experimental_raw_events*/ false,
@@ -1219,8 +1171,12 @@ mod thread_processor_behavior_tests {
         let connection_b = ConnectionId(2);
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
 
-        manager.connection_initialized(connection_a).await;
-        manager.connection_initialized(connection_b).await;
+        manager
+            .connection_initialized(connection_a, ConnectionCapabilities::default())
+            .await;
+        manager
+            .connection_initialized(connection_b, ConnectionCapabilities::default())
+            .await;
         manager
             .try_ensure_connection_subscribed(
                 thread_id,
@@ -1264,8 +1220,12 @@ mod thread_processor_behavior_tests {
         let connection_a = ConnectionId(1);
         let connection_b = ConnectionId(2);
 
-        manager.connection_initialized(connection_a).await;
-        manager.connection_initialized(connection_b).await;
+        manager
+            .connection_initialized(connection_a, ConnectionCapabilities::default())
+            .await;
+        manager
+            .connection_initialized(connection_b, ConnectionCapabilities::default())
+            .await;
         manager
             .try_ensure_connection_subscribed(
                 thread_id,
@@ -1310,7 +1270,9 @@ mod thread_processor_behavior_tests {
         let thread_id = ThreadId::from_string("ad7f0408-99b8-4f6e-a46f-bd0eec433370")?;
         let connection = ConnectionId(1);
 
-        manager.connection_initialized(connection).await;
+        manager
+            .connection_initialized(connection, ConnectionCapabilities::default())
+            .await;
         let threads_to_unload = manager.remove_connection(connection).await;
         assert_eq!(threads_to_unload, Vec::<ThreadId>::new());
 
@@ -1323,6 +1285,81 @@ mod thread_processor_behavior_tests {
                 .is_none()
         );
         assert!(!manager.has_subscribers(thread_id).await);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn first_attestation_capable_connection_for_thread_only_uses_thread_subscribers()
+    -> Result<()> {
+        let manager = ThreadStateManager::new();
+        let thread_id = ThreadId::from_string("dfbd9a95-2f44-470a-8bd8-1cfc04efc243")?;
+        let other_thread_id = ThreadId::from_string("6c9a74e4-5e59-479e-90bf-5c5798bb50aa")?;
+        let unrelated_supported_connection = ConnectionId(1);
+        let earlier_supported_connection = ConnectionId(2);
+        let later_supported_connection = ConnectionId(3);
+        let unsupported_connection = ConnectionId(4);
+
+        manager
+            .connection_initialized(
+                unrelated_supported_connection,
+                ConnectionCapabilities {
+                    request_attestation: true,
+                },
+            )
+            .await;
+        manager
+            .connection_initialized(
+                earlier_supported_connection,
+                ConnectionCapabilities {
+                    request_attestation: true,
+                },
+            )
+            .await;
+        manager
+            .connection_initialized(
+                later_supported_connection,
+                ConnectionCapabilities {
+                    request_attestation: true,
+                },
+            )
+            .await;
+        manager
+            .connection_initialized(unsupported_connection, ConnectionCapabilities::default())
+            .await;
+
+        assert!(
+            manager
+                .try_add_connection_to_thread(other_thread_id, unrelated_supported_connection)
+                .await
+        );
+        assert!(
+            manager
+                .try_add_connection_to_thread(thread_id, later_supported_connection)
+                .await
+        );
+        assert!(
+            manager
+                .try_add_connection_to_thread(thread_id, earlier_supported_connection)
+                .await
+        );
+        assert!(
+            manager
+                .try_add_connection_to_thread(thread_id, unsupported_connection)
+                .await
+        );
+
+        assert_eq!(
+            manager
+                .first_attestation_capable_connection_for_thread(thread_id)
+                .await,
+            Some(earlier_supported_connection)
+        );
+        assert_eq!(
+            manager
+                .first_attestation_capable_connection_for_thread(other_thread_id)
+                .await,
+            Some(unrelated_supported_connection)
+        );
         Ok(())
     }
 }
