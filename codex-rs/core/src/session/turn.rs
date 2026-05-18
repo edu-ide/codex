@@ -1060,12 +1060,14 @@ async fn run_sampling_request(
                 .await
                 .for_prompt(&turn_context.model_info.input_modalities)
         };
-        let prompt = build_prompt(
+        let mut prompt = build_prompt(
             prompt_input,
             router.as_ref(),
             turn_context.as_ref(),
             base_instructions.clone(),
         );
+        sess.filter_thread_goal_continuation_tools(turn_context.as_ref(), &mut prompt.tools)
+            .await;
         let err = match try_run_sampling_request(
             tool_runtime.clone(),
             Arc::clone(&sess),

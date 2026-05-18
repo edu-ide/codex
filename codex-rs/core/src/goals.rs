@@ -33,6 +33,7 @@ use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::validate_thread_goal_objective;
 use codex_rollout::state_db::reconcile_rollout;
 use codex_thread_store::LocalThreadStore;
+use codex_tools::ToolSpec;
 use codex_utils_template::Template;
 use futures::future::BoxFuture;
 use std::sync::Arc;
@@ -995,6 +996,24 @@ impl Session {
             "update_goal cannot mark a superloop goal complete during the {}; only the execution loop may complete the goal. Leave the goal active so the remaining plan, research, decision, wiki, log, improvement, cleanup, and execution phases can run.",
             continuation_turn.phase.id_part()
         ))
+    }
+
+    pub(crate) async fn filter_thread_goal_continuation_tools(
+        &self,
+        turn_context: &TurnContext,
+        tools: &mut Vec<ToolSpec>,
+    ) {
+        let continuation_turn = self.goal_runtime.continuation_turn.lock().await;
+        let Some(continuation_turn) = continuation_turn
+            .as_ref()
+            .filter(|continuation_turn| continuation_turn.turn_id == turn_context.sub_id)
+        else {
+            return;
+        };
+        if continuation_turn.phase == GoalContinuationPhase::Execution {
+            return;
+        }
+        tools.retain(|tool| tool.name() != UPDATE_GOAL_TOOL_NAME);
     }
 
     async fn clear_reserved_goal_continuation_turn(&self, turn_state: &Arc<Mutex<TurnState>>) {

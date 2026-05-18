@@ -8596,6 +8596,30 @@ async fn superloop_plan_loop_cannot_mark_goal_complete() -> anyhow::Result<()> {
     })
     .await??;
 
+    let requests = responses.requests();
+    let plan_request = requests
+        .first()
+        .expect("plan loop request should be captured");
+    let plan_request_body = plan_request.body_json();
+    let tools = plan_request_body["tools"]
+        .as_array()
+        .expect("request should include a tools array");
+    let exposes_update_goal = tools.iter().any(|tool| {
+        tool.get("name").and_then(serde_json::Value::as_str) == Some("update_goal")
+            || tool
+                .get("tools")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|children| {
+                    children.iter().any(|child| {
+                        child.get("name").and_then(serde_json::Value::as_str) == Some("update_goal")
+                    })
+                })
+    });
+    assert!(
+        !exposes_update_goal,
+        "plan loop should not expose update_goal as an available tool: {tools:?}"
+    );
+
     let complete_output = responses
         .function_call_output_text("call-complete-goal")
         .expect("complete tool output should be sent to the model");
