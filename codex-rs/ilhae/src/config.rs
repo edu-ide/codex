@@ -1590,9 +1590,73 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
     root
 }
 
+const ILHAE_CODEX_HOME_MANAGED_TOP_LEVEL_KEYS: &[&str] = &["model", "model_provider", "profile"];
+
+fn sanitize_ilhae_codex_home_user_config(codex_home: &Path) -> Result<(), String> {
+    let path = codex_home.join("config.toml");
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Ok(());
+    };
+
+    let sanitized = strip_ilhae_codex_home_managed_overrides(&content);
+    if sanitized != content {
+        std::fs::write(path, sanitized).map_err(|err| err.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn strip_ilhae_codex_home_managed_overrides(content: &str) -> String {
+    let mut output = String::with_capacity(content.len());
+    let mut in_root_table = true;
+
+    for line in content.split_inclusive('\n') {
+        let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
+        let line_without_cr = line_without_newline
+            .strip_suffix('\r')
+            .unwrap_or(line_without_newline);
+        let trimmed = line_without_cr.trim_start();
+        if trimmed.starts_with('[') {
+            in_root_table = false;
+        }
+
+        let should_remove = in_root_table
+            && toml_assignment_key(trimmed)
+                .is_some_and(|key| ILHAE_CODEX_HOME_MANAGED_TOP_LEVEL_KEYS.contains(&key));
+        if !should_remove {
+            output.push_str(line);
+        }
+    }
+
+    output
+}
+
+fn toml_assignment_key(line: &str) -> Option<&str> {
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+
+    let eq_index = line.find('=')?;
+    let key = line[..eq_index].trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    let key = key
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            key.strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
+        .unwrap_or(key);
+    Some(key)
+}
+
 pub fn prepare_ilhae_codex_home() -> Result<PathBuf, String> {
     let codex_home = resolve_ilhae_codex_home_dir();
     std::fs::create_dir_all(&codex_home).map_err(|err| err.to_string())?;
+    sanitize_ilhae_codex_home_user_config(&codex_home)?;
 
     let ilhae_config_dir = resolve_ilhae_config_dir();
     let codex_config_dir = dirs::home_dir()
@@ -2342,6 +2406,47 @@ oauth_resource = "https://fortune.ugot.uk/mcp"
                 .expect("read codex credentials"),
             r#"{"codex":"mcp"}"#
         );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_removes_stale_runtime_overrides() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let config_toml = r#"
+[profile]
+active = "qwen3.6-27b-mtp-ud-q4-k-xl"
+
+[profiles.qwen3.6-27b-mtp-ud-q4-k-xl.native_runtime]
+enabled = true
+model_path = "/models/Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf"
+"#;
+        std::fs::write(tmp.path().join("config.toml"), config_toml).expect("write config");
+
+        let codex_home = tmp.path().join("codex-home");
+        std::fs::create_dir_all(&codex_home).expect("create codex home");
+        std::fs::write(
+            codex_home.join("config.toml"),
+            r#"model = "Qwen3.6-27B-UD-Q4_K_XL"
+model_provider = "ilhae-native-qwen3.6-27b-ud-q4-k-xl"
+profile = "qwen3.6-27b-ud-q4-k-xl"
+
+[projects."/mnt/nvme0n1p2/workspace/monorepo"]
+trust_level = "trusted"
+"#,
+        )
+        .expect("write stale codex config");
+
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let sanitized =
+            std::fs::read_to_string(codex_home.join("config.toml")).expect("read codex config");
+        assert!(!sanitized.contains("model_provider ="));
+        assert!(!sanitized.contains("model ="));
+        assert!(!sanitized.contains("profile ="));
+        assert!(sanitized.contains(r#"[projects."/mnt/nvme0n1p2/workspace/monorepo"]"#));
+        assert!(sanitized.contains(r#"trust_level = "trusted""#));
     }
 
     #[test]
