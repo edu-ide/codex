@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ilhae Chat UI Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="Conversations">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true">I</div>
+          <div>
+            <p class="brand-name">Ilhae</p>
+            <p class="brand-meta">Agent Console</p>
+          </div>
+        </div>
+
+        <button class="new-thread" type="button">
+          <span aria-hidden="true">+</span>
+          새 대화
+        </button>
+
+        <nav class="thread-list" aria-label="Recent conversations">
+          <button class="thread active" type="button">
+            <span class="thread-title">GPU 큐 설계</span>
+            <span class="thread-meta">ComfyUI lease</span>
+          </button>
+          <button class="thread" type="button">
+            <span class="thread-title">조선 야담 생성</span>
+            <span class="thread-meta">이미지 · 음성 · 영상</span>
+          </button>
+          <button class="thread" type="button">
+            <span class="thread-title">Goal loop 점검</span>
+            <span class="thread-meta">plan · research · execution</span>
+          </button>
+        </nav>
+
+        <div class="runtime-panel">
+          <div class="runtime-row">
+            <span class="status-dot"></span>
+            <span>Qwen local</span>
+          </div>
+          <div class="runtime-meter" aria-hidden="true">
+            <span style="width: 58%"></span>
+          </div>
+          <p class="runtime-copy">VRAM lease available</p>
+        </div>
+      </aside>
+
+      <section class="chat-stage" aria-label="Chat">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Active Workspace</p>
+            <h1>GPU-aware agent session</h1>
+          </div>
+          <div class="topbar-actions">
+            <label class="select-wrap">
+              <span class="sr-only">Model</span>
+              <select id="modelSelect">
+                <option>Qwen3.6 27B</option>
+                <option>GPT-5.5</option>
+                <option>Local planner</option>
+              </select>
+            </label>
+            <button class="icon-button" type="button" aria-label="Settings" title="Settings">
+              ⚙
+            </button>
+          </div>
+        </header>
+
+        <section class="status-strip" aria-label="Runtime state">
+          <div>
+            <span class="strip-label">Loop</span>
+            <strong id="loopState">execution</strong>
+          </div>
+          <div>
+            <span class="strip-label">GPU</span>
+            <strong id="gpuState">llm active</strong>
+          </div>
+          <div>
+            <span class="strip-label">Queue</span>
+            <strong id="queueState">0 waiting</strong>
+          </div>
+          <div>
+            <span class="strip-label">Latency</span>
+            <strong id="latencyState">42 ms</strong>
+          </div>
+        </section>
+
+        <div class="conversation" id="conversation" aria-live="polite"></div>
+
+        <section class="quick-actions" aria-label="Prompt shortcuts">
+          <button type="button" data-prompt="ComfyUI 이미지 생성 전에 GPU lease 상태 확인해줘.">
+            GPU 상태
+          </button>
+          <button type="button" data-prompt="조선 야담용 3컷 콘티를 짧게 제안해줘.">
+            콘티 생성
+          </button>
+          <button type="button" data-prompt="현재 goal loop가 어디까지 진행됐는지 요약해줘.">
+            Goal 요약
+          </button>
+        </section>
+
+        <form class="composer" id="composer">
+          <button class="icon-button attach" type="button" aria-label="Attach file" title="Attach file">
+            ＋
+          </button>
+          <label class="sr-only" for="messageInput">Message</label>
+          <textarea
+            id="messageInput"
+            rows="1"
+            placeholder="작업을 입력하세요"
+            autocomplete="off"
+          ></textarea>
+          <button class="send-button" type="submit">보내기</button>
+        </form>
+      </section>
+
+      <aside class="inspector" aria-label="Run details">
+        <section class="inspector-block">
+          <p class="block-label">Current Lease</p>
+          <div class="lease-card">
+            <span class="lease-icon" aria-hidden="true">◆</span>
+            <div>
+              <strong>llama-server</strong>
+              <span>port 8082 · active</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="inspector-block">
+          <p class="block-label">Event Stream</p>
+          <ol class="event-list" id="eventList"></ol>
+        </section>
+
+        <section class="inspector-block">
+          <p class="block-label">Artifacts</p>
+          <div class="artifact">
+            <span>Flux2_Klein_Gen_00165.png</span>
+            <button type="button">열기</button>
+          </div>
+          <div class="artifact">
+            <span>goal-loop-history.json</span>
+            <button type="button">열기</button>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

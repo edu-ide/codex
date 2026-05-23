@@ -1,0 +1,9 @@
+---
+source: tui/src/history_cell/tests.rs
+expression: rendered
+---
+• Read brain resource brain://memory/items
+  └ brain resource
+    └ brain://memory/items
+      ├ brain://memory/items · json object · 11 items
+      │  application/json

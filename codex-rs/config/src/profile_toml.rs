@@ -3,6 +3,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::config_toml::SuperloopProfileToml;
 use crate::config_toml::ToolsToml;
 use crate::types::AnalyticsConfigToml;
 use crate::types::ApprovalsReviewer;
@@ -59,6 +60,10 @@ pub struct ConfigProfile {
     pub tools: Option<ToolsToml>,
     pub web_search: Option<WebSearchMode>,
     pub analytics: Option<AnalyticsConfigToml>,
+    /// Named superloop profile to select from `[superloop.profiles]`.
+    pub superloop_profile: Option<String>,
+    /// Inline superloop profile overrides for this config profile.
+    pub superloop: Option<SuperloopProfileToml>,
     /// TUI settings scoped to this profile.
     #[serde(default)]
     pub tui: Option<ProfileTui>,

@@ -105,6 +105,7 @@ pub struct ToolsConfig {
     pub web_search_mode: Option<WebSearchMode>,
     pub web_search_config: Option<WebSearchConfig>,
     pub web_search_tool_type: WebSearchToolType,
+    pub local_web_search_tool: bool,
     pub image_gen_tool: bool,
     pub search_tool: bool,
     pub namespace_tools: bool,
@@ -245,6 +246,7 @@ impl ToolsConfig {
             web_search_mode: *web_search_mode,
             web_search_config: None,
             web_search_tool_type: model_info.web_search_tool_type,
+            local_web_search_tool: false,
             image_gen_tool: include_image_gen_tool,
             search_tool: include_search_tool,
             namespace_tools: true,
@@ -295,6 +297,7 @@ impl ToolsConfig {
 
     pub fn with_web_search_capability(mut self, web_search: bool) -> Self {
         if !web_search {
+            self.local_web_search_tool = self.web_search_mode.is_some();
             self.web_search_mode = None;
         }
         self

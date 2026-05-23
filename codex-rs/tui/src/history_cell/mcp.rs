@@ -1,6 +1,10 @@
 //! MCP tool-call, inventory, and output history cells.
 
 use super::*;
+use crate::history_cell::mcp_resource_display::format_mcp_resource_invocation;
+use crate::history_cell::mcp_resource_display::mcp_resource_header;
+use crate::history_cell::mcp_resource_display::raw_mcp_resource_result;
+use crate::history_cell::mcp_resource_display::render_mcp_resource_result;
 
 #[derive(Debug)]
 struct CompletedMcpToolCallWithImageOutput {
@@ -130,13 +134,18 @@ impl HistoryCell for McpToolCallCell {
             )
             .unwrap_or_else(|| "•".dim()),
         };
-        let header_text = if status.is_some() {
-            "Called"
-        } else {
-            "Calling"
-        };
+        let header_text = mcp_resource_header(&self.invocation, status.is_some()).unwrap_or({
+            if status.is_some() {
+                "Called"
+            } else {
+                "Calling"
+            }
+        });
 
-        let invocation_line = line_to_static(&format_mcp_invocation(self.invocation.clone()));
+        let invocation_line = line_to_static(
+            &format_mcp_resource_invocation(&self.invocation)
+                .unwrap_or_else(|| format_mcp_invocation(self.invocation.clone())),
+        );
         let mut compact_spans = vec![bullet.clone(), " ".into(), header_text.bold(), " ".into()];
         let mut compact_header = Line::from(compact_spans.clone());
         let reserved = compact_header.width();
@@ -165,9 +174,13 @@ impl HistoryCell for McpToolCallCell {
 
         if let Some(result) = &self.result {
             match result {
-                Ok(codex_protocol::mcp::CallToolResult { content, .. }) => {
-                    if !content.is_empty() {
-                        for block in content {
+                Ok(result) => {
+                    if let Some(resource_lines) =
+                        render_mcp_resource_result(&self.invocation, result, detail_wrap_width)
+                    {
+                        detail_lines.extend(resource_lines);
+                    } else if !result.content.is_empty() {
+                        for block in &result.content {
                             let text = Self::render_content_block(block, detail_wrap_width);
                             for segment in text.split('\n') {
                                 let line = Line::from(segment.to_string().dim());
@@ -213,22 +226,36 @@ impl HistoryCell for McpToolCallCell {
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
-        let header_text = if self.success().is_some() {
-            "Called"
-        } else {
-            "Calling"
-        };
+        let header_text = mcp_resource_header(&self.invocation, self.success().is_some())
+            .unwrap_or({
+                if self.success().is_some() {
+                    "Called"
+                } else {
+                    "Calling"
+                }
+            });
+        let invocation_line = format_mcp_resource_invocation(&self.invocation)
+            .unwrap_or_else(|| format_mcp_invocation(self.invocation.clone()));
         let mut lines = vec![Line::from(format!(
             "{header_text} {}",
-            format_mcp_invocation(self.invocation.clone())
+            invocation_line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
         ))];
 
         if let Some(result) = &self.result {
             match result {
-                Ok(codex_protocol::mcp::CallToolResult { content, .. }) => {
-                    for block in content {
-                        let text = Self::render_content_block(block, RAW_TOOL_OUTPUT_WIDTH);
-                        lines.extend(raw_lines_from_source(&text));
+                Ok(result) => {
+                    if let Some(resource_lines) = raw_mcp_resource_result(&self.invocation, result)
+                    {
+                        lines.extend(resource_lines);
+                    } else {
+                        for block in &result.content {
+                            let text = Self::render_content_block(block, RAW_TOOL_OUTPUT_WIDTH);
+                            lines.extend(raw_lines_from_source(&text));
+                        }
                     }
                 }
                 Err(err) => lines.push(Line::from(format!("Error: {err}"))),

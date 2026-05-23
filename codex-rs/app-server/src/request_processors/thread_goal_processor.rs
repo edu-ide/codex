@@ -491,6 +491,16 @@ fn thread_goal_loop_phase_from_state(
         codex_state::ThreadGoalLoopPhase::KairosLoop => ThreadGoalLoopPhase::KairosLoop,
         codex_state::ThreadGoalLoopPhase::SuperLoop => ThreadGoalLoopPhase::SuperLoop,
         codex_state::ThreadGoalLoopPhase::PlanLoop => ThreadGoalLoopPhase::PlanLoop,
+        codex_state::ThreadGoalLoopPhase::BrainResearchLoop => {
+            ThreadGoalLoopPhase::BrainResearchLoop
+        }
+        codex_state::ThreadGoalLoopPhase::CodebaseResearchLoop => {
+            ThreadGoalLoopPhase::CodebaseResearchLoop
+        }
+        codex_state::ThreadGoalLoopPhase::AgentSkillResearchLoop => {
+            ThreadGoalLoopPhase::AgentSkillResearchLoop
+        }
+        codex_state::ThreadGoalLoopPhase::WebResearchLoop => ThreadGoalLoopPhase::WebResearchLoop,
         codex_state::ThreadGoalLoopPhase::ResearchLoop => ThreadGoalLoopPhase::ResearchLoop,
         codex_state::ThreadGoalLoopPhase::DecisionLoop => ThreadGoalLoopPhase::DecisionLoop,
         codex_state::ThreadGoalLoopPhase::WikiLoop => ThreadGoalLoopPhase::WikiLoop,
@@ -498,6 +508,7 @@ fn thread_goal_loop_phase_from_state(
         codex_state::ThreadGoalLoopPhase::ImprovementLoop => ThreadGoalLoopPhase::ImprovementLoop,
         codex_state::ThreadGoalLoopPhase::CleanupLoop => ThreadGoalLoopPhase::CleanupLoop,
         codex_state::ThreadGoalLoopPhase::ExecutionLoop => ThreadGoalLoopPhase::ExecutionLoop,
+        codex_state::ThreadGoalLoopPhase::VerificationLoop => ThreadGoalLoopPhase::VerificationLoop,
         codex_state::ThreadGoalLoopPhase::ContextInjection => ThreadGoalLoopPhase::ContextInjection,
     }
 }

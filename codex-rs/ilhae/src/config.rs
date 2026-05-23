@@ -1606,6 +1606,55 @@ fn sanitize_ilhae_codex_home_user_config(codex_home: &Path) -> Result<(), String
     Ok(())
 }
 
+fn sync_ilhae_codex_home_mcp_servers(
+    codex_home: &Path,
+    managed_root: &toml::value::Table,
+) -> Result<(), String> {
+    let Some(managed_mcp_servers) = managed_root
+        .get("mcp_servers")
+        .and_then(toml::Value::as_table)
+        .filter(|servers| !servers.is_empty())
+    else {
+        return Ok(());
+    };
+
+    let path = codex_home.join("config.toml");
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut root = if content.trim().is_empty() {
+        toml::value::Table::new()
+    } else {
+        content
+            .parse::<toml::Value>()
+            .map_err(|err| err.to_string())?
+            .as_table()
+            .cloned()
+            .ok_or_else(|| "Ilhae codex home config must be a TOML table".to_string())?
+    };
+
+    let mcp_servers = root
+        .entry("mcp_servers".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+    let Some(mcp_servers) = mcp_servers.as_table_mut() else {
+        return Err("Ilhae codex home config mcp_servers must be a TOML table".to_string());
+    };
+
+    let mut changed = false;
+    for (name, server) in managed_mcp_servers {
+        if mcp_servers.get(name) != Some(server) {
+            mcp_servers.insert(name.clone(), server.clone());
+            changed = true;
+        }
+    }
+
+    if changed || content.trim().is_empty() {
+        let rendered =
+            toml::to_string_pretty(&toml::Value::Table(root)).map_err(|err| err.to_string())?;
+        std::fs::write(path, rendered).map_err(|err| err.to_string())?;
+    }
+
+    Ok(())
+}
+
 fn strip_ilhae_codex_home_managed_overrides(content: &str) -> String {
     let mut output = String::with_capacity(content.len());
     let mut in_root_table = true;
@@ -1684,6 +1733,7 @@ pub fn prepare_ilhae_codex_home() -> Result<PathBuf, String> {
     }
 
     let root = default_ilhae_codex_home_table();
+    sync_ilhae_codex_home_mcp_servers(&codex_home, &root)?;
     let rendered =
         toml::to_string_pretty(&toml::Value::Table(root)).map_err(|err| err.to_string())?;
     std::fs::write(codex_home.join("managed_config.toml"), rendered)
@@ -1953,6 +2003,19 @@ requires_openai_auth = false
             fortune.get("url").and_then(toml::Value::as_str),
             Some("https://fortune.ugot.uk/mcp")
         );
+
+        let codex_config =
+            std::fs::read_to_string(codex_home.join("config.toml")).expect("read codex config");
+        let codex_config: toml::Value = toml::from_str(&codex_config).expect("parse codex config");
+        let codex_mcp_servers = codex_config
+            .get("mcp_servers")
+            .and_then(toml::Value::as_table)
+            .expect("codex mcp servers table");
+        let projected_fortune = codex_mcp_servers
+            .get("fortune")
+            .and_then(toml::Value::as_table)
+            .expect("projected fortune mcp server");
+        assert_eq!(projected_fortune, fortune);
 
         let model_providers = root
             .get("model_providers")

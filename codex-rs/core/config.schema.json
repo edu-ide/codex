@@ -670,6 +670,18 @@
           "description": "Optional explicit service tier request id for new turns (for example `priority` or `flex`; legacy `fast` also works).",
           "type": "string"
         },
+        "superloop": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SuperloopProfileToml"
+            }
+          ],
+          "description": "Inline superloop profile overrides for this config profile."
+        },
+        "superloop_profile": {
+          "description": "Named superloop profile to select from `[superloop.profiles]`.",
+          "type": "string"
+        },
         "tools": {
           "$ref": "#/definitions/ToolsToml"
         },
@@ -2459,6 +2471,82 @@
         "include_instructions": {
           "description": "Whether turns receive the automatic skills instructions block.",
           "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SuperloopPhaseToml": {
+      "additionalProperties": false,
+      "properties": {
+        "contract": {
+          "description": "Additional contract text appended after the built-in phase contract.",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "Additional phase instructions appended after the built-in loop prompt.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SuperloopProfileToml": {
+      "additionalProperties": false,
+      "properties": {
+        "phases": {
+          "additionalProperties": {
+            "$ref": "#/definitions/SuperloopPhaseToml"
+          },
+          "default": {},
+          "description": "Per-phase prompt additions keyed by phase name.",
+          "type": "object"
+        },
+        "repeat_from": {
+          "description": "Phase to return to after the end of `sequence`.",
+          "type": "string"
+        },
+        "sequence": {
+          "description": "Ordered phase names for one superloop cycle.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SuperloopToml": {
+      "additionalProperties": false,
+      "properties": {
+        "default_profile": {
+          "description": "Named profile selected when the active config profile does not specify one.",
+          "type": "string"
+        },
+        "phases": {
+          "additionalProperties": {
+            "$ref": "#/definitions/SuperloopPhaseToml"
+          },
+          "default": {},
+          "description": "Per-phase prompt additions keyed by phase name.",
+          "type": "object"
+        },
+        "profiles": {
+          "additionalProperties": {
+            "$ref": "#/definitions/SuperloopProfileToml"
+          },
+          "default": {},
+          "description": "Named loop profiles.",
+          "type": "object"
+        },
+        "repeat_from": {
+          "description": "Phase to return to after the end of `sequence`.",
+          "type": "string"
+        },
+        "sequence": {
+          "description": "Inline default loop profile.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -4763,6 +4851,14 @@
         }
       ],
       "description": "Directory where Codex stores the SQLite state DB. Defaults to `$CODEX_SQLITE_HOME` when set. Otherwise uses `$CODEX_HOME`."
+    },
+    "superloop": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/SuperloopToml"
+        }
+      ],
+      "description": "Superloop goal-continuation settings."
     },
     "suppress_unstable_features_warning": {
       "description": "Suppress warnings about unstable (under development) features.",

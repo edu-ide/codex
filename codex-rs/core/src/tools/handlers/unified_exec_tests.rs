@@ -7,6 +7,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
+use crate::function_tool::FunctionCallError;
 use crate::session::tests::make_session_and_context;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::context::ToolCallSource;
@@ -15,6 +16,7 @@ use crate::tools::context::ToolPayload;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::CoreToolRuntime;
 use crate::turn_diff_tracker::TurnDiffTracker;
+use codex_tools::ToolExecutor;
 use tokio::sync::Mutex;
 
 async fn invocation_for_payload(
@@ -244,6 +246,43 @@ async fn exec_command_pre_tool_use_payload_skips_write_stdin() {
             source: crate::tools::context::ToolCallSource::Direct,
             payload,
         }),
+        None
+    );
+}
+
+#[tokio::test]
+async fn exec_command_rejects_long_foreground_sleep_polling() {
+    let invocation = invocation_for_payload(
+        "exec_command",
+        "call-sleep",
+        ToolPayload::Function {
+            arguments: serde_json::json!({
+                "cmd": "sleep 120 && ssh -o ConnectTimeout=5 dgx \"tail -60 smoke.log\"",
+                "yield_time_ms": 10_000,
+            })
+            .to_string(),
+        },
+    )
+    .await;
+    let handler = ExecCommandHandler::default();
+
+    let Err(err) = handler.handle(invocation).await else {
+        panic!("long foreground sleep should be rejected");
+    };
+    let FunctionCallError::RespondToModel(message) = err else {
+        panic!("expected RespondToModel error");
+    };
+
+    assert!(
+        message.contains("foreground `sleep 120` delay"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn exec_command_allows_short_foreground_sleep() {
+    assert_eq!(
+        super::exec_command::foreground_sleep_polling_error("sleep 2 && echo done", 10_000),
         None
     );
 }

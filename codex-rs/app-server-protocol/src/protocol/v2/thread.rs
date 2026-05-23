@@ -568,6 +568,10 @@ pub enum ThreadGoalLoopPhase {
     KairosLoop,
     SuperLoop,
     PlanLoop,
+    BrainResearchLoop,
+    CodebaseResearchLoop,
+    AgentSkillResearchLoop,
+    WebResearchLoop,
     ResearchLoop,
     DecisionLoop,
     WikiLoop,
@@ -575,6 +579,7 @@ pub enum ThreadGoalLoopPhase {
     ImprovementLoop,
     CleanupLoop,
     ExecutionLoop,
+    VerificationLoop,
     ContextInjection,
 }
 

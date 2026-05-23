@@ -23,10 +23,12 @@ use crate::session::turn_context::TurnContext;
 use crate::tools::context::FunctionToolOutput;
 use codex_protocol::protocol::McpInvocation;
 
+mod call_mcp_tool;
 mod list_mcp_resource_templates;
 mod list_mcp_resources;
 mod read_mcp_resource;
 
+pub use call_mcp_tool::CallMcpToolHandler;
 pub use list_mcp_resource_templates::ListMcpResourceTemplatesHandler;
 pub use list_mcp_resources::ListMcpResourcesHandler;
 pub use read_mcp_resource::ReadMcpResourceHandler;
@@ -53,6 +55,13 @@ struct ListResourceTemplatesArgs {
 struct ReadResourceArgs {
     server: String,
     uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CallMcpToolArgs {
+    server: String,
+    tool: String,
+    arguments: Value,
 }
 
 #[derive(Debug, Serialize)]

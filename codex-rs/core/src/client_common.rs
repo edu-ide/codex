@@ -65,6 +65,7 @@ impl Default for Prompt {
 impl Prompt {
     pub(crate) fn get_formatted_input(&self) -> Vec<ResponseItem> {
         let mut input = self.input.clone();
+        repair_malformed_function_call_arguments(&mut input);
 
         // when using the *Freeform* apply_patch tool specifically, tool outputs
         // should be structured text, not json. Do NOT reserialize when using
@@ -80,6 +81,32 @@ impl Prompt {
 
         input
     }
+}
+
+fn repair_malformed_function_call_arguments(items: &mut [ResponseItem]) {
+    items.iter_mut().for_each(|item| {
+        let ResponseItem::FunctionCall {
+            name, arguments, ..
+        } = item
+        else {
+            return;
+        };
+        if serde_json::from_str::<Value>(arguments).is_ok() {
+            return;
+        }
+
+        let repaired = if is_shell_tool_name(name) || name == "exec_command" {
+            serde_json::json!({
+                "cmd": arguments,
+                "_codex_malformed_arguments": true,
+            })
+        } else {
+            serde_json::json!({
+                "_codex_malformed_arguments": arguments,
+            })
+        };
+        *arguments = repaired.to_string();
+    });
 }
 
 fn reserialize_shell_outputs(items: &mut [ResponseItem]) {

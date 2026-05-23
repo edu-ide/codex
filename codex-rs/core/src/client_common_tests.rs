@@ -228,3 +228,34 @@ fn reserializes_shell_outputs_for_function_and_custom_tool_calls() {
         ]
     );
 }
+
+#[test]
+fn get_formatted_input_repairs_malformed_function_call_arguments() {
+    let prompt = Prompt {
+        input: vec![ResponseItem::FunctionCall {
+            id: None,
+            name: "exec_command".to_string(),
+            namespace: None,
+            arguments: "{\"cmd\":\"unterminated".to_string(),
+            call_id: "call-1".to_string(),
+        }],
+        ..Default::default()
+    };
+
+    let input = prompt.get_formatted_input();
+    let ResponseItem::FunctionCall { arguments, .. } = &input[0] else {
+        panic!("expected function call");
+    };
+    let value: serde_json::Value = serde_json::from_str(arguments).expect("repaired JSON");
+
+    assert_eq!(
+        value.get("cmd").and_then(serde_json::Value::as_str),
+        Some("{\"cmd\":\"unterminated")
+    );
+    assert_eq!(
+        value
+            .get("_codex_malformed_arguments")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+}

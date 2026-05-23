@@ -366,6 +366,8 @@ pub(crate) async fn run_turn(
 
     let skills_outcome = Some(turn_context.turn_skills.outcome.as_ref());
     let mut last_agent_message: Option<String> = None;
+    let mut background_process_continuation_used = false;
+    let turn_started_at = tokio::time::Instant::now();
     let mut stop_hook_active = false;
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
     // many turns, from the perspective of the user, it is a single turn.
@@ -517,6 +519,28 @@ pub(crate) async fn run_turn(
                 }
 
                 if !needs_follow_up {
+                    if !background_process_continuation_used {
+                        let running_process_ids = sess
+                            .services
+                            .unified_exec_manager
+                            .running_process_ids_for_thread_used_since(
+                                sess.as_ref(),
+                                turn_started_at,
+                            )
+                            .await;
+                        if !running_process_ids.is_empty() {
+                            let continuation_item =
+                                build_background_process_continuation_item(&running_process_ids);
+                            sess.record_conversation_items(
+                                &turn_context,
+                                std::slice::from_ref(&continuation_item),
+                            )
+                            .await;
+                            background_process_continuation_used = true;
+                            can_drain_pending_input = false;
+                            continue;
+                        }
+                    }
                     last_agent_message = sampling_request_last_agent_message;
                     let stop_hook_permission_mode = match turn_context.approval_policy.value() {
                         AskForApproval::Never => "bypassPermissions",
@@ -1052,6 +1076,7 @@ async fn run_sampling_request(
         .await;
     let mut retries = 0;
     let mut initial_input = Some(input);
+    let mut retry_without_tools_after_malformed_tool_call = false;
     loop {
         let prompt_input = if let Some(input) = initial_input.take() {
             input
@@ -1068,6 +1093,10 @@ async fn run_sampling_request(
         );
         sess.filter_thread_goal_continuation_tools(turn_context.as_ref(), &mut prompt.tools)
             .await;
+        if retry_without_tools_after_malformed_tool_call {
+            prompt.tools.clear();
+            prompt.parallel_tool_calls = false;
+        }
         let err = match try_run_sampling_request(
             tool_runtime.clone(),
             Arc::clone(&sess),
@@ -1097,6 +1126,17 @@ async fn run_sampling_request(
             }
             Err(err) => err,
         };
+
+        if !retry_without_tools_after_malformed_tool_call
+            && !prompt.tools.is_empty()
+            && is_malformed_tool_call_arguments_codex_err(&err)
+        {
+            retry_without_tools_after_malformed_tool_call = true;
+            warn!(
+                "provider rejected malformed tool-call arguments; retrying turn once without tools"
+            );
+            continue;
+        }
 
         if !err.is_retryable() {
             return Err(err);
@@ -1153,6 +1193,14 @@ async fn run_sampling_request(
             return Err(err);
         }
     }
+}
+
+fn is_malformed_tool_call_arguments_codex_err(err: &CodexErr) -> bool {
+    matches!(
+        err,
+        CodexErr::InvalidRequest(message)
+            if message.contains("Failed to parse tool call arguments as JSON")
+    )
 }
 
 #[expect(
@@ -1273,6 +1321,24 @@ pub(crate) async fn built_tools(
 struct SamplingRequestResult {
     needs_follow_up: bool,
     last_agent_message: Option<String>,
+}
+
+fn build_background_process_continuation_item(process_ids: &[i32]) -> ResponseItem {
+    let ids = process_ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    ResponseItem::Message {
+        id: Some(uuid::Uuid::new_v4().to_string()),
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: format!(
+                "A background terminal process is still running for this thread (session ID(s): {ids}). Do not end the turn by saying you will wait or check later. Continue now: perform a short immediate non-blocking status check with write_stdin/exec_command if useful, or explicitly hand control back to the user with the current status."
+            ),
+        }],
+        phase: None,
+    }
 }
 
 /// Ephemeral per-response state for streaming a single proposed plan.

@@ -33,6 +33,7 @@ ttl_seconds = 3600
 wait_timeout_seconds = 900
 prompt_poll_interval_ms = 2000
 prompt_timeout_seconds = 3600
+preempt_llm = true
 stop_after_prompt = true
 start_backend_for_passthrough = false
 ```
@@ -66,3 +67,13 @@ COMFYUI_API_URL=http://127.0.0.1:8189
 VIDEOEDITOR_GPU_QUEUE_ENABLED=false
 VIDEOEDITOR_COMFYUI_MANAGED_PROCESS=false
 ```
+
+With `preempt_llm = true`, the GPU queue waits for the local llama.cpp runtime
+to report idle via `/slots` before stopping it and granting the ComfyUI lease.
+This prevents the queue from killing the active TUI model stream mid-response.
+The idle wait uses the lease wait timeout when one is present; otherwise it
+defaults to 900 seconds. Override the fallback with
+`ILHAE_GPU_QUEUE_LLM_IDLE_WAIT_SECONDS`.
+
+Use `preempt_llm = false` only when TUI continuity is more important than
+freeing VRAM automatically.

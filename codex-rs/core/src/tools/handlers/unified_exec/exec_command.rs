@@ -132,6 +132,9 @@ impl ToolExecutor<ToolInvocation> for ExecCommandHandler {
         let environment = Arc::clone(&turn_environment.environment);
         let fs = environment.get_filesystem();
         let args: ExecCommandArgs = parse_arguments_with_base_path(&arguments, &cwd)?;
+        if let Some(message) = foreground_sleep_polling_error(&args.cmd, args.yield_time_ms) {
+            return Err(FunctionCallError::RespondToModel(message));
+        }
         let hook_command = args.cmd.clone();
         maybe_emit_implicit_skill_invocation(
             session.as_ref(),
@@ -345,6 +348,53 @@ impl CoreToolRuntime for ExecCommandHandler {
         result: &dyn crate::tools::context::ToolOutput,
     ) -> Option<PostToolUsePayload> {
         post_unified_exec_tool_use_payload(invocation, result)
+    }
+}
+
+const MAX_FOREGROUND_SLEEP_SECS: u64 = 30;
+
+pub(super) fn foreground_sleep_polling_error(cmd: &str, yield_time_ms: u64) -> Option<String> {
+    let sleep_secs = leading_sleep_duration_secs(cmd)?;
+    if sleep_secs < MAX_FOREGROUND_SLEEP_SECS {
+        return None;
+    }
+    Some(format!(
+        "exec_command rejected a foreground `sleep {sleep_secs}` delay. Do not block a turn with long sleeps or delayed polling. Start long-running work in the background and poll it with short, immediate commands instead. Current yield_time_ms is {yield_time_ms}."
+    ))
+}
+
+fn leading_sleep_duration_secs(cmd: &str) -> Option<u64> {
+    let trimmed = cmd.trim_start();
+    let rest = trimmed.strip_prefix("sleep")?;
+    if !rest.chars().next().is_some_and(char::is_whitespace) {
+        return None;
+    }
+    let rest = rest.trim_start();
+    let token = rest
+        .trim_start()
+        .split_once(char::is_whitespace)
+        .map_or_else(|| rest.trim(), |(token, _)| token)
+        .trim_end_matches(|ch| matches!(ch, ';' | '&' | '|'));
+    parse_sleep_duration_secs(token)
+}
+
+fn parse_sleep_duration_secs(token: &str) -> Option<u64> {
+    if token.is_empty() {
+        return None;
+    }
+    let digits_len = token
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if digits_len == 0 {
+        return None;
+    }
+    let value = token[..digits_len].parse::<u64>().ok()?;
+    match token[digits_len..].trim() {
+        "" | "s" => Some(value),
+        "m" => value.checked_mul(60),
+        "h" => value.checked_mul(60 * 60),
+        _ => None,
     }
 }
 

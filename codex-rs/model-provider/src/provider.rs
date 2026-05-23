@@ -7,6 +7,8 @@ use codex_api::SharedAuthProvider;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
+#[cfg(test)]
+use codex_model_provider_info::create_oss_provider_with_base_url;
 use codex_models_manager::manager::OpenAiModelsManager;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_models_manager::manager::StaticModelsManager;
@@ -177,6 +179,16 @@ impl ConfiguredModelProvider {
 impl ModelProvider for ConfiguredModelProvider {
     fn info(&self) -> &ModelProviderInfo {
         &self.info
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        let hosted_tool_capable =
+            self.info.requires_openai_auth || self.info.supports_remote_compaction();
+        ProviderCapabilities {
+            namespace_tools: hosted_tool_capable,
+            image_generation: hosted_tool_capable,
+            web_search: hosted_tool_capable,
+        }
     }
 
     fn auth_manager(&self) -> Option<Arc<AuthManager>> {
@@ -359,6 +371,26 @@ mod tests {
         );
 
         assert_eq!(provider.capabilities(), ProviderCapabilities::default());
+    }
+
+    #[test]
+    fn oss_provider_disables_hosted_tool_capabilities() {
+        let provider = create_model_provider(
+            create_oss_provider_with_base_url(
+                "http://127.0.0.1:8082/v1",
+                codex_model_provider_info::WireApi::Responses,
+            ),
+            /*auth_manager*/ None,
+        );
+
+        assert_eq!(
+            provider.capabilities(),
+            ProviderCapabilities {
+                namespace_tools: false,
+                image_generation: false,
+                web_search: false,
+            }
+        );
     }
 
     #[test]

@@ -4,6 +4,52 @@ use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
 
 #[test]
+fn call_mcp_tool_matches_expected_spec() {
+    assert_eq!(
+        create_call_mcp_tool(),
+        ToolSpec::Function(ResponsesApiTool {
+            name: "call_mcp_tool".to_string(),
+            description: "Call an action tool exposed by an MCP server. Use this for MCP tools such as videoeditor CreateProject, GenerateImageAndWait, or SetActiveProject. Do not use MCP resource readers for actions.".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: JsonSchema::object(
+                BTreeMap::from([
+                    (
+                        "server".to_string(),
+                        JsonSchema::string(Some(
+                            "MCP server name exactly as configured, for example `videoeditor`."
+                                .to_string(),
+                        )),
+                    ),
+                    (
+                        "tool".to_string(),
+                        JsonSchema::string(Some(
+                            "MCP tool/action name to call on that server, for example `CreateProject`."
+                                .to_string(),
+                        )),
+                    ),
+                    (
+                        "arguments".to_string(),
+                        JsonSchema::object(
+                            BTreeMap::new(),
+                            /*required*/ None,
+                            Some(true.into()),
+                        ),
+                    ),
+                ]),
+                Some(vec![
+                    "server".to_string(),
+                    "tool".to_string(),
+                    "arguments".to_string(),
+                ]),
+                Some(false.into()),
+            ),
+            output_schema: None,
+        })
+    );
+}
+
+#[test]
 fn list_mcp_resources_tool_matches_expected_spec() {
     assert_eq!(
         create_list_mcp_resources_tool(),

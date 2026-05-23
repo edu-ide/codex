@@ -1048,11 +1048,38 @@ mod tests {
             execution_started.loop_state
         );
 
+        let verification_started = runtime
+            .record_thread_goal_loop_event(
+                thread_id,
+                crate::ThreadGoalLoopEvent {
+                    id: "verification_loop:turn:5".to_string(),
+                    phase: crate::ThreadGoalLoopPhase::VerificationLoop,
+                    status: crate::ThreadGoalLoopStatus::InProgress,
+                    title: "Goal verification loop".to_string(),
+                    summary: "Goal verification loop turn started".to_string(),
+                    detail: None,
+                    error: None,
+                },
+            )
+            .await
+            .expect("verification loop event should record")
+            .expect("goal should still exist");
+        assert_eq!(
+            Some(crate::ThreadGoalLoopState {
+                cycle_number: 5,
+                phase: crate::ThreadGoalLoopPhase::VerificationLoop,
+                status: crate::ThreadGoalLoopStatus::InProgress,
+                summary: "Goal verification loop turn started".to_string(),
+                updated_at: verification_started.loop_state.as_ref().unwrap().updated_at,
+            }),
+            verification_started.loop_state
+        );
+
         let plan_started = runtime
             .record_thread_goal_loop_event(
                 thread_id,
                 crate::ThreadGoalLoopEvent {
-                    id: "goal_continuation:plan_loop:5".to_string(),
+                    id: "goal_continuation:plan_loop:6".to_string(),
                     phase: crate::ThreadGoalLoopPhase::PlanLoop,
                     status: crate::ThreadGoalLoopStatus::InProgress,
                     title: "Plan loop agent".to_string(),
@@ -1066,7 +1093,7 @@ mod tests {
             .expect("goal should still exist");
         assert_eq!(
             Some(crate::ThreadGoalLoopState {
-                cycle_number: 5,
+                cycle_number: 6,
                 phase: crate::ThreadGoalLoopPhase::PlanLoop,
                 status: crate::ThreadGoalLoopStatus::InProgress,
                 summary: "Plan loop agent turn started".to_string(),

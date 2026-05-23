@@ -500,6 +500,36 @@ async fn reusing_completed_process_returns_unknown_process() -> anyhow::Result<(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn running_process_ids_for_thread_used_since_filters_old_processes() -> anyhow::Result<()> {
+    skip_if_sandbox!(Ok(()));
+
+    let (session, turn) = test_session_and_turn().await;
+    let since = Instant::now();
+    let open_shell = exec_command(
+        &session, &turn, "bash -i", /*yield_time_ms*/ 2_500, /*workdir*/ None,
+    )
+    .await?;
+    let process_id = open_shell.process_id.expect("expected process id");
+
+    let manager = &session.services.unified_exec_manager;
+    assert_eq!(
+        manager
+            .running_process_ids_for_thread_used_since(session.as_ref(), since)
+            .await,
+        vec![process_id]
+    );
+    assert!(
+        manager
+            .running_process_ids_for_thread_used_since(session.as_ref(), Instant::now())
+            .await
+            .is_empty()
+    );
+
+    write_stdin(&session, process_id, "exit\n", /*yield_time_ms*/ 2_500).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn completed_pipe_commands_preserve_exit_code() -> anyhow::Result<()> {
     let (_, turn) = make_session_and_context().await;
     #[allow(deprecated)]

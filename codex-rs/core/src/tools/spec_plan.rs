@@ -4,6 +4,8 @@ use crate::config::DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS;
 use crate::tools::code_mode::execute_spec::create_code_mode_tool;
 use crate::tools::context::ToolInvocation;
 use crate::tools::handlers::ApplyPatchHandler;
+use crate::tools::handlers::BrainVaultPatchHandler;
+use crate::tools::handlers::CallMcpToolHandler;
 use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
 use crate::tools::handlers::CreateGoalHandler;
@@ -13,6 +15,7 @@ use crate::tools::handlers::ExecCommandHandlerOptions;
 use crate::tools::handlers::GetGoalHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
 use crate::tools::handlers::ListMcpResourcesHandler;
+use crate::tools::handlers::LocalWebSearchHandler;
 use crate::tools::handlers::McpHandler;
 use crate::tools::handlers::PlanHandler;
 use crate::tools::handlers::ReadMcpResourceHandler;
@@ -391,7 +394,23 @@ fn collect_tool_executors(
         }
     }
 
+    if let Some(mcp_tools) = params.mcp_tools {
+        for tool in mcp_tools {
+            executors.push(Arc::new(McpHandler::new(tool.clone())));
+        }
+    }
+
+    if let Some(deferred_mcp_tools) = params.deferred_mcp_tools {
+        for tool in deferred_mcp_tools {
+            executors.push(Arc::new(McpHandler::with_exposure(
+                tool.clone(),
+                ToolExposure::Deferred,
+            )));
+        }
+    }
+
     if params.mcp_tools.is_some() {
+        executors.push(Arc::new(CallMcpToolHandler));
         executors.push(Arc::new(ListMcpResourcesHandler));
         executors.push(Arc::new(ListMcpResourceTemplatesHandler));
         executors.push(Arc::new(ReadMcpResourceHandler));
@@ -434,6 +453,12 @@ fn collect_tool_executors(
     {
         executors.push(Arc::new(TestSyncHandler));
     }
+
+    if config.local_web_search_tool {
+        executors.push(Arc::new(LocalWebSearchHandler));
+    }
+
+    executors.push(Arc::new(BrainVaultPatchHandler));
 
     if config.environment_mode.has_environment() {
         let include_environment_id =
@@ -516,21 +541,6 @@ fn collect_tool_executors(
         executors.push(Arc::new(SpawnAgentsOnCsvHandler));
         if config.agent_jobs_worker_tools {
             executors.push(Arc::new(ReportAgentJobResultHandler));
-        }
-    }
-
-    if let Some(mcp_tools) = params.mcp_tools {
-        for tool in mcp_tools {
-            executors.push(Arc::new(McpHandler::new(tool.clone())));
-        }
-    }
-
-    if let Some(deferred_mcp_tools) = params.deferred_mcp_tools {
-        for tool in deferred_mcp_tools {
-            executors.push(Arc::new(McpHandler::with_exposure(
-                tool.clone(),
-                ToolExposure::Deferred,
-            )));
         }
     }
 

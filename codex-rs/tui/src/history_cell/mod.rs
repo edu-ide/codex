@@ -107,6 +107,7 @@ mod base;
 mod exec;
 mod hook_cell;
 mod mcp;
+mod mcp_resource_display;
 mod messages;
 mod notices;
 mod patches;

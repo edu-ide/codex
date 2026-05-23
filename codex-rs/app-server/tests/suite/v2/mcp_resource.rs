@@ -12,11 +12,15 @@ use codex_app_server::in_process::InProcessStartArgs;
 use codex_app_server_protocol::ClientInfo;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::InitializeParams;
+use codex_app_server_protocol::ItemCompletedNotification;
+use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::McpResourceContent;
 use codex_app_server_protocol::McpResourceReadParams;
 use codex_app_server_protocol::McpResourceReadResponse;
+use codex_app_server_protocol::McpToolCallStatus;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_arg0::Arg0DispatchPaths;
@@ -107,14 +111,83 @@ stream_max_retries = 0
     )
     .await??;
     let ThreadStartResponse { thread, .. } = to_response(thread_start_resp)?;
+    let thread_id = thread.id.clone();
 
     let read_request_id = mcp
         .send_mcp_resource_read_request(McpResourceReadParams {
-            thread_id: Some(thread.id),
+            thread_id: Some(thread_id.clone()),
             server: "codex_apps".to_string(),
             uri: TEST_RESOURCE_URI.to_string(),
         })
         .await?;
+    let started_notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("item/started"),
+    )
+    .await??;
+    let started: ItemStartedNotification =
+        serde_json::from_value(started_notification.params.unwrap())?;
+    let (started_item_id, started_turn_id) = match started.item {
+        ThreadItem::McpToolCall {
+            id,
+            server,
+            tool,
+            status,
+            arguments,
+            ..
+        } => {
+            assert_eq!(started.thread_id, thread_id);
+            assert_eq!(server, "codex_apps");
+            assert_eq!(tool, "read_mcp_resource");
+            assert_eq!(status, McpToolCallStatus::InProgress);
+            assert_eq!(arguments, serde_json::json!({ "uri": TEST_RESOURCE_URI }));
+            (id, started.turn_id)
+        }
+        item => anyhow::bail!("expected MCP resource read item, got {item:?}"),
+    };
+
+    let completed_notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("item/completed"),
+    )
+    .await??;
+    let completed: ItemCompletedNotification =
+        serde_json::from_value(completed_notification.params.unwrap())?;
+    match completed.item {
+        ThreadItem::McpToolCall {
+            id,
+            server,
+            tool,
+            status,
+            arguments,
+            result,
+            error,
+            ..
+        } => {
+            assert_eq!(completed.thread_id, thread_id);
+            assert_eq!(completed.turn_id, started_turn_id);
+            assert_eq!(id, started_item_id);
+            assert_eq!(server, "codex_apps");
+            assert_eq!(tool, "read_mcp_resource");
+            assert_eq!(status, McpToolCallStatus::Completed);
+            assert_eq!(arguments, serde_json::json!({ "uri": TEST_RESOURCE_URI }));
+            assert_eq!(error, None);
+            let result = result.expect("resource read completion should include a result");
+            assert_eq!(
+                result.structured_content,
+                Some(serde_json::to_value(expected_resource_read_response())?)
+            );
+            let text = result
+                .content
+                .first()
+                .and_then(|content| content.get("text"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            assert!(text.contains(TEST_RESOURCE_URI));
+        }
+        item => anyhow::bail!("expected completed MCP resource read item, got {item:?}"),
+    }
+
     let read_response: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,
         mcp.read_stream_until_response_message(RequestId::Integer(read_request_id)),

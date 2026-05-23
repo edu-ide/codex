@@ -22,6 +22,7 @@ use axum::routing::post;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::sync::Mutex;
+use tokio::sync::Notify;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -49,12 +50,41 @@ struct ComfyProxy {
     http: reqwest::Client,
     gpu_queue: GpuQueueClient,
     history_cache: Arc<Mutex<HashMap<String, Bytes>>>,
+    pending_prompts: Arc<Mutex<HashMap<String, Arc<PromptCompletion>>>>,
 }
 
 struct PromptLease {
     lease_id: String,
     stop_heartbeat: oneshot::Sender<()>,
     heartbeat_task: JoinHandle<()>,
+}
+
+struct PromptCompletion {
+    result: Mutex<Option<Result<Bytes, String>>>,
+    notify: Notify,
+}
+
+impl PromptCompletion {
+    fn new() -> Self {
+        Self {
+            result: Mutex::new(None),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn complete(&self, result: Result<Bytes, String>) {
+        *self.result.lock().await = Some(result);
+        self.notify.notify_waiters();
+    }
+
+    async fn wait(&self) -> anyhow::Result<Bytes> {
+        loop {
+            if let Some(result) = self.result.lock().await.clone() {
+                return result.map_err(anyhow::Error::msg);
+            }
+            self.notify.notified().await;
+        }
+    }
 }
 
 impl ComfyProxy {
@@ -65,6 +95,7 @@ impl ComfyProxy {
             http: reqwest::Client::new(),
             gpu_queue,
             history_cache: Arc::new(Mutex::new(HashMap::new())),
+            pending_prompts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -122,7 +153,7 @@ impl ComfyProxy {
                 owner: self.config.owner.clone(),
                 kind,
                 mode: LeaseMode::Exclusive,
-                preempt_llm: true,
+                preempt_llm: self.config.preempt_llm,
                 ttl_seconds: self.config.ttl_seconds,
                 wait_timeout_seconds: Some(self.config.wait_timeout_seconds),
             })
@@ -153,16 +184,20 @@ impl ComfyProxy {
         })
     }
 
-    async fn cleanup_prompt_lease(&self, lease: PromptLease) {
+    async fn cleanup_prompt_lease(&self, lease: PromptLease) -> anyhow::Result<()> {
         let _ = lease.stop_heartbeat.send(());
         lease.heartbeat_task.abort();
         let _ = self.free_backend_memory().await;
         if let Err(err) = self.stop_backend_after_prompt().await {
             eprintln!("Failed to stop ComfyUI before releasing GPU lease: {err:#}");
         }
-        if let Err(err) = self.gpu_queue.release_lease(&lease.lease_id).await {
-            eprintln!("Failed to release GPU lease `{}`: {err:#}", lease.lease_id);
-        }
+        self.gpu_queue
+            .release_lease(&lease.lease_id)
+            .await
+            .map(|_| ())
+            .inspect_err(|err| {
+                eprintln!("Failed to release GPU lease `{}`: {err:#}", lease.lease_id);
+            })
     }
 
     async fn free_backend_memory(&self) -> anyhow::Result<()> {
@@ -181,15 +216,14 @@ impl ComfyProxy {
         Ok(())
     }
 
-    async fn wait_for_prompt_completion(&self, prompt_id: &str) -> anyhow::Result<()> {
+    async fn wait_for_prompt_completion(&self, prompt_id: &str) -> anyhow::Result<Bytes> {
         let deadline =
             tokio::time::Instant::now() + Duration::from_secs(self.config.prompt_timeout_seconds);
         let poll_interval = Duration::from_millis(self.config.prompt_poll_interval_ms);
         loop {
             let response = self.fetch_history(prompt_id).await?;
             if response.completed_history_for(prompt_id) {
-                self.cache_history(prompt_id, response.body_bytes()).await;
-                return Ok(());
+                return Ok(response.body_bytes());
             }
             if tokio::time::Instant::now() >= deadline {
                 anyhow::bail!("timed out waiting for ComfyUI prompt `{prompt_id}`");
@@ -219,6 +253,34 @@ impl ComfyProxy {
 
     async fn cached_history(&self, prompt_id: &str) -> Option<Bytes> {
         self.history_cache.lock().await.get(prompt_id).cloned()
+    }
+
+    async fn register_pending_prompt(&self, prompt_id: &str) -> Arc<PromptCompletion> {
+        let completion = Arc::new(PromptCompletion::new());
+        self.pending_prompts
+            .lock()
+            .await
+            .insert(prompt_id.to_string(), completion.clone());
+        completion
+    }
+
+    async fn pending_prompt(&self, prompt_id: &str) -> Option<Arc<PromptCompletion>> {
+        self.pending_prompts.lock().await.get(prompt_id).cloned()
+    }
+
+    async fn finish_pending_prompt(
+        &self,
+        prompt_id: &str,
+        completion: Arc<PromptCompletion>,
+        result: anyhow::Result<Bytes>,
+    ) {
+        if let Ok(body) = result.as_ref() {
+            self.cache_history(prompt_id, body.clone()).await;
+        }
+        self.pending_prompts.lock().await.remove(prompt_id);
+        completion
+            .complete(result.map_err(|error| error.to_string()))
+            .await;
     }
 
     async fn forward_request(
@@ -377,6 +439,9 @@ async fn history(
         .await
         .map_err(proxy_error)?;
     if response.completed_history_for(&prompt_id) {
+        if let Some(completion) = proxy.pending_prompt(&prompt_id).await {
+            return cached_json_response(completion.wait().await.map_err(proxy_error)?);
+        }
         proxy.cache_history(&prompt_id, response.body_bytes()).await;
     }
     response.into_axum().map_err(proxy_error)
@@ -415,24 +480,39 @@ async fn prompt(
     match result {
         Ok((response, Some(prompt_id))) => {
             let proxy_for_task = proxy.clone();
+            let completion = proxy.register_pending_prompt(&prompt_id).await;
             let lease_for_task = lease.take().expect("lease should still exist");
             tokio::spawn(async move {
-                if let Err(err) = proxy_for_task.wait_for_prompt_completion(&prompt_id).await {
+                let prompt_result = proxy_for_task.wait_for_prompt_completion(&prompt_id).await;
+                let cleanup_result = proxy_for_task.cleanup_prompt_lease(lease_for_task).await;
+                let result = match (prompt_result, cleanup_result) {
+                    (Ok(body), Ok(())) => Ok(body),
+                    (Err(err), _) => Err(err),
+                    (Ok(_), Err(err)) => Err(err.context(format!(
+                        "failed to release GPU lease after ComfyUI prompt `{prompt_id}` completed"
+                    ))),
+                };
+                if let Err(err) = result.as_ref() {
                     eprintln!("ComfyUI prompt `{prompt_id}` watcher failed: {err:#}");
                 }
-                proxy_for_task.cleanup_prompt_lease(lease_for_task).await;
+                proxy_for_task
+                    .finish_pending_prompt(&prompt_id, completion, result)
+                    .await;
             });
             Ok(response)
         }
         Ok((response, None)) => {
             if let Some(lease) = lease.take() {
-                proxy.cleanup_prompt_lease(lease).await;
+                proxy
+                    .cleanup_prompt_lease(lease)
+                    .await
+                    .map_err(proxy_error)?;
             }
             Ok(response)
         }
         Err(err) => {
             if let Some(lease) = lease.take() {
-                proxy.cleanup_prompt_lease(lease).await;
+                let _ = proxy.cleanup_prompt_lease(lease).await;
             }
             Err(proxy_error(err))
         }

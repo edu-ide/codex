@@ -40,6 +40,8 @@ use super::runtime::NativeLlmRuntime;
 use super::scheduler::LeaseScheduler;
 use super::scheduler::LeaseSchedulerError;
 
+const DEFAULT_LLM_IDLE_WAIT_SECONDS: u64 = 900;
+
 #[derive(Clone)]
 pub struct GpuQueueDaemon {
     inner: Arc<GpuQueueDaemonInner>,
@@ -96,7 +98,8 @@ impl GpuQueueDaemon {
                 .await;
         }
 
-        self.preempt_for_granted_lease(&lease).await
+        self.preempt_for_granted_lease(&lease, wait_timeout_seconds.map(Duration::from_secs))
+            .await
     }
 
     pub async fn release_lease(&self, lease_id: &str) -> anyhow::Result<ReleaseLeaseResponse> {
@@ -256,7 +259,10 @@ impl GpuQueueDaemon {
         let deadline = Instant::now() + timeout;
         loop {
             if let Some(active) = self.active_lease_if(&lease.lease_id).await {
-                return self.preempt_for_granted_lease(&active).await;
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                return self
+                    .preempt_for_granted_lease(&active, Some(remaining))
+                    .await;
             }
 
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -285,7 +291,11 @@ impl GpuQueueDaemon {
         }
     }
 
-    async fn preempt_for_granted_lease(&self, lease: &LeaseInfo) -> anyhow::Result<LeaseResponse> {
+    async fn preempt_for_granted_lease(
+        &self,
+        lease: &LeaseInfo,
+        idle_wait_timeout: Option<Duration>,
+    ) -> anyhow::Result<LeaseResponse> {
         if !lease.preempt_llm {
             self.emit_runtime_event(
                 GpuQueueRuntimeEventType::LeaseGranted,
@@ -298,6 +308,39 @@ impl GpuQueueDaemon {
 
         let was_running = self.inner.runtime.is_running().await?;
         if was_running {
+            let idle_wait_timeout = idle_wait_timeout.unwrap_or_else(default_llm_idle_wait_timeout);
+            self.emit_runtime_event(
+                GpuQueueRuntimeEventType::LlmWaitingForIdle,
+                format!(
+                    "Waiting for local LLM runtime to become idle before granting {}",
+                    lease_summary(lease)
+                ),
+                Some(lease.clone()),
+            )
+            .await;
+            if !self
+                .inner
+                .runtime
+                .wait_until_idle(idle_wait_timeout)
+                .await?
+            {
+                self.emit_runtime_event(
+                    GpuQueueRuntimeEventType::LlmIdleWaitTimedOut,
+                    format!(
+                        "Timed out waiting for local LLM runtime to become idle before granting {}",
+                        lease_summary(lease)
+                    ),
+                    Some(lease.clone()),
+                )
+                .await;
+                let mut scheduler = self.inner.scheduler.lock().await;
+                let _ = scheduler.release_lease(&lease.lease_id, now_epoch_secs());
+                self.inner.notify.notify_waiters();
+                anyhow::bail!(
+                    "timed out waiting for local LLM runtime to become idle before granting GPU lease `{}`",
+                    lease.lease_id
+                );
+            }
             self.emit_runtime_event(
                 GpuQueueRuntimeEventType::LlmStopping,
                 format!(
@@ -356,7 +399,7 @@ impl GpuQueueDaemon {
         let Some(lease) = self.active_lease_if(lease_id).await else {
             anyhow::bail!("GPU lease `{lease_id}` is not active");
         };
-        let response = self.preempt_for_granted_lease(&lease).await?;
+        let response = self.preempt_for_granted_lease(&lease, None).await?;
         let Some(lease) = self.lease(&response.lease_id).await else {
             anyhow::bail!(
                 "GPU lease `{}` disappeared during preemption",
@@ -583,6 +626,14 @@ fn now_epoch_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn default_llm_idle_wait_timeout() -> Duration {
+    let seconds = std::env::var("ILHAE_GPU_QUEUE_LLM_IDLE_WAIT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_LLM_IDLE_WAIT_SECONDS);
+    Duration::from_secs(seconds)
 }
 
 fn lease_summary(lease: &LeaseInfo) -> String {

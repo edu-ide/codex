@@ -3,6 +3,45 @@ use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
 use std::collections::BTreeMap;
 
+pub fn create_call_mcp_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "server".to_string(),
+            JsonSchema::string(Some(
+                "MCP server name exactly as configured, for example `videoeditor`.".to_string(),
+            )),
+        ),
+        (
+            "tool".to_string(),
+            JsonSchema::string(Some(
+                "MCP tool/action name to call on that server, for example `CreateProject`."
+                    .to_string(),
+            )),
+        ),
+        (
+            "arguments".to_string(),
+            JsonSchema::object(BTreeMap::new(), /*required*/ None, Some(true.into())),
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "call_mcp_tool".to_string(),
+        description: "Call an action tool exposed by an MCP server. Use this for MCP tools such as videoeditor CreateProject, GenerateImageAndWait, or SetActiveProject. Do not use MCP resource readers for actions.".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec![
+                "server".to_string(),
+                "tool".to_string(),
+                "arguments".to_string(),
+            ]),
+            Some(false.into()),
+        ),
+        output_schema: None,
+    })
+}
+
 pub fn create_list_mcp_resources_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (

@@ -1544,6 +1544,8 @@
         "leaseReleased",
         "leaseExpired",
         "llmStopping",
+        "llmWaitingForIdle",
+        "llmIdleWaitTimedOut",
         "llmStopped",
         "llmStarting",
         "llmRunning",
@@ -3472,6 +3474,10 @@
         "kairosLoop",
         "superLoop",
         "planLoop",
+        "brainResearchLoop",
+        "codebaseResearchLoop",
+        "agentSkillResearchLoop",
+        "webResearchLoop",
         "researchLoop",
         "decisionLoop",
         "wikiLoop",
@@ -3479,6 +3485,7 @@
         "improvementLoop",
         "cleanupLoop",
         "executionLoop",
+        "verificationLoop",
         "contextInjection"
       ],
       "type": "string"

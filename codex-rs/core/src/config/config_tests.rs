@@ -20,6 +20,9 @@ use codex_config::config_toml::RealtimeToml;
 use codex_config::config_toml::RealtimeTransport;
 use codex_config::config_toml::RealtimeWsMode;
 use codex_config::config_toml::RealtimeWsVersion;
+use codex_config::config_toml::SuperloopPhaseToml;
+use codex_config::config_toml::SuperloopProfileToml;
+use codex_config::config_toml::SuperloopToml;
 use codex_config::config_toml::ToolsToml;
 use codex_config::loader::project_trust_key;
 use codex_config::permissions_toml::FilesystemPermissionToml;
@@ -7689,6 +7692,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             memories: MemoriesConfig::default(),
             agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
             agent_interrupt_message_enabled: true,
+            superloop: None,
             codex_home: fixture.codex_home(),
             sqlite_home: fixture.codex_home().to_path_buf(),
             log_dir: fixture.codex_home().join("log").to_path_buf(),
@@ -8032,6 +8036,98 @@ async fn config_toml_service_tier_accepts_arbitrary_string() -> std::io::Result<
 }
 
 #[tokio::test]
+async fn superloop_config_resolves_named_profile_and_profile_overlay() -> std::io::Result<()> {
+    let mut fixture = create_test_fixture()?;
+    fixture.cfg.profile = Some("qwen".to_string());
+    fixture.cfg.superloop = Some(SuperloopToml {
+        default_profile: Some("default".to_string()),
+        sequence: Some(vec!["plan".to_string(), "execution".to_string()]),
+        repeat_from: None,
+        phases: BTreeMap::new(),
+        profiles: BTreeMap::from([(
+            "default".to_string(),
+            SuperloopProfileToml {
+                sequence: Some(vec![
+                    "brain_research".to_string(),
+                    "decision".to_string(),
+                    "execution".to_string(),
+                    "verification".to_string(),
+                ]),
+                repeat_from: Some("execution".to_string()),
+                phases: BTreeMap::from([(
+                    "decision".to_string(),
+                    SuperloopPhaseToml {
+                        prompt: Some("Prefer queue-aware choices.".to_string()),
+                        contract: None,
+                    },
+                )]),
+            },
+        )]),
+    });
+    fixture.cfg.profiles.insert(
+        "qwen".to_string(),
+        ConfigProfile {
+            superloop: Some(SuperloopProfileToml {
+                sequence: None,
+                repeat_from: None,
+                phases: BTreeMap::from([(
+                    "web_research".to_string(),
+                    SuperloopPhaseToml {
+                        prompt: Some("Use the local web_search adapter.".to_string()),
+                        contract: Some("Record citations.".to_string()),
+                    },
+                )]),
+            }),
+            ..Default::default()
+        },
+    );
+    let cwd = fixture.cwd_path();
+    let codex_home = fixture.codex_home();
+
+    let config = Config::load_from_base_config_with_overrides(
+        fixture.cfg,
+        ConfigOverrides {
+            cwd: Some(cwd),
+            ..Default::default()
+        },
+        codex_home,
+    )
+    .await?;
+
+    let superloop = config.superloop.expect("superloop config should resolve");
+    assert_eq!(
+        superloop.sequence,
+        Some(vec![
+            "brain_research".to_string(),
+            "decision".to_string(),
+            "execution".to_string(),
+            "verification".to_string(),
+        ])
+    );
+    assert_eq!(superloop.repeat_from, Some("execution".to_string()));
+    assert_eq!(
+        superloop.phases,
+        BTreeMap::from([
+            (
+                "decision".to_string(),
+                SuperloopPhaseToml {
+                    prompt: Some("Prefer queue-aware choices.".to_string()),
+                    contract: None,
+                },
+            ),
+            (
+                "web_research".to_string(),
+                SuperloopPhaseToml {
+                    prompt: Some("Use the local web_search adapter.".to_string()),
+                    contract: Some("Record citations.".to_string()),
+                },
+            ),
+        ])
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn config_toml_legacy_fast_service_tier_uses_priority_request_value() -> std::io::Result<()> {
     let mut fixture = create_test_fixture()?;
     fixture.cfg.service_tier = Some("fast".to_string());
@@ -8140,6 +8236,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         memories: MemoriesConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
+        superloop: None,
         codex_home: fixture.codex_home(),
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),
@@ -8305,6 +8402,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         memories: MemoriesConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
+        superloop: None,
         codex_home: fixture.codex_home(),
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),
@@ -8455,6 +8553,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         memories: MemoriesConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
+        superloop: None,
         codex_home: fixture.codex_home(),
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),

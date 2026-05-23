@@ -420,6 +420,9 @@ pub struct ConfigToml {
     /// Agent-related settings (thread limits, etc.).
     pub agents: Option<AgentsToml>,
 
+    /// Superloop goal-continuation settings.
+    pub superloop: Option<SuperloopToml>,
+
     /// Memories subsystem settings.
     pub memories: Option<MemoriesToml>,
 
@@ -707,6 +710,79 @@ pub struct AgentsToml {
     /// ```
     #[serde(default, flatten)]
     pub roles: BTreeMap<String, AgentRoleToml>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SuperloopToml {
+    /// Named profile selected when the active config profile does not specify one.
+    pub default_profile: Option<String>,
+
+    /// Inline default loop profile.
+    pub sequence: Option<Vec<String>>,
+
+    /// Phase to return to after the end of `sequence`.
+    pub repeat_from: Option<String>,
+
+    /// Per-phase prompt additions keyed by phase name.
+    #[serde(default)]
+    pub phases: BTreeMap<String, SuperloopPhaseToml>,
+
+    /// Named loop profiles.
+    #[serde(default)]
+    pub profiles: BTreeMap<String, SuperloopProfileToml>,
+}
+
+impl SuperloopToml {
+    pub fn inline_profile(&self) -> SuperloopProfileToml {
+        SuperloopProfileToml {
+            sequence: self.sequence.clone(),
+            repeat_from: self.repeat_from.clone(),
+            phases: self.phases.clone(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SuperloopProfileToml {
+    /// Ordered phase names for one superloop cycle.
+    pub sequence: Option<Vec<String>>,
+
+    /// Phase to return to after the end of `sequence`.
+    pub repeat_from: Option<String>,
+
+    /// Per-phase prompt additions keyed by phase name.
+    #[serde(default)]
+    pub phases: BTreeMap<String, SuperloopPhaseToml>,
+}
+
+impl SuperloopProfileToml {
+    pub fn merge_overlay(&mut self, overlay: &Self) {
+        if overlay.sequence.is_some() {
+            self.sequence = overlay.sequence.clone();
+        }
+        if overlay.repeat_from.is_some() {
+            self.repeat_from = overlay.repeat_from.clone();
+        }
+        for (phase, phase_config) in &overlay.phases {
+            self.phases.insert(phase.clone(), phase_config.clone());
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.sequence.is_none() && self.repeat_from.is_none() && self.phases.is_empty()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SuperloopPhaseToml {
+    /// Additional phase instructions appended after the built-in loop prompt.
+    pub prompt: Option<String>,
+
+    /// Additional contract text appended after the built-in phase contract.
+    pub contract: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]

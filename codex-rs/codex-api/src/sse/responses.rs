@@ -312,29 +312,35 @@ pub fn process_responses_event(
         "response.failed" => {
             if let Some(resp_val) = event.response {
                 let mut response_error = ApiError::Stream("response.failed event received".into());
-                if let Some(error) = resp_val.get("error")
-                    && let Ok(error) = serde_json::from_value::<Error>(error.clone())
-                {
-                    if is_context_window_error(&error) {
-                        response_error = ApiError::ContextWindowExceeded;
-                    } else if is_quota_exceeded_error(&error) {
-                        response_error = ApiError::QuotaExceeded;
-                    } else if is_usage_not_included(&error) {
-                        response_error = ApiError::UsageNotIncluded;
-                    } else if is_cyber_policy_error(&error) {
-                        let message = cyber_policy_message(error.message);
-                        response_error = ApiError::CyberPolicy { message };
-                    } else if is_invalid_prompt_error(&error) {
-                        let message = error
-                            .message
-                            .unwrap_or_else(|| "Invalid request.".to_string());
+                if let Some(error_value) = resp_val.get("error") {
+                    if let Ok(error) = serde_json::from_value::<Error>(error_value.clone()) {
+                        if is_context_window_error(&error) {
+                            response_error = ApiError::ContextWindowExceeded;
+                        } else if is_quota_exceeded_error(&error) {
+                            response_error = ApiError::QuotaExceeded;
+                        } else if is_usage_not_included(&error) {
+                            response_error = ApiError::UsageNotIncluded;
+                        } else if is_cyber_policy_error(&error) {
+                            let message = cyber_policy_message(error.message);
+                            response_error = ApiError::CyberPolicy { message };
+                        } else if is_invalid_prompt_error(&error) {
+                            let message = error
+                                .message
+                                .unwrap_or_else(|| "Invalid request.".to_string());
+                            response_error = ApiError::InvalidRequest { message };
+                        } else if is_malformed_tool_call_arguments_error(&error) {
+                            let message = error.message.unwrap_or_default();
+                            response_error = ApiError::InvalidRequest { message };
+                        } else if is_server_overloaded_error(&error) {
+                            response_error = ApiError::ServerOverloaded;
+                        } else {
+                            let delay = try_parse_retry_after(&error);
+                            let message = error.message.unwrap_or_default();
+                            response_error = ApiError::Retryable { message, delay };
+                        }
+                    } else if let Some(message) = malformed_tool_call_arguments_message(error_value)
+                    {
                         response_error = ApiError::InvalidRequest { message };
-                    } else if is_server_overloaded_error(&error) {
-                        response_error = ApiError::ServerOverloaded;
-                    } else {
-                        let delay = try_parse_retry_after(&error);
-                        let message = error.message.unwrap_or_default();
-                        response_error = ApiError::Retryable { message, delay };
                     }
                 }
                 return Err(ResponsesEventError::Api(response_error));
@@ -524,6 +530,21 @@ fn is_usage_not_included(error: &Error) -> bool {
 
 fn is_invalid_prompt_error(error: &Error) -> bool {
     error.code.as_deref() == Some("invalid_prompt")
+}
+
+fn is_malformed_tool_call_arguments_error(error: &Error) -> bool {
+    error
+        .message
+        .as_deref()
+        .is_some_and(|message| message.contains("Failed to parse tool call arguments as JSON"))
+}
+
+fn malformed_tool_call_arguments_message(error: &Value) -> Option<String> {
+    error
+        .get("message")
+        .and_then(Value::as_str)
+        .filter(|message| message.contains("Failed to parse tool call arguments as JSON"))
+        .map(ToString::to_string)
 }
 
 fn is_cyber_policy_error(error: &Error) -> bool {
@@ -954,6 +975,27 @@ mod tests {
                 assert_eq!(
                     message,
                     "Invalid prompt: we've limited access to this content for safety reasons."
+                );
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_tool_call_arguments_error_is_invalid_request() {
+        let raw_error = r#"{"type":"response.failed","sequence_number":3,"response":{"id":"resp_local_tool_parse","object":"response","created_at":1759771628,"status":"failed","error":{"code":500,"type":"server_error","message":"Failed to parse tool call arguments as JSON: parse error at line 1, column 156"}}}"#;
+
+        let sse1 = format!("event: response.failed\ndata: {raw_error}\n\n");
+
+        let events = collect_events(&[sse1.as_bytes()]).await;
+
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            Err(ApiError::InvalidRequest { message }) => {
+                assert_eq!(
+                    message,
+                    "Failed to parse tool call arguments as JSON: parse error at line 1, column 156"
                 );
             }
             other => panic!("unexpected event: {other:?}"),

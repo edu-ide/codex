@@ -291,4 +291,5 @@ fn provider_capability_methods_disable_provider_bound_tool_surfaces() {
     assert!(!tools_config.image_gen_tool);
     assert!(!tools_config.namespace_tools);
     assert_eq!(tools_config.web_search_mode, None);
+    assert!(tools_config.local_web_search_tool);
 }

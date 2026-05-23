@@ -16,6 +16,7 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
+use codex_tools::TOOL_SEARCH_TOOL_NAME;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use codex_tools::default_namespace_description;
@@ -90,6 +91,32 @@ fn extension_tool_test_registry() -> Arc<ExtensionRegistry<Config>> {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.tool_contributor(Arc::new(ExtensionEchoContributor));
     Arc::new(builder.build())
+}
+
+#[test]
+fn build_tool_call_accepts_tool_search_as_function_call() -> anyhow::Result<()> {
+    let call = ToolRouter::build_tool_call(ResponseItem::FunctionCall {
+        id: None,
+        name: TOOL_SEARCH_TOOL_NAME.to_string(),
+        namespace: None,
+        arguments: json!({
+            "query": "videoeditor",
+            "limit": 3,
+        })
+        .to_string(),
+        call_id: "search-1".to_string(),
+    })?
+    .expect("tool_search function call should produce a tool call");
+
+    assert_eq!(call.tool_name, ToolName::plain(TOOL_SEARCH_TOOL_NAME));
+    assert_eq!(call.call_id, "search-1");
+    let ToolPayload::ToolSearch { arguments } = call.payload else {
+        panic!("expected tool_search payload");
+    };
+    assert_eq!(arguments.query, "videoeditor");
+    assert_eq!(arguments.limit, Some(3));
+
+    Ok(())
 }
 
 #[tokio::test]

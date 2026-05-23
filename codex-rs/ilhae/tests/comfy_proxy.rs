@@ -82,6 +82,7 @@ ttl_seconds = 120
 wait_timeout_seconds = 12
 prompt_poll_interval_ms = 25
 prompt_timeout_seconds = 90
+preempt_llm = false
 stop_after_prompt = false
 start_backend_for_passthrough = false
 "#,
@@ -102,6 +103,7 @@ start_backend_for_passthrough = false
     assert_eq!(config.wait_timeout_seconds, 12);
     assert_eq!(config.prompt_poll_interval_ms, 25);
     assert_eq!(config.prompt_timeout_seconds, 90);
+    assert!(!config.preempt_llm);
     assert!(!config.stop_after_prompt);
     assert!(!config.start_backend_for_passthrough);
 }
@@ -113,12 +115,16 @@ async fn prompt_route_holds_gpu_lease_until_comfy_history_completes() {
         entries: Arc<Mutex<Vec<String>>>,
         history_hits: Arc<Mutex<usize>>,
         released: Arc<Notify>,
+        release_started: Arc<Notify>,
+        allow_release: Arc<Notify>,
     }
 
     let calls = Calls {
         entries: Arc::new(Mutex::new(Vec::new())),
         history_hits: Arc::new(Mutex::new(0)),
         released: Arc::new(Notify::new()),
+        release_started: Arc::new(Notify::new()),
+        allow_release: Arc::new(Notify::new()),
     };
     let gpu_queue_url = spawn_router(
         Router::new()
@@ -129,11 +135,10 @@ async fn prompt_route_holds_gpu_lease_until_comfy_history_completes() {
                     move |axum::Json(request): axum::Json<LeaseRequest>| {
                         let calls = calls.clone();
                         async move {
-                            calls
-                                .entries
-                                .lock()
-                                .await
-                                .push(format!("lease:{}", request.kind));
+                            calls.entries.lock().await.push(format!(
+                                "lease:{}:preempt={}",
+                                request.kind, request.preempt_llm
+                            ));
                             axum::Json(LeaseResponse {
                                 lease_id: "lease-1".to_string(),
                                 state: LeaseState::Granted,
@@ -156,6 +161,8 @@ async fn prompt_route_holds_gpu_lease_until_comfy_history_completes() {
                                 .lock()
                                 .await
                                 .push(format!("release:{lease_id}"));
+                            calls.release_started.notify_one();
+                            calls.allow_release.notified().await;
                             calls.released.notify_one();
                             axum::Json(ReleaseLeaseResponse {
                                 released: lease_info(&lease_id),
@@ -254,12 +261,33 @@ async fn prompt_route_holds_gpu_lease_until_comfy_history_completes() {
             "prompt_id": "prompt-1"
         })
     );
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        calls.release_started.notified(),
+    )
+    .await
+    .expect("lease release should start after prompt history appears");
+
+    let history_task = tokio::spawn({
+        let gateway_url = gateway_url.clone();
+        async move { reqwest::get(format!("{gateway_url}/history/prompt-1")).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_millis(100), async {
+        while !history_task.is_finished() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect_err("completed history should wait until GPU lease cleanup finishes");
+
+    calls.allow_release.notify_one();
     tokio::time::timeout(std::time::Duration::from_secs(2), calls.released.notified())
         .await
         .expect("lease should be released after prompt history appears");
 
-    let cached_history = reqwest::get(format!("{gateway_url}/history/prompt-1"))
+    let cached_history = history_task
         .await
+        .expect("history task should not panic")
         .expect("cached history response");
     assert_eq!(cached_history.status(), reqwest::StatusCode::OK);
     assert_eq!(
@@ -274,12 +302,12 @@ async fn prompt_route_holds_gpu_lease_until_comfy_history_completes() {
             }
         })
     );
-    assert_eq!(*calls.history_hits.lock().await, 1);
+    assert_eq!(*calls.history_hits.lock().await, 2);
 
     assert_eq!(
         *calls.entries.lock().await,
         vec![
-            "lease:video".to_string(),
+            "lease:video:preempt=true".to_string(),
             "free".to_string(),
             "prompt".to_string(),
             "free".to_string(),

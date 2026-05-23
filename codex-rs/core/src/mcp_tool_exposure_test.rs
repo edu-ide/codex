@@ -155,6 +155,45 @@ async fn searches_large_effective_tool_sets() {
 }
 
 #[tokio::test]
+async fn directly_exposes_videoeditor_even_when_large_tool_sets_are_deferred() {
+    let config = test_config().await;
+    let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;
+    let mut mcp_tools = numbered_mcp_tools(DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD);
+    mcp_tools.push(make_mcp_tool(
+        "videoeditor",
+        "CreateProject",
+        "mcp__videoeditor__",
+        "CreateProject",
+        /*connector_id*/ None,
+        /*connector_name*/ None,
+    ));
+
+    let exposure = build_mcp_tool_exposure(
+        &mcp_tools,
+        /*connectors*/ None,
+        &[],
+        &config,
+        &tools_config,
+    );
+
+    let direct_tool_names = tool_names(&exposure.direct_tools);
+    assert_eq!(
+        direct_tool_names,
+        HashSet::from([ToolName::namespaced("mcp__videoeditor__", "CreateProject")])
+    );
+    let deferred_tool_names = tool_names(
+        exposure
+            .deferred_tools
+            .as_ref()
+            .expect("large non-preferred MCP tools should remain deferred"),
+    );
+    assert!(deferred_tool_names.contains(&ToolName::namespaced("mcp__rmcp__", "tool_0")));
+    assert!(
+        !deferred_tool_names.contains(&ToolName::namespaced("mcp__videoeditor__", "CreateProject"))
+    );
+}
+
+#[tokio::test]
 async fn directly_exposes_explicit_apps_without_deferred_overlap() {
     let config = test_config().await;
     let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;

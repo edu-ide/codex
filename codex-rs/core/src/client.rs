@@ -743,12 +743,13 @@ impl ModelClient {
         let prompt_cache_key = Some(self.state.thread_id.to_string());
         let service_tier =
             service_tier.filter(|service_tier| model_info.supports_service_tier(service_tier));
+        let tool_choice = tool_choice_for_request(&tools);
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             instructions: instructions.clone(),
             input,
             tools,
-            tool_choice: "auto".to_string(),
+            tool_choice: tool_choice.to_string(),
             parallel_tool_calls: prompt.parallel_tool_calls,
             reasoning,
             store: provider.is_azure_responses_endpoint(),
@@ -1223,6 +1224,7 @@ impl ModelClientSession {
             .as_ref()
             .map(AuthManager::unauthorized_recovery);
         let mut pending_retry = PendingUnauthorizedRetry::default();
+        let mut retried_without_tools_after_malformed_tool_call = false;
         loop {
             let client_setup = self.client.current_client_setup().await?;
             let transport = ReqwestTransport::new(build_reqwest_client());
@@ -1242,7 +1244,7 @@ impl ModelClientSession {
                 .build_responses_options(turn_metadata_header, compression)
                 .await;
 
-            let request = self.client.build_responses_request(
+            let mut request = self.client.build_responses_request(
                 &client_setup.api_provider,
                 prompt,
                 model_info,
@@ -1250,6 +1252,10 @@ impl ModelClientSession {
                 summary,
                 service_tier.clone(),
             )?;
+            if retried_without_tools_after_malformed_tool_call {
+                prepare_tool_retry_without_tools(&mut request);
+            }
+            let request_allows_tools = request.tool_choice != "none";
             let inference_trace_attempt = inference_trace.start_attempt();
             inference_trace_attempt.add_request_headers(&mut options.extra_headers);
             inference_trace_attempt.record_started(&request);
@@ -1293,6 +1299,23 @@ impl ModelClientSession {
                 Err(err) => {
                     let response_debug_context =
                         extract_response_debug_context_from_api_error(&err);
+                    if !retried_without_tools_after_malformed_tool_call
+                        && request_allows_tools
+                        && is_malformed_tool_call_arguments_error(&err)
+                    {
+                        retried_without_tools_after_malformed_tool_call = true;
+                        let err = map_api_error(err);
+                        inference_trace_attempt.record_failed(
+                            &err,
+                            response_debug_context.request_id.as_deref(),
+                            /*output_items*/ &[],
+                        );
+                        warn!(
+                            model = %model_info.slug,
+                            "provider rejected malformed tool-call arguments; retrying once without tools"
+                        );
+                        continue;
+                    }
                     let err = map_api_error(err);
                     inference_trace_attempt.record_failed(
                         &err,
@@ -2071,6 +2094,30 @@ fn api_error_http_status(error: &ApiError) -> Option<u16> {
         ApiError::Transport(TransportError::Http { status, .. }) => Some(status.as_u16()),
         _ => None,
     }
+}
+
+fn is_malformed_tool_call_arguments_error(error: &ApiError) -> bool {
+    let ApiError::Transport(TransportError::Http {
+        status,
+        body: Some(body),
+        ..
+    }) = error
+    else {
+        return false;
+    };
+
+    *status == StatusCode::INTERNAL_SERVER_ERROR
+        && body.contains("Failed to parse tool call arguments as JSON")
+}
+
+fn prepare_tool_retry_without_tools(request: &mut ResponsesApiRequest) {
+    request.tools.clear();
+    request.tool_choice = "none".to_string();
+    request.parallel_tool_calls = false;
+}
+
+fn tool_choice_for_request(tools: &[serde_json::Value]) -> &'static str {
+    if tools.is_empty() { "none" } else { "auto" }
 }
 
 struct ApiTelemetry {

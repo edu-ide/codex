@@ -86,6 +86,8 @@
         "leaseReleased",
         "leaseExpired",
         "llmStopping",
+        "llmWaitingForIdle",
+        "llmIdleWaitTimedOut",
         "llmStopped",
         "llmStarting",
         "llmRunning",

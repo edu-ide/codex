@@ -29,6 +29,7 @@ use codex_config::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
+use codex_config::config_toml::SuperloopProfileToml;
 use codex_config::config_toml::ThreadStoreToml;
 use codex_config::config_toml::validate_model_providers;
 use codex_config::loader::load_config_layers_state;
@@ -741,6 +742,9 @@ pub struct Config {
 
     /// Whether to record a model-visible message when an agent turn is interrupted.
     pub agent_interrupt_message_enabled: bool,
+
+    /// Effective superloop goal-continuation settings.
+    pub superloop: Option<SuperloopProfileToml>,
 
     /// Maximum nesting depth allowed for spawned agent threads.
     pub agent_max_depth: i32,
@@ -2209,6 +2213,29 @@ fn resolve_multi_agent_v2_config(
     }
 }
 
+fn resolve_superloop_config(
+    config_toml: &ConfigToml,
+    config_profile: &ConfigProfile,
+) -> Option<SuperloopProfileToml> {
+    let superloop = config_toml.superloop.as_ref()?;
+    let mut resolved = superloop.inline_profile();
+
+    let selected_profile = config_profile
+        .superloop_profile
+        .as_ref()
+        .or(superloop.default_profile.as_ref());
+    if let Some(selected_profile) = selected_profile
+        && let Some(profile) = superloop.profiles.get(selected_profile)
+    {
+        resolved.merge_overlay(profile);
+    }
+    if let Some(profile) = config_profile.superloop.as_ref() {
+        resolved.merge_overlay(profile);
+    }
+
+    (!resolved.is_empty()).then_some(resolved)
+}
+
 fn resolve_terminal_resize_reflow_config(config_toml: &ConfigToml) -> TerminalResizeReflowConfig {
     let Some(tui) = config_toml.tui.as_ref() else {
         return TerminalResizeReflowConfig::default();
@@ -2899,6 +2926,7 @@ impl Config {
             .unwrap_or(WebSearchMode::Cached);
         let web_search_config = resolve_web_search_config(&cfg, &config_profile);
         let multi_agent_v2 = resolve_multi_agent_v2_config(&cfg, &config_profile);
+        let superloop = resolve_superloop_config(&cfg, &config_profile);
         let apps_mcp_path_override = if features.enabled(Feature::AppsMcpPathOverride) {
             let base = apps_mcp_path_override_toml_config(cfg.features.as_ref());
             let profile = apps_mcp_path_override_toml_config(config_profile.features.as_ref());
@@ -3411,6 +3439,7 @@ impl Config {
             memories: cfg.memories.unwrap_or_default().into(),
             agent_job_max_runtime_seconds,
             agent_interrupt_message_enabled,
+            superloop,
             codex_home,
             sqlite_home,
             log_dir,

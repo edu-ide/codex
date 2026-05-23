@@ -733,13 +733,23 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
         stop_native_runtime_server_for_config(&profile_id, &config).await?;
     }
 
-    spawn_native_runtime_server(&config)?;
+    let runtime_pid = spawn_native_runtime_server(&config)?;
 
     let timeout_secs = config.startup_timeout_secs.max(1);
     let started = tokio::time::Instant::now();
     loop {
         if native_runtime_healthcheck(&config.health_url).await {
             break;
+        }
+        if !std::path::Path::new(&format!("/proc/{runtime_pid}")).exists() {
+            let log_hint = if config.log_file.trim().is_empty() {
+                "no native runtime log_file is configured".to_string()
+            } else {
+                format!("see {}", config.log_file)
+            };
+            anyhow::bail!(
+                "native runtime for profile `{profile_id}` exited before becoming healthy; {log_hint}"
+            );
         }
         if started.elapsed().as_secs() >= timeout_secs {
             anyhow::bail!(

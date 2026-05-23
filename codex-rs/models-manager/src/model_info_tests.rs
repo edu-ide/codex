@@ -72,3 +72,19 @@ fn model_context_window_uses_model_value_without_override() {
 
     assert_eq!(updated, model);
 }
+
+#[test]
+fn qwen_local_model_uses_known_metadata() {
+    let model = model_info_from_slug("Qwen3.6-27B-UD-Q4_K_XL");
+
+    assert!(!model.used_fallback_model_metadata);
+    assert!(model.supports_search_tool);
+    assert_eq!(model.display_name, "Qwen3.6 27B UD Q4_K_XL");
+}
+
+#[test]
+fn generic_fallback_model_does_not_support_tool_search() {
+    let model = model_info_from_slug("unknown-model");
+
+    assert!(!model.supports_search_tool);
+}

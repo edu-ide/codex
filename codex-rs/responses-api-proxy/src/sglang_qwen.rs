@@ -5,6 +5,7 @@ use reqwest::Url;
 use serde_json::Map;
 use serde_json::Value;
 use serde_json::json;
+use std::collections::HashMap;
 
 const ILHAE_NATIVE_THINKING_MODE_ENV: &str = "ILHAE_NATIVE_THINKING_MODE";
 
@@ -26,14 +27,62 @@ fn replace_terminal_path(upstream_url: &Url, terminal: &str) -> Result<Url> {
     Ok(url)
 }
 
+#[cfg(test)]
 pub(crate) fn responses_to_chat_completions_request(body: &Value) -> Result<Value> {
-    responses_to_chat_completions_request_with_thinking(body, native_thinking_enabled_from_env())
+    Ok(responses_to_chat_completions_request_with_tool_name_map(body)?.body)
 }
 
+#[cfg(test)]
 pub(crate) fn responses_to_chat_completions_request_with_thinking(
     body: &Value,
     enable_thinking: bool,
 ) -> Result<Value> {
+    Ok(responses_to_chat_completions_request_with_options(body, enable_thinking)?.body)
+}
+
+#[derive(Debug)]
+pub(crate) struct ChatCompletionsRequest {
+    pub(crate) body: Value,
+    pub(crate) tool_name_map: ChatToolNameMap,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ChatToolNameMap {
+    flattened_names: HashMap<String, NamespacedToolName>,
+}
+
+#[derive(Clone, Debug)]
+struct NamespacedToolName {
+    namespace: String,
+    name: String,
+}
+
+impl ChatToolNameMap {
+    fn insert(&mut self, namespace: &str, name: &str) {
+        self.flattened_names.insert(
+            flatten_namespaced_tool_name(namespace, name),
+            NamespacedToolName {
+                namespace: namespace.to_string(),
+                name: name.to_string(),
+            },
+        );
+    }
+
+    fn split(&self, name: &str) -> Option<&NamespacedToolName> {
+        self.flattened_names.get(name)
+    }
+}
+
+pub(crate) fn responses_to_chat_completions_request_with_tool_name_map(
+    body: &Value,
+) -> Result<ChatCompletionsRequest> {
+    responses_to_chat_completions_request_with_options(body, native_thinking_enabled_from_env())
+}
+
+fn responses_to_chat_completions_request_with_options(
+    body: &Value,
+    enable_thinking: bool,
+) -> Result<ChatCompletionsRequest> {
     let model = body
         .get("model")
         .and_then(Value::as_str)
@@ -73,15 +122,20 @@ pub(crate) fn responses_to_chat_completions_request_with_thinking(
         .get("tools")
         .and_then(Value::as_array)
         .map(|tools| {
-            tools
-                .iter()
-                .map(response_tool_to_chat_tool)
-                .collect::<Result<Vec<_>>>()
+            let mut tool_name_map = ChatToolNameMap::default();
+            let mut chat_tools = Vec::new();
+            tools.iter().try_for_each(|tool| -> Result<()> {
+                chat_tools.extend(response_tool_to_chat_tools(tool, &mut tool_name_map)?);
+                Ok(())
+            })?;
+            Ok::<_, anyhow::Error>((chat_tools, tool_name_map))
         })
         .transpose()?
         .unwrap_or_default();
+    let (tools, tool_name_map) = tools;
 
-    Ok(json!({
+    Ok(ChatCompletionsRequest {
+        body: json!({
         "model": model,
         "messages": messages,
         "tools": tools,
@@ -91,7 +145,9 @@ pub(crate) fn responses_to_chat_completions_request_with_thinking(
             "enable_thinking": enable_thinking
         },
         "stream": false
-    }))
+        }),
+        tool_name_map,
+    })
 }
 
 fn native_thinking_enabled_from_env() -> bool {
@@ -125,30 +181,84 @@ fn extract_system_message_content(item: &Value) -> Result<Option<String>> {
     Ok(Some(content_items_to_text(item.get("content"))))
 }
 
-fn response_tool_to_chat_tool(tool: &Value) -> Result<Value> {
+fn response_tool_to_chat_tools(
+    tool: &Value,
+    tool_name_map: &mut ChatToolNameMap,
+) -> Result<Vec<Value>> {
     if let Some(function) = tool.get("function") {
-        return Ok(json!({
+        return Ok(vec![json!({
             "type": "function",
             "function": function.clone()
-        }));
+        })]);
     }
 
     if tool.get("type").and_then(Value::as_str) == Some("function") {
-        let name = tool
-            .get("name")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("function tool missing name"))?;
-        return Ok(json!({
+        return Ok(vec![response_function_tool_to_chat_tool(tool, None)?]);
+    }
+
+    if tool.get("type").and_then(Value::as_str) == Some("tool_search") {
+        return Ok(vec![json!({
             "type": "function",
             "function": {
-                "name": name,
+                "name": "tool_search",
                 "description": tool.get("description").cloned().unwrap_or(Value::Null),
                 "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({"type": "object", "properties": {}}))
             }
-        }));
+        })]);
+    }
+
+    if tool.get("type").and_then(Value::as_str) == Some("namespace") {
+        let namespace = tool
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("namespace tool missing name"))?;
+        let namespace_tools = tool
+            .get("tools")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("namespace tool missing tools"))?;
+        let mut chat_tools = Vec::with_capacity(namespace_tools.len());
+        for namespace_tool in namespace_tools {
+            if namespace_tool.get("type").and_then(Value::as_str) != Some("function") {
+                return Err(anyhow!(
+                    "unsupported namespace tool type for sglang-qwen mode"
+                ));
+            }
+            let name = namespace_tool
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("namespace function tool missing name"))?;
+            tool_name_map.insert(namespace, name);
+            chat_tools.push(response_function_tool_to_chat_tool(
+                namespace_tool,
+                Some(namespace),
+            )?);
+        }
+        return Ok(chat_tools);
     }
 
     Err(anyhow!("unsupported tool type for sglang-qwen mode"))
+}
+
+fn response_function_tool_to_chat_tool(tool: &Value, namespace: Option<&str>) -> Result<Value> {
+    let name = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("function tool missing name"))?;
+    let chat_name = namespace
+        .map(|namespace| flatten_namespaced_tool_name(namespace, name))
+        .unwrap_or_else(|| name.to_string());
+    Ok(json!({
+        "type": "function",
+        "function": {
+            "name": chat_name,
+            "description": tool.get("description").cloned().unwrap_or(Value::Null),
+            "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({"type": "object", "properties": {}}))
+        }
+    }))
+}
+
+fn flatten_namespaced_tool_name(namespace: &str, name: &str) -> String {
+    format!("{namespace}{name}")
 }
 
 fn response_input_item_to_chat_message(item: &Value) -> Result<Option<Value>> {
@@ -173,6 +283,11 @@ fn response_input_item_to_chat_message(item: &Value) -> Result<Option<Value>> {
                 .get("name")
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow!("function_call item missing name"))?;
+            let name = item
+                .get("namespace")
+                .and_then(Value::as_str)
+                .map(|namespace| flatten_namespaced_tool_name(namespace, name))
+                .unwrap_or_else(|| name.to_string());
             let arguments = item
                 .get("arguments")
                 .and_then(Value::as_str)
@@ -251,7 +366,18 @@ fn content_items_to_text(content: Option<&Value>) -> String {
         .unwrap_or_default()
 }
 
+#[cfg(test)]
 pub(crate) fn transform_chat_completion_to_responses_json(completion: &Value) -> Result<Value> {
+    transform_chat_completion_to_responses_json_with_tool_name_map(
+        completion,
+        &ChatToolNameMap::default(),
+    )
+}
+
+pub(crate) fn transform_chat_completion_to_responses_json_with_tool_name_map(
+    completion: &Value,
+    tool_name_map: &ChatToolNameMap,
+) -> Result<Value> {
     let response_id = completion
         .get("id")
         .and_then(Value::as_str)
@@ -274,7 +400,7 @@ pub(crate) fn transform_chat_completion_to_responses_json(completion: &Value) ->
         .and_then(|choice| choice.get("message"))
         .ok_or_else(|| anyhow!("chat completion missing choices[0].message"))?;
 
-    let output = message_to_response_items(message)?;
+    let output = message_to_response_items(message, tool_name_map)?;
 
     Ok(json!({
         "id": response_id,
@@ -287,11 +413,13 @@ pub(crate) fn transform_chat_completion_to_responses_json(completion: &Value) ->
     }))
 }
 
-pub(crate) fn build_sglang_qwen_response_body(
+pub(crate) fn build_sglang_qwen_response_body_with_tool_name_map(
     completion: &Value,
     wants_stream: bool,
+    tool_name_map: &ChatToolNameMap,
 ) -> Result<(&'static str, Vec<u8>)> {
-    let response = transform_chat_completion_to_responses_json(completion)?;
+    let response =
+        transform_chat_completion_to_responses_json_with_tool_name_map(completion, tool_name_map)?;
     if !wants_stream {
         return Ok(("application/json", serde_json::to_vec(&response)?));
     }
@@ -386,13 +514,20 @@ fn map_usage(usage: Option<&Value>) -> Value {
     })
 }
 
-fn message_to_response_items(message: &Value) -> Result<Vec<Value>> {
+fn message_to_response_items(
+    message: &Value,
+    tool_name_map: &ChatToolNameMap,
+) -> Result<Vec<Value>> {
     if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array)
         && !tool_calls.is_empty()
     {
         let mut items = Vec::with_capacity(tool_calls.len());
         for (index, tool_call) in tool_calls.iter().enumerate() {
-            items.push(tool_call_to_response_item(tool_call, index + 1)?);
+            items.push(tool_call_to_response_item(
+                tool_call,
+                index + 1,
+                tool_name_map,
+            )?);
         }
         return Ok(items);
     }
@@ -402,7 +537,7 @@ fn message_to_response_items(message: &Value) -> Result<Vec<Value>> {
         .and_then(Value::as_str)
         .unwrap_or_default();
 
-    let tool_calls = parse_tool_calls_from_content(content)?;
+    let tool_calls = parse_tool_calls_from_content(content, tool_name_map)?;
     if !tool_calls.is_empty() {
         return Ok(tool_calls);
     }
@@ -422,7 +557,11 @@ fn message_to_response_items(message: &Value) -> Result<Vec<Value>> {
     })])
 }
 
-fn tool_call_to_response_item(tool_call: &Value, fallback_index: usize) -> Result<Value> {
+fn tool_call_to_response_item(
+    tool_call: &Value,
+    fallback_index: usize,
+    tool_name_map: &ChatToolNameMap,
+) -> Result<Value> {
     let function = tool_call
         .get("function")
         .ok_or_else(|| anyhow!("tool call missing function"))?;
@@ -440,28 +579,53 @@ fn tool_call_to_response_item(tool_call: &Value, fallback_index: usize) -> Resul
         .map(ToString::to_string)
         .unwrap_or_else(|| format!("call_{fallback_index}"));
 
-    Ok(json!({
-        "type": "function_call",
-        "call_id": call_id,
-        "name": name,
-        "arguments": arguments
-    }))
+    Ok(response_function_call_item(
+        call_id,
+        name,
+        arguments.to_string(),
+        tool_name_map,
+    ))
 }
 
-fn parse_tool_calls_from_content(content: &str) -> Result<Vec<Value>> {
+fn parse_tool_calls_from_content(
+    content: &str,
+    tool_name_map: &ChatToolNameMap,
+) -> Result<Vec<Value>> {
     let blocks = extract_tag_blocks(content, "tool_call");
     let mut items = Vec::new();
     for (index, block) in blocks.iter().enumerate() {
         let (name, arguments) = parse_tool_call_block(block)
             .with_context(|| format!("parsing tool call block {}", index + 1))?;
-        items.push(json!({
-            "type": "function_call",
-            "call_id": format!("call_{}", index + 1),
-            "name": name,
-            "arguments": arguments
-        }));
+        items.push(response_function_call_item(
+            format!("call_{}", index + 1),
+            &name,
+            arguments,
+            tool_name_map,
+        ));
     }
     Ok(items)
+}
+
+fn response_function_call_item(
+    call_id: String,
+    name: &str,
+    arguments: String,
+    tool_name_map: &ChatToolNameMap,
+) -> Value {
+    let mut item = Map::new();
+    item.insert("type".to_string(), json!("function_call"));
+    item.insert("call_id".to_string(), Value::String(call_id));
+    if let Some(namespaced) = tool_name_map.split(name) {
+        item.insert(
+            "namespace".to_string(),
+            Value::String(namespaced.namespace.clone()),
+        );
+        item.insert("name".to_string(), Value::String(namespaced.name.clone()));
+    } else {
+        item.insert("name".to_string(), Value::String(name.to_string()));
+    }
+    item.insert("arguments".to_string(), Value::String(arguments));
+    Value::Object(item)
 }
 
 fn parse_tool_call_block(block: &str) -> Result<(String, String)> {
@@ -576,6 +740,8 @@ fn strip_think_blocks(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::responses_to_chat_completions_request_with_thinking;
+    use super::responses_to_chat_completions_request_with_tool_name_map;
+    use super::transform_chat_completion_to_responses_json_with_tool_name_map;
     use serde_json::json;
 
     #[test]
@@ -593,5 +759,173 @@ mod tests {
             .expect("chat request");
 
         assert_eq!(chat["chat_template_kwargs"]["enable_thinking"], json!(true));
+    }
+
+    #[test]
+    fn namespace_tools_flatten_for_chat_completions() {
+        let request = json!({
+            "model": "ilhae",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "이미지를 생성해."}]
+            }],
+            "tools": [{
+                "type": "namespace",
+                "name": "mcp__videoeditor__",
+                "description": "Video editor tools.",
+                "tools": [{
+                    "type": "function",
+                    "name": "GenerateImageAndWait",
+                    "description": "Generate an image.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": { "type": "string" }
+                        }
+                    }
+                }]
+            }]
+        });
+
+        let converted = responses_to_chat_completions_request_with_tool_name_map(&request)
+            .expect("chat request");
+
+        assert_eq!(
+            converted.body["tools"][0]["function"]["name"],
+            json!("mcp__videoeditor__GenerateImageAndWait")
+        );
+        assert_eq!(
+            converted.body["tools"][0]["function"]["parameters"],
+            json!({
+                "type": "object",
+                "properties": {
+                    "prompt": { "type": "string" }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn tool_search_converts_to_chat_function_tool() {
+        let request = json!({
+            "model": "ilhae",
+            "input": [],
+            "tools": [{
+                "type": "tool_search",
+                "execution": "client",
+                "description": "Search deferred tools.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string" }
+                    },
+                    "required": ["query"]
+                }
+            }]
+        });
+
+        let chat = responses_to_chat_completions_request_with_thinking(&request, false)
+            .expect("chat request");
+
+        assert_eq!(
+            chat["tools"][0],
+            json!({
+                "type": "function",
+                "function": {
+                    "name": "tool_search",
+                    "description": "Search deferred tools.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string" }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn flattened_namespace_tool_calls_restore_responses_namespace() {
+        let request = json!({
+            "model": "ilhae",
+            "input": [],
+            "tools": [{
+                "type": "namespace",
+                "name": "mcp__videoeditor__",
+                "description": "Video editor tools.",
+                "tools": [{
+                    "type": "function",
+                    "name": "GenerateImageAndWait",
+                    "description": "Generate an image.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }]
+            }]
+        });
+        let converted = responses_to_chat_completions_request_with_tool_name_map(&request)
+            .expect("chat request");
+        let completion = json!({
+            "id": "chatcmpl-1",
+            "created": 1776400000,
+            "model": "ilhae",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "mcp__videoeditor__GenerateImageAndWait",
+                            "arguments": "{\"prompt\":\"Joseon\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let response = transform_chat_completion_to_responses_json_with_tool_name_map(
+            &completion,
+            &converted.tool_name_map,
+        )
+        .expect("responses json");
+
+        assert_eq!(
+            response["output"],
+            json!([{
+                "type": "function_call",
+                "call_id": "call-1",
+                "namespace": "mcp__videoeditor__",
+                "name": "GenerateImageAndWait",
+                "arguments": "{\"prompt\":\"Joseon\"}"
+            }])
+        );
+    }
+
+    #[test]
+    fn previous_namespaced_function_calls_flatten_for_chat_history() {
+        let request = json!({
+            "model": "ilhae",
+            "input": [{
+                "type": "function_call",
+                "call_id": "call-1",
+                "namespace": "mcp__videoeditor__",
+                "name": "GenerateImageAndWait",
+                "arguments": "{\"prompt\":\"Joseon\"}"
+            }]
+        });
+
+        let chat = responses_to_chat_completions_request_with_thinking(&request, false)
+            .expect("chat request");
+
+        assert_eq!(
+            chat["messages"][0]["tool_calls"][0]["function"]["name"],
+            json!("mcp__videoeditor__GenerateImageAndWait")
+        );
     }
 }

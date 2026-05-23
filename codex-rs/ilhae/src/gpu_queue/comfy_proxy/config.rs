@@ -19,6 +19,7 @@ pub struct ComfyProxyConfig {
     pub wait_timeout_seconds: u64,
     pub prompt_poll_interval_ms: u64,
     pub prompt_timeout_seconds: u64,
+    pub preempt_llm: bool,
     pub stop_after_prompt: bool,
     pub start_backend_for_passthrough: bool,
 }
@@ -36,6 +37,7 @@ pub struct ComfyProxyConfigOverrides {
     pub wait_timeout_seconds: Option<u64>,
     pub prompt_poll_interval_ms: Option<u64>,
     pub prompt_timeout_seconds: Option<u64>,
+    pub preempt_llm: Option<bool>,
     pub stop_after_prompt: Option<bool>,
     pub start_backend_for_passthrough: Option<bool>,
 }
@@ -54,6 +56,7 @@ impl Default for ComfyProxyConfig {
             wait_timeout_seconds: 900,
             prompt_poll_interval_ms: 2000,
             prompt_timeout_seconds: 3600,
+            preempt_llm: true,
             stop_after_prompt: true,
             start_backend_for_passthrough: false,
         }
@@ -133,6 +136,9 @@ fn apply_config_table(config: &mut ComfyProxyConfig, table: &toml::Table) {
     {
         config.prompt_timeout_seconds = value as u64;
     }
+    if let Some(value) = table.get("preempt_llm").and_then(toml::Value::as_bool) {
+        config.preempt_llm = value;
+    }
     if let Some(value) = table
         .get("stop_after_prompt")
         .and_then(toml::Value::as_bool)
@@ -173,6 +179,9 @@ fn apply_env(config: &mut ComfyProxyConfig) {
     if let Ok(value) = std::env::var("ILHAE_COMFY_PROXY_STOP_COMMAND") {
         config.stop_command = Some(value);
     }
+    if let Ok(value) = std::env::var("ILHAE_COMFY_PROXY_PREEMPT_LLM") {
+        config.preempt_llm = value.to_lowercase() == "true";
+    }
 }
 
 fn apply_overrides(config: &mut ComfyProxyConfig, overrides: ComfyProxyConfigOverrides) {
@@ -208,6 +217,9 @@ fn apply_overrides(config: &mut ComfyProxyConfig, overrides: ComfyProxyConfigOve
     }
     if let Some(value) = overrides.prompt_timeout_seconds {
         config.prompt_timeout_seconds = value;
+    }
+    if let Some(value) = overrides.preempt_llm {
+        config.preempt_llm = value;
     }
     if let Some(value) = overrides.stop_after_prompt {
         config.stop_after_prompt = value;

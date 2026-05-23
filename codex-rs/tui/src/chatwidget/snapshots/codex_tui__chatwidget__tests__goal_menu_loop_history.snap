@@ -9,10 +9,10 @@ Objective: Keep improving the bare goal command until it feels calm and useful.
 Time used: 1m
 Tokens used: 12.5K
 Token budget: 80K
-Loop: cycle 3 - research loop - completed
-Last loop: Research loop completed
+Loop: cycle 3 - web research loop - completed
+Last loop: Web research loop completed
 Loop history
-  #3 research loop completed: Research loop completed
+  #3 web research loop completed: Web research loop completed
     verified 2 goal follow-ups
   #2 plan loop completed: Planned 1 research follow-up
 

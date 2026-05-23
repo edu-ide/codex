@@ -209,6 +209,10 @@ fn goal_loop_phase_label(phase: AppThreadGoalLoopPhase) -> &'static str {
         AppThreadGoalLoopPhase::KairosLoop => "kairos loop",
         AppThreadGoalLoopPhase::SuperLoop => "super loop",
         AppThreadGoalLoopPhase::PlanLoop => "plan loop",
+        AppThreadGoalLoopPhase::BrainResearchLoop => "brain research loop",
+        AppThreadGoalLoopPhase::CodebaseResearchLoop => "codebase research loop",
+        AppThreadGoalLoopPhase::AgentSkillResearchLoop => "agent skill research loop",
+        AppThreadGoalLoopPhase::WebResearchLoop => "web research loop",
         AppThreadGoalLoopPhase::ResearchLoop => "research loop",
         AppThreadGoalLoopPhase::DecisionLoop => "decision loop",
         AppThreadGoalLoopPhase::WikiLoop => "wiki loop",
@@ -216,6 +220,7 @@ fn goal_loop_phase_label(phase: AppThreadGoalLoopPhase) -> &'static str {
         AppThreadGoalLoopPhase::ImprovementLoop => "improvement loop",
         AppThreadGoalLoopPhase::CleanupLoop => "cleanup loop",
         AppThreadGoalLoopPhase::ExecutionLoop => "execution loop",
+        AppThreadGoalLoopPhase::VerificationLoop => "verification loop",
         AppThreadGoalLoopPhase::ContextInjection => "context injection",
     }
 }

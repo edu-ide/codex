@@ -366,6 +366,49 @@ impl UnifiedExecProcessManager {
         }
     }
 
+    pub(crate) async fn running_process_ids_for_thread_used_since(
+        &self,
+        session: &crate::session::session::Session,
+        since: Instant,
+    ) -> Vec<i32> {
+        let thread_id = session.thread_id();
+        let (running, exited) = {
+            let mut store = self.process_store.lock().await;
+            let mut running = Vec::new();
+            let mut exited_ids = Vec::new();
+
+            for (process_id, entry) in &store.processes {
+                let Some(process_session) = entry.session.upgrade() else {
+                    exited_ids.push(*process_id);
+                    continue;
+                };
+                if process_session.thread_id() != thread_id {
+                    continue;
+                }
+                if entry.last_used < since {
+                    continue;
+                }
+                if entry.process.has_exited() {
+                    exited_ids.push(*process_id);
+                } else {
+                    running.push(*process_id);
+                }
+            }
+
+            let exited = exited_ids
+                .into_iter()
+                .filter_map(|process_id| store.remove(process_id))
+                .collect::<Vec<_>>();
+            (running, exited)
+        };
+
+        for entry in exited {
+            unregister_network_approval_for_entry(&entry).await;
+        }
+
+        running
+    }
+
     pub(crate) async fn exec_command(
         &self,
         request: ExecCommandRequest,

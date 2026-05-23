@@ -53,19 +53,19 @@ async fn goal_menu_loop_history_snapshot() {
     );
     goal.loop_state = Some(codex_app_server_protocol::ThreadGoalLoopState {
         cycle_number: 3,
-        phase: codex_app_server_protocol::ThreadGoalLoopPhase::ResearchLoop,
+        phase: codex_app_server_protocol::ThreadGoalLoopPhase::WebResearchLoop,
         status: codex_app_server_protocol::ThreadGoalLoopStatus::Completed,
-        summary: "Research loop completed".to_string(),
+        summary: "Web research loop completed".to_string(),
         updated_at: 1_776_272_470,
     });
     goal.loop_history = vec![
         codex_app_server_protocol::ThreadGoalLoopHistoryEntry {
-            id: "goal_continuation:research_loop:3".to_string(),
+            id: "goal_continuation:web_research_loop:3".to_string(),
             cycle_number: 3,
-            phase: codex_app_server_protocol::ThreadGoalLoopPhase::ResearchLoop,
+            phase: codex_app_server_protocol::ThreadGoalLoopPhase::WebResearchLoop,
             status: codex_app_server_protocol::ThreadGoalLoopStatus::Completed,
-            title: "Research loop agent".to_string(),
-            summary: "Research loop completed".to_string(),
+            title: "Web research loop agent".to_string(),
+            summary: "Web research loop completed".to_string(),
             detail: Some("verified 2 goal follow-ups".to_string()),
             error: None,
             started_at: 1_776_272_460,

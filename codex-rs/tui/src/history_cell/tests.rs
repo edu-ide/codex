@@ -1176,6 +1176,103 @@ fn completed_mcp_tool_call_success_snapshot() {
 }
 
 #[test]
+fn completed_mcp_resource_list_renders_tree_snapshot() {
+    let invocation = McpInvocation {
+        server: "ilhae".into(),
+        tool: "list_mcp_resources".into(),
+        arguments: Some(json!({})),
+    };
+    let payload = json!({
+        "resources": [
+            {
+                "server": "brain",
+                "uri": "brain://memory/items",
+                "name": "brain-memory-items",
+                "title": "Brain Memory Items",
+                "mimeType": "application/json"
+            },
+            {
+                "server": "brain",
+                "uri": "brain://sessions",
+                "name": "brain-sessions",
+                "title": "Brain Sessions",
+                "mimeType": "application/json"
+            },
+            {
+                "server": "videoeditor",
+                "uri": "videoeditor://projects",
+                "name": "projects",
+                "title": "Video Projects",
+                "mimeType": "application/json"
+            }
+        ]
+    });
+    let result = CallToolResult {
+        content: vec![text_block(&payload.to_string())],
+        is_error: None,
+        structured_content: None,
+        meta: None,
+    };
+
+    let mut cell = new_active_mcp_tool_call(
+        "call-mcp-resources".into(),
+        invocation,
+        /*animations_enabled*/ false,
+    );
+    assert!(
+        cell.complete(Duration::from_millis(12), Ok(result))
+            .is_none()
+    );
+
+    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+
+    insta::assert_snapshot!(rendered);
+}
+
+#[test]
+fn completed_mcp_resource_read_renders_summary_snapshot() {
+    let invocation = McpInvocation {
+        server: "brain".into(),
+        tool: "read_mcp_resource".into(),
+        arguments: Some(json!({
+            "server": "brain",
+            "uri": "brain://memory/items",
+        })),
+    };
+    let payload = json!({
+        "server": "brain",
+        "uri": "brain://memory/items",
+        "contents": [
+            {
+                "uri": "brain://memory/items",
+                "mimeType": "application/json",
+                "text": "{\"count\":11,\"items\":[{\"id\":\"a\"}]}"
+            }
+        ]
+    });
+    let result = CallToolResult {
+        content: vec![text_block(&payload.to_string())],
+        is_error: None,
+        structured_content: None,
+        meta: None,
+    };
+
+    let mut cell = new_active_mcp_tool_call(
+        "call-mcp-read".into(),
+        invocation,
+        /*animations_enabled*/ false,
+    );
+    assert!(
+        cell.complete(Duration::from_millis(12), Ok(result))
+            .is_none()
+    );
+
+    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+
+    insta::assert_snapshot!(rendered);
+}
+
+#[test]
 fn completed_mcp_tool_call_image_after_text_returns_extra_cell() {
     let invocation = McpInvocation {
         server: "image".into(),

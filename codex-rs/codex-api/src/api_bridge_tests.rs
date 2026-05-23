@@ -27,6 +27,29 @@ fn map_api_error_maps_server_overloaded_from_503_body() {
 }
 
 #[test]
+fn map_api_error_preserves_malformed_tool_call_http_500_body() {
+    let body = serde_json::json!({
+        "error": {
+            "code": 500,
+            "message": "Failed to parse tool call arguments as JSON: parse error",
+            "type": "server_error"
+        }
+    })
+    .to_string();
+    let err = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::INTERNAL_SERVER_ERROR,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: None,
+        body: Some(body.clone()),
+    }));
+
+    let CodexErr::InvalidRequest(message) = err else {
+        panic!("expected CodexErr::InvalidRequest, got {err:?}");
+    };
+    assert_eq!(message, body);
+}
+
+#[test]
 fn map_api_error_maps_cyber_policy_from_400_body() {
     let body = serde_json::json!({
         "error": {

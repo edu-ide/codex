@@ -75,6 +75,10 @@ pub fn map_api_error(err: ApiError) -> CodexErr {
                     } else {
                         CodexErr::InvalidRequest(body_text)
                     }
+                } else if status == http::StatusCode::INTERNAL_SERVER_ERROR
+                    && body_text.contains("Failed to parse tool call arguments as JSON")
+                {
+                    CodexErr::InvalidRequest(body_text)
                 } else if status == http::StatusCode::INTERNAL_SERVER_ERROR {
                     CodexErr::InternalServerError
                 } else if status == http::StatusCode::TOO_MANY_REQUESTS {

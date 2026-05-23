@@ -9,6 +9,7 @@ use crate::config::Config;
 use crate::connectors;
 
 pub(crate) const DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD: usize = 100;
+const DIRECT_MCP_SERVER_NAMES: &[&str] = &["videoeditor"];
 
 pub(crate) struct McpToolExposure {
     pub(crate) direct_tools: Vec<McpToolInfo>,
@@ -44,8 +45,9 @@ pub(crate) fn build_mcp_tool_exposure(
         };
     }
 
-    let direct_tools =
+    let mut direct_tools =
         filter_codex_apps_mcp_tools(all_mcp_tools, explicitly_enabled_connectors, config);
+    direct_tools.extend(filter_direct_mcp_server_tools(&deferred_tools));
     let direct_tool_names = direct_tools
         .iter()
         .map(McpToolInfo::canonical_tool_name)
@@ -62,6 +64,14 @@ fn filter_non_codex_apps_mcp_tools_only(mcp_tools: &[McpToolInfo]) -> Vec<McpToo
     mcp_tools
         .iter()
         .filter(|tool| tool.server_name != CODEX_APPS_MCP_SERVER_NAME)
+        .cloned()
+        .collect()
+}
+
+fn filter_direct_mcp_server_tools(mcp_tools: &[McpToolInfo]) -> Vec<McpToolInfo> {
+    mcp_tools
+        .iter()
+        .filter(|tool| DIRECT_MCP_SERVER_NAMES.contains(&tool.server_name.as_str()))
         .cloned()
         .collect()
 }

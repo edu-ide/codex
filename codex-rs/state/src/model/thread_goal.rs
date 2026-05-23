@@ -55,6 +55,10 @@ pub enum ThreadGoalLoopPhase {
     KairosLoop,
     SuperLoop,
     PlanLoop,
+    BrainResearchLoop,
+    CodebaseResearchLoop,
+    AgentSkillResearchLoop,
+    WebResearchLoop,
     ResearchLoop,
     DecisionLoop,
     WikiLoop,
@@ -62,6 +66,7 @@ pub enum ThreadGoalLoopPhase {
     ImprovementLoop,
     CleanupLoop,
     ExecutionLoop,
+    VerificationLoop,
     ContextInjection,
 }
 
@@ -72,6 +77,10 @@ impl ThreadGoalLoopPhase {
             Self::KairosLoop => "kairos_loop",
             Self::SuperLoop => "super_loop",
             Self::PlanLoop => "plan_loop",
+            Self::BrainResearchLoop => "brain_research_loop",
+            Self::CodebaseResearchLoop => "codebase_research_loop",
+            Self::AgentSkillResearchLoop => "agent_skill_research_loop",
+            Self::WebResearchLoop => "web_research_loop",
             Self::ResearchLoop => "research_loop",
             Self::DecisionLoop => "decision_loop",
             Self::WikiLoop => "wiki_loop",
@@ -79,6 +88,7 @@ impl ThreadGoalLoopPhase {
             Self::ImprovementLoop => "improvement_loop",
             Self::CleanupLoop => "cleanup_loop",
             Self::ExecutionLoop => "execution_loop",
+            Self::VerificationLoop => "verification_loop",
             Self::ContextInjection => "context_injection",
         }
     }
@@ -93,6 +103,10 @@ impl TryFrom<&str> for ThreadGoalLoopPhase {
             "kairos_loop" => Ok(Self::KairosLoop),
             "super_loop" => Ok(Self::SuperLoop),
             "plan_loop" => Ok(Self::PlanLoop),
+            "brain_research_loop" => Ok(Self::BrainResearchLoop),
+            "codebase_research_loop" => Ok(Self::CodebaseResearchLoop),
+            "agent_skill_research_loop" => Ok(Self::AgentSkillResearchLoop),
+            "web_research_loop" => Ok(Self::WebResearchLoop),
             "research_loop" => Ok(Self::ResearchLoop),
             "decision_loop" => Ok(Self::DecisionLoop),
             "wiki_loop" => Ok(Self::WikiLoop),
@@ -100,6 +114,7 @@ impl TryFrom<&str> for ThreadGoalLoopPhase {
             "improvement_loop" => Ok(Self::ImprovementLoop),
             "cleanup_loop" => Ok(Self::CleanupLoop),
             "execution_loop" => Ok(Self::ExecutionLoop),
+            "verification_loop" => Ok(Self::VerificationLoop),
             "context_injection" => Ok(Self::ContextInjection),
             other => Err(anyhow!("unknown thread goal loop phase `{other}`")),
         }

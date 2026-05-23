@@ -945,6 +945,9 @@ fn thread_goal_loop_phase_from_ilhae_parts(
     if id.contains("cleanup") || title.contains("cleanup") || title.contains("hygiene") {
         return codex_state::ThreadGoalLoopPhase::CleanupLoop;
     }
+    if id.contains("verification") || title.contains("verification") || title.contains("verify") {
+        return codex_state::ThreadGoalLoopPhase::VerificationLoop;
+    }
     match kind {
         codex_ilhae::LoopLifecycleKind::SuperLoop => codex_state::ThreadGoalLoopPhase::SuperLoop,
         codex_ilhae::LoopLifecycleKind::ExecutionLoop => {
@@ -1579,6 +1582,14 @@ struct GpuComfyProxyCommand {
     /// Maximum seconds to hold a prompt lease while waiting for completion.
     #[arg(long = "prompt-timeout-seconds")]
     prompt_timeout_seconds: Option<u64>,
+
+    /// Stop the local LLM runtime before granting prompt leases.
+    #[arg(long = "preempt-llm", conflicts_with = "no_preempt_llm")]
+    preempt_llm: bool,
+
+    /// Keep the local LLM runtime running while prompt leases execute.
+    #[arg(long = "no-preempt-llm")]
+    no_preempt_llm: bool,
 
     /// Keep ComfyUI running after prompt completion.
     #[arg(long = "no-stop-after-prompt")]
@@ -2485,6 +2496,11 @@ fn comfy_proxy_overrides(
         wait_timeout_seconds: proxy.wait_timeout_seconds,
         prompt_poll_interval_ms: proxy.prompt_poll_interval_ms,
         prompt_timeout_seconds: proxy.prompt_timeout_seconds,
+        preempt_llm: if proxy.preempt_llm {
+            Some(true)
+        } else {
+            proxy.no_preempt_llm.then_some(false)
+        },
         stop_after_prompt: proxy.no_stop_after_prompt.then_some(false),
         start_backend_for_passthrough,
     }
@@ -4279,6 +4295,7 @@ args = ["--ctx-size", "131072"]
             "http://127.0.0.1:8188",
             "--comfy-root",
             "/tmp/comfy",
+            "--no-preempt-llm",
             "--no-stop-after-prompt",
             "--start-backend-for-passthrough",
         ])
@@ -4295,6 +4312,7 @@ args = ["--ctx-size", "131072"]
         assert_eq!(cmd.listen.as_deref(), Some("127.0.0.1:8189"));
         assert_eq!(cmd.backend_url.as_deref(), Some("http://127.0.0.1:8188"));
         assert_eq!(cmd.comfy_root, Some(PathBuf::from("/tmp/comfy")));
+        assert!(cmd.no_preempt_llm);
         assert!(cmd.no_stop_after_prompt);
         assert!(cmd.start_backend_for_passthrough);
     }

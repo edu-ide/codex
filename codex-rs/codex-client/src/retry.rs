@@ -25,7 +25,10 @@ impl RetryOn {
             return false;
         }
         match err {
-            TransportError::Http { status, .. } => {
+            TransportError::Http { status, body, .. } => {
+                if is_malformed_tool_call_arguments_error(body.as_deref()) {
+                    return false;
+                }
                 (self.retry_429 && status.as_u16() == 429)
                     || (self.retry_5xx && status.is_server_error())
             }
@@ -33,6 +36,10 @@ impl RetryOn {
             _ => false,
         }
     }
+}
+
+fn is_malformed_tool_call_arguments_error(body: Option<&str>) -> bool {
+    body.is_some_and(|body| body.contains("Failed to parse tool call arguments as JSON"))
 }
 
 pub fn backoff(base: Duration, attempt: u64) -> Duration {
@@ -70,4 +77,47 @@ where
         }
     }
     Err(TransportError::RetryLimit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::StatusCode;
+
+    #[test]
+    fn malformed_tool_call_arguments_http_500_is_not_retried() {
+        let retry_on = RetryOn {
+            retry_429: false,
+            retry_5xx: true,
+            retry_transport: false,
+        };
+        let err = TransportError::Http {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            url: None,
+            headers: None,
+            body: Some(
+                r#"{"error":{"message":"Failed to parse tool call arguments as JSON"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(!retry_on.should_retry(&err, 0, 3));
+    }
+
+    #[test]
+    fn ordinary_http_500_still_uses_retry_policy() {
+        let retry_on = RetryOn {
+            retry_429: false,
+            retry_5xx: true,
+            retry_transport: false,
+        };
+        let err = TransportError::Http {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            url: None,
+            headers: None,
+            body: Some(r#"{"error":{"message":"temporary failure"}}"#.to_string()),
+        };
+
+        assert!(retry_on.should_retry(&err, 0, 3));
+    }
 }

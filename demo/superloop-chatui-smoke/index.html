@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat UI Demo</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="chat-container">
+    <header class="chat-header">
+      <h1>Chat Demo</h1>
+    </header>
+    <main id="messages" class="messages" role="log" aria-live="polite">
+      <div class="message assistant">
+        <div class="message-bubble">
+          <strong>Assistant</strong><br>
+          Hello! Type a message below and press Enter.
+        </div>
+      </div>
+    </main>
+    <form id="chat-form" class="chat-input">
+      <label for="message-input" class="sr-only">Type a message</label>
+      <input
+        id="message-input"
+        type="text"
+        placeholder="Type a message..."
+        autocomplete="off"
+      />
+      <button type="submit" aria-label="Send message">Send</button>
+    </form>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

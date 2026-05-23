@@ -38,11 +38,11 @@ pub use autostart::SglangQwenProxy;
 pub use autostart::maybe_start_sglang_qwen_proxy;
 use dump::ExchangeDumper;
 use read_api_key::read_auth_header_from_stdin;
-use sglang_qwen::build_sglang_qwen_response_body;
+use sglang_qwen::build_sglang_qwen_response_body_with_tool_name_map;
 use sglang_qwen::canonical_model_id_from_models_response;
 use sglang_qwen::derive_chat_completions_url;
 use sglang_qwen::derive_models_url;
-use sglang_qwen::responses_to_chat_completions_request;
+use sglang_qwen::responses_to_chat_completions_request_with_tool_name_map;
 
 /// CLI arguments for the proxy.
 #[derive(Debug, Clone, Parser)]
@@ -375,8 +375,9 @@ fn forward_sglang_qwen_request(
         .get("stream")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    let chat_body = responses_to_chat_completions_request(&request_json)?;
-    let upstream_resp = send_sglang_qwen_chat_request_with_retries(client, config, &chat_body)?;
+    let chat_request = responses_to_chat_completions_request_with_tool_name_map(&request_json)?;
+    let upstream_resp =
+        send_sglang_qwen_chat_request_with_retries(client, config, &chat_request.body)?;
     let BufferedUpstreamResponse {
         status,
         headers: upstream_headers,
@@ -402,7 +403,11 @@ fn forward_sglang_qwen_request(
             .unwrap_or_default()
             .to_string()
     });
-    let (content_type, response_body) = build_sglang_qwen_response_body(&completion, wants_stream)?;
+    let (content_type, response_body) = build_sglang_qwen_response_body_with_tool_name_map(
+        &completion,
+        wants_stream,
+        &chat_request.tool_name_map,
+    )?;
 
     let mut response_headers = HeaderMap::new();
     response_headers.insert(

@@ -1,6 +1,16 @@
 use super::*;
 
+const MCP_RESOURCE_READ_TOOL_NAME: &str = "read_mcp_resource";
 const MCP_TOOL_THREAD_ID_META_KEY: &str = "threadId";
+
+struct McpResourceReadLifecycle {
+    thread_id: ThreadId,
+    turn_id: String,
+    item_id: String,
+    server: String,
+    uri: String,
+    started_at: Instant,
+}
 
 #[derive(Clone)]
 pub(crate) struct McpRequestProcessor {
@@ -8,6 +18,7 @@ pub(crate) struct McpRequestProcessor {
     thread_manager: Arc<ThreadManager>,
     outgoing: Arc<OutgoingMessageSender>,
     config_manager: ConfigManager,
+    thread_state_manager: ThreadStateManager,
 }
 
 impl McpRequestProcessor {
@@ -16,12 +27,14 @@ impl McpRequestProcessor {
         thread_manager: Arc<ThreadManager>,
         outgoing: Arc<OutgoingMessageSender>,
         config_manager: ConfigManager,
+        thread_state_manager: ThreadStateManager,
     ) -> Self {
         Self {
             auth_manager,
             thread_manager,
             outgoing,
             config_manager,
+            thread_state_manager,
         }
     }
 
@@ -354,11 +367,27 @@ impl McpRequestProcessor {
         } = params;
 
         if let Some(thread_id) = thread_id {
-            let (_, thread) = self.load_thread(&thread_id).await?;
+            let (thread_uuid, thread) = self.load_thread(&thread_id).await?;
             let request_id = request_id.clone();
+            let thread_state_manager = self.thread_state_manager.clone();
 
             tokio::spawn(async move {
+                let lifecycle = Self::emit_mcp_resource_read_started(
+                    Arc::clone(&outgoing),
+                    &thread_state_manager,
+                    thread_uuid,
+                    server.clone(),
+                    uri.clone(),
+                )
+                .await;
                 let result = thread.read_mcp_resource(&server, &uri).await;
+                Self::emit_mcp_resource_read_completed(
+                    Arc::clone(&outgoing),
+                    &thread_state_manager,
+                    lifecycle,
+                    &result,
+                )
+                .await;
                 Self::send_mcp_resource_read_response(outgoing, request_id, result).await;
             });
             return Ok(());
@@ -393,6 +422,124 @@ impl McpRequestProcessor {
             Self::send_mcp_resource_read_response(outgoing, request_id, result).await;
         });
         Ok(())
+    }
+
+    async fn emit_mcp_resource_read_started(
+        outgoing: Arc<OutgoingMessageSender>,
+        thread_state_manager: &ThreadStateManager,
+        thread_id: ThreadId,
+        server: String,
+        uri: String,
+    ) -> McpResourceReadLifecycle {
+        let item_id = format!("mcp-resource-read-{}", Uuid::now_v7());
+        let turn_id = {
+            let thread_state = thread_state_manager.thread_state(thread_id).await;
+            let state = thread_state.lock().await;
+            state
+                .active_turn_snapshot()
+                .map(|turn| turn.id)
+                .or_else(|| state.last_terminal_turn_id.clone())
+                .unwrap_or_else(|| item_id.clone())
+        };
+        let lifecycle = McpResourceReadLifecycle {
+            thread_id,
+            turn_id,
+            item_id,
+            server,
+            uri,
+            started_at: Instant::now(),
+        };
+        let item = ThreadItem::McpToolCall {
+            id: lifecycle.item_id.clone(),
+            server: lifecycle.server.clone(),
+            tool: MCP_RESOURCE_READ_TOOL_NAME.to_string(),
+            status: McpToolCallStatus::InProgress,
+            arguments: mcp_resource_read_arguments(&lifecycle.uri),
+            mcp_app_resource_uri: None,
+            result: None,
+            error: None,
+            duration_ms: None,
+        };
+        let subscribed_connection_ids = thread_state_manager
+            .subscribed_connection_ids(lifecycle.thread_id)
+            .await;
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            subscribed_connection_ids,
+            lifecycle.thread_id,
+        );
+        outgoing
+            .send_server_notification(ServerNotification::ItemStarted(ItemStartedNotification {
+                thread_id: lifecycle.thread_id.to_string(),
+                turn_id: lifecycle.turn_id.clone(),
+                started_at_ms: now_unix_timestamp_ms(),
+                item,
+            }))
+            .await;
+        lifecycle
+    }
+
+    async fn emit_mcp_resource_read_completed(
+        outgoing: Arc<OutgoingMessageSender>,
+        thread_state_manager: &ThreadStateManager,
+        lifecycle: McpResourceReadLifecycle,
+        result: &anyhow::Result<serde_json::Value>,
+    ) {
+        let duration_ms = i64::try_from(lifecycle.started_at.elapsed().as_millis()).ok();
+        let (status, result, error) = match result {
+            Ok(value) => match serde_json::from_value::<McpResourceReadResponse>(value.clone()) {
+                Ok(response) => (
+                    McpToolCallStatus::Completed,
+                    Some(Box::new(mcp_resource_read_tool_result(response))),
+                    None,
+                ),
+                Err(error) => (
+                    McpToolCallStatus::Failed,
+                    None,
+                    Some(McpToolCallError {
+                        message: format!(
+                            "failed to deserialize MCP resource read response: {error}"
+                        ),
+                    }),
+                ),
+            },
+            Err(error) => (
+                McpToolCallStatus::Failed,
+                None,
+                Some(McpToolCallError {
+                    message: format!("{error:#}"),
+                }),
+            ),
+        };
+        let item = ThreadItem::McpToolCall {
+            id: lifecycle.item_id,
+            server: lifecycle.server,
+            tool: MCP_RESOURCE_READ_TOOL_NAME.to_string(),
+            status,
+            arguments: mcp_resource_read_arguments(&lifecycle.uri),
+            mcp_app_resource_uri: None,
+            result,
+            error,
+            duration_ms,
+        };
+        let subscribed_connection_ids = thread_state_manager
+            .subscribed_connection_ids(lifecycle.thread_id)
+            .await;
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            subscribed_connection_ids,
+            lifecycle.thread_id,
+        );
+        outgoing
+            .send_server_notification(ServerNotification::ItemCompleted(
+                ItemCompletedNotification {
+                    thread_id: lifecycle.thread_id.to_string(),
+                    turn_id: lifecycle.turn_id,
+                    completed_at_ms: now_unix_timestamp_ms(),
+                    item,
+                },
+            ))
+            .await;
     }
 
     async fn send_mcp_resource_read_response(
@@ -432,6 +579,47 @@ impl McpRequestProcessor {
             outgoing.send_result(request_id, result).await;
         });
         Ok(())
+    }
+}
+
+fn now_unix_timestamp_ms() -> i64 {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
+        Err(_) => 0,
+    }
+}
+
+fn mcp_resource_read_arguments(uri: &str) -> serde_json::Value {
+    serde_json::json!({ "uri": uri })
+}
+
+fn mcp_resource_read_tool_result(response: McpResourceReadResponse) -> McpToolCallResult {
+    let summary = format_mcp_resource_read_summary(&response);
+    McpToolCallResult {
+        content: vec![serde_json::json!({
+            "type": "text",
+            "text": summary,
+        })],
+        structured_content: serde_json::to_value(response).ok(),
+        meta: None,
+    }
+}
+
+fn format_mcp_resource_read_summary(response: &McpResourceReadResponse) -> String {
+    let count = response.contents.len();
+    let uris = response
+        .contents
+        .iter()
+        .map(|content| match content {
+            codex_protocol::mcp::ResourceContent::Text { uri, .. }
+            | codex_protocol::mcp::ResourceContent::Blob { uri, .. } => uri.as_str(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if uris.is_empty() {
+        format!("Read {count} resource content block(s).")
+    } else {
+        format!("Read {count} resource content block(s): {uris}")
     }
 }
 

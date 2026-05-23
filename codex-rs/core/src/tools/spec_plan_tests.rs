@@ -1186,6 +1186,65 @@ fn web_search_mode_live_sets_external_web_access_true() {
 }
 
 #[test]
+fn local_web_search_tool_is_exposed_when_provider_lacks_hosted_web_search() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Live),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_web_search_capability(/*web_search*/ false);
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    let ToolSpec::Function(tool) = find_tool(&tools, "web_search") else {
+        panic!("local web_search should be exposed as a function tool");
+    };
+    assert!(tool.description.contains("local Ilhae web-search adapter"));
+}
+
+#[test]
+fn brain_vault_patch_tool_is_exposed_for_goal_loop_records() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Live),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    let ToolSpec::Function(tool) = find_tool(&tools, "brain_vault_patch") else {
+        panic!("brain_vault_patch should be exposed as a function tool");
+    };
+    assert!(tool.description.contains("Brain/Wiki vault"));
+}
+
+#[test]
 fn web_search_config_is_forwarded_to_tool_spec() {
     let model_info = model_info();
     let features = Features::with_defaults();
@@ -1301,7 +1360,10 @@ fn mcp_resource_tools_are_hidden_without_mcp_servers() {
     assert!(
         !tools.iter().any(|tool| matches!(
             tool.name(),
-            "list_mcp_resources" | "list_mcp_resource_templates" | "read_mcp_resource"
+            "call_mcp_tool"
+                | "list_mcp_resources"
+                | "list_mcp_resource_templates"
+                | "read_mcp_resource"
         )),
         "MCP resource tools should be omitted when no MCP servers are configured"
     );
@@ -1335,6 +1397,7 @@ fn mcp_resource_tools_are_included_when_mcp_servers_are_present() {
             "list_mcp_resources",
             "list_mcp_resource_templates",
             "read_mcp_resource",
+            "call_mcp_tool",
         ],
     );
 }

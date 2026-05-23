@@ -126,6 +126,12 @@ fn gpu_queue_runtime_event_type(
         GpuQueueRuntimeEventType::LeaseReleased => AppServerGpuQueueRuntimeEventType::LeaseReleased,
         GpuQueueRuntimeEventType::LeaseExpired => AppServerGpuQueueRuntimeEventType::LeaseExpired,
         GpuQueueRuntimeEventType::LlmStopping => AppServerGpuQueueRuntimeEventType::LlmStopping,
+        GpuQueueRuntimeEventType::LlmWaitingForIdle => {
+            AppServerGpuQueueRuntimeEventType::LlmWaitingForIdle
+        }
+        GpuQueueRuntimeEventType::LlmIdleWaitTimedOut => {
+            AppServerGpuQueueRuntimeEventType::LlmIdleWaitTimedOut
+        }
         GpuQueueRuntimeEventType::LlmStopped => AppServerGpuQueueRuntimeEventType::LlmStopped,
         GpuQueueRuntimeEventType::LlmStarting => AppServerGpuQueueRuntimeEventType::LlmStarting,
         GpuQueueRuntimeEventType::LlmRunning => AppServerGpuQueueRuntimeEventType::LlmRunning,

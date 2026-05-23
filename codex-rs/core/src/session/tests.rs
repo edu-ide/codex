@@ -8625,7 +8625,7 @@ async fn superloop_plan_loop_cannot_mark_goal_complete() -> anyhow::Result<()> {
         .function_call_output_text("call-complete-goal")
         .expect("complete tool output should be sent to the model");
     assert!(
-        complete_output.contains("only the execution loop may complete the goal"),
+        complete_output.contains("cannot run during the plan_loop"),
         "unexpected update_goal rejection: {complete_output}"
     );
     let goal = state_db
@@ -8747,6 +8747,21 @@ async fn superloop_plan_loop_cannot_run_execution_tools() -> anyhow::Result<()> 
         !exposes_execution_tool,
         "plan loop should not expose workspace execution tools: {tools:?}"
     );
+    let exposes_update_plan = tools.iter().any(|tool| {
+        tool.get("name").and_then(serde_json::Value::as_str) == Some("update_plan")
+            || tool
+                .get("tools")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|children| {
+                    children.iter().any(|child| {
+                        child.get("name").and_then(serde_json::Value::as_str) == Some("update_plan")
+                    })
+                })
+    });
+    assert!(
+        exposes_update_plan,
+        "plan loop should expose update_plan for the foreground checklist: {tools:?}"
+    );
     let exposes_apply_patch = tools.iter().any(|tool| {
         tool.get("name").and_then(serde_json::Value::as_str) == Some("apply_patch")
             || tool
@@ -8759,16 +8774,109 @@ async fn superloop_plan_loop_cannot_run_execution_tools() -> anyhow::Result<()> 
                 })
     });
     assert!(
-        exposes_apply_patch,
-        "plan loop should expose apply_patch for Brain/Wiki vault notes: {tools:?}"
+        !exposes_apply_patch,
+        "plan loop should not expose apply_patch; Brain/Wiki persistence belongs to later loops: {tools:?}"
     );
 
     let exec_output = responses
         .function_call_output_text("call-exec")
         .expect("exec tool output should be sent to the model");
     assert!(
-        exec_output.contains("only the execution loop may call"),
+        exec_output.contains("cannot run during the plan_loop"),
         "unexpected exec rejection: {exec_output}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn superloop_plan_loop_can_update_foreground_plan_once() -> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_config(|config| {
+        config
+            .features
+            .enable(Feature::Goals)
+            .expect("goal mode should be enableable in tests");
+    });
+    let test = builder.build(&server).await?;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call(
+                    "call-update-plan",
+                    "update_plan",
+                    r#"{"plan":[{"step":"Plan the demo","status":"in_progress"}]}"#,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-1", "Plan loop published the foreground checklist."),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let thread_id = test.session_configured.thread_id;
+    let state_db = test
+        .codex
+        .state_db()
+        .expect("test codex should have a state db");
+    let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
+        thread_id,
+        test.config
+            .codex_home
+            .join("goal-test-rollout.jsonl")
+            .to_path_buf(),
+        chrono::Utc::now(),
+        SessionSource::Exec,
+    );
+    metadata_builder.cwd = test.config.cwd.to_path_buf();
+    metadata_builder.model_provider = Some(test.config.model_provider_id.clone());
+    state_db
+        .upsert_thread(&metadata_builder.build(test.config.model_provider_id.as_str()))
+        .await?;
+    let goal = state_db
+        .replace_thread_goal(
+            thread_id,
+            "create a chat ui demo project",
+            codex_state::ThreadGoalStatus::Active,
+            /*token_budget*/ None,
+        )
+        .await?;
+    state_db
+        .update_thread_goal(
+            thread_id,
+            codex_state::ThreadGoalUpdate {
+                objective: None,
+                status: None,
+                token_budget: None,
+                superloop_enabled: Some(true),
+                expected_goal_id: Some(goal.goal_id),
+            },
+        )
+        .await?
+        .expect("goal should still exist");
+
+    test.codex.continue_active_goal_if_idle().await?;
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        loop {
+            let event = test.codex.next_event().await?;
+            if matches!(event.msg, EventMsg::TurnComplete(_)) {
+                return anyhow::Ok(());
+            }
+        }
+    })
+    .await??;
+
+    let update_plan_output = responses
+        .function_call_output_text("call-update-plan")
+        .expect("update_plan output should be sent to the model");
+    assert!(
+        update_plan_output.contains("Plan updated"),
+        "unexpected update_plan output: {update_plan_output}"
     );
 
     Ok(())
@@ -8881,7 +8989,7 @@ async fn superloop_plan_loop_rejects_deliverable_apply_patch() -> anyhow::Result
         })
         .expect("apply_patch output should be sent to the model");
     assert!(
-        patch_output.contains("non-execution loops may only write Brain/Wiki vault files"),
+        patch_output.contains("cannot run during the plan_loop"),
         "unexpected apply_patch rejection: {patch_output}"
     );
     assert!(!test.config.cwd.join("demo").join("package.json").exists());

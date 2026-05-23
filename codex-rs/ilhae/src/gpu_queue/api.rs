@@ -39,6 +39,8 @@ pub enum GpuQueueRuntimeEventType {
     LeaseReleased,
     LeaseExpired,
     LlmStopping,
+    LlmWaitingForIdle,
+    LlmIdleWaitTimedOut,
     LlmStopped,
     LlmStarting,
     LlmRunning,
