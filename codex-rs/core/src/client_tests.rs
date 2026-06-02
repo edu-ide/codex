@@ -12,8 +12,6 @@ use crate::AttestationProvider;
 use crate::GenerateAttestationFuture;
 use codex_api::ApiError;
 use codex_api::ResponseEvent;
-use codex_api::ResponsesApiRequest;
-use codex_api::TransportError;
 use codex_app_server_protocol::AuthMode;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -214,76 +212,6 @@ fn output_message(id: &str, text: &str) -> ResponseItem {
         }],
         phase: None,
     }
-}
-
-#[test]
-fn malformed_tool_call_argument_errors_are_detected_for_retry() {
-    let err = ApiError::Transport(TransportError::Http {
-        status: http::StatusCode::INTERNAL_SERVER_ERROR,
-        url: Some("http://127.0.0.1:8082/v1/responses".to_string()),
-        headers: None,
-        body: Some(
-            r#"{"error":{"code":500,"message":"Failed to parse tool call arguments as JSON: parse error","type":"server_error"}}"#
-                .to_string(),
-        ),
-    });
-
-    assert!(super::is_malformed_tool_call_arguments_error(&err));
-
-    let unrelated = ApiError::Transport(TransportError::Http {
-        status: http::StatusCode::INTERNAL_SERVER_ERROR,
-        url: Some("http://127.0.0.1:8082/v1/responses".to_string()),
-        headers: None,
-        body: Some(r#"{"error":{"message":"loading model"}}"#.to_string()),
-    });
-
-    assert!(!super::is_malformed_tool_call_arguments_error(&unrelated));
-}
-
-#[test]
-fn prepare_tool_retry_without_tools_strips_tooling() {
-    let mut request = ResponsesApiRequest {
-        model: "Qwen3.6-27B-UD-Q4_K_XL".to_string(),
-        instructions: "test".to_string(),
-        input: Vec::new(),
-        tools: vec![json!({
-            "type": "function",
-            "name": "shell_command",
-            "parameters": {"type": "object"}
-        })],
-        tool_choice: "auto".to_string(),
-        parallel_tool_calls: true,
-        reasoning: None,
-        store: false,
-        stream: true,
-        include: Vec::new(),
-        service_tier: None,
-        prompt_cache_key: None,
-        text: None,
-        client_metadata: None,
-    };
-
-    super::prepare_tool_retry_without_tools(&mut request);
-
-    assert!(request.tools.is_empty());
-    assert_eq!(request.tool_choice, "none");
-    assert!(!request.parallel_tool_calls);
-}
-
-#[test]
-fn empty_tools_use_none_tool_choice() {
-    assert_eq!(super::tool_choice_for_request(&[]), "none");
-}
-
-#[test]
-fn available_tools_use_auto_tool_choice() {
-    let tools = vec![json!({
-        "type": "function",
-        "name": "shell_command",
-        "parameters": {"type": "object"}
-    })];
-
-    assert_eq!(super::tool_choice_for_request(&tools), "auto");
 }
 
 async fn replay_until_cancelled(temp: &TempDir) -> anyhow::Result<RolloutTrace> {

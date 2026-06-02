@@ -8843,6 +8843,7 @@ async fn superloop_goal_continuation_records_hook_events_before_plan_loop() -> a
         .upsert_thread(&metadata_builder.build(test.config.model_provider_id.as_str()))
         .await?;
     let goal = state_db
+        .thread_goals()
         .replace_thread_goal(
             thread_id,
             "exercise the super loop",
@@ -8851,6 +8852,7 @@ async fn superloop_goal_continuation_records_hook_events_before_plan_loop() -> a
         )
         .await?;
     state_db
+        .thread_goals()
         .update_thread_goal(
             thread_id,
             codex_state::GoalUpdate {
@@ -8867,6 +8869,7 @@ async fn superloop_goal_continuation_records_hook_events_before_plan_loop() -> a
     test.codex.continue_active_goal_if_idle().await?;
 
     let goal = state_db
+        .thread_goals()
         .get_thread_goal(thread_id)
         .await?
         .expect("goal should remain persisted");
@@ -8970,6 +8973,7 @@ async fn superloop_plan_loop_cannot_mark_goal_complete() -> anyhow::Result<()> {
         .upsert_thread(&metadata_builder.build(test.config.model_provider_id.as_str()))
         .await?;
     let goal = state_db
+        .thread_goals()
         .replace_thread_goal(
             thread_id,
             "exercise the super loop",
@@ -8978,6 +8982,7 @@ async fn superloop_plan_loop_cannot_mark_goal_complete() -> anyhow::Result<()> {
         )
         .await?;
     state_db
+        .thread_goals()
         .update_thread_goal(
             thread_id,
             codex_state::GoalUpdate {
@@ -9034,6 +9039,7 @@ async fn superloop_plan_loop_cannot_mark_goal_complete() -> anyhow::Result<()> {
         "unexpected update_goal rejection: {complete_output}"
     );
     let goal = state_db
+        .thread_goals()
         .get_thread_goal(thread_id)
         .await?
         .expect("goal should remain persisted");
@@ -9092,6 +9098,7 @@ async fn superloop_plan_loop_cannot_run_execution_tools() -> anyhow::Result<()> 
         .upsert_thread(&metadata_builder.build(test.config.model_provider_id.as_str()))
         .await?;
     let goal = state_db
+        .thread_goals()
         .replace_thread_goal(
             thread_id,
             "create a chat ui demo project",
@@ -9100,6 +9107,7 @@ async fn superloop_plan_loop_cannot_run_execution_tools() -> anyhow::Result<()> 
         )
         .await?;
     state_db
+        .thread_goals()
         .update_thread_goal(
             thread_id,
             codex_state::GoalUpdate {
@@ -9244,6 +9252,7 @@ async fn superloop_plan_loop_can_update_foreground_plan_once() -> anyhow::Result
         .upsert_thread(&metadata_builder.build(test.config.model_provider_id.as_str()))
         .await?;
     let goal = state_db
+        .thread_goals()
         .replace_thread_goal(
             thread_id,
             "create a chat ui demo project",
@@ -9252,6 +9261,7 @@ async fn superloop_plan_loop_can_update_foreground_plan_once() -> anyhow::Result
         )
         .await?;
     state_db
+        .thread_goals()
         .update_thread_goal(
             thread_id,
             codex_state::GoalUpdate {
@@ -9337,6 +9347,7 @@ async fn superloop_plan_loop_rejects_deliverable_apply_patch() -> anyhow::Result
         .upsert_thread(&metadata_builder.build(test.config.model_provider_id.as_str()))
         .await?;
     let goal = state_db
+        .thread_goals()
         .replace_thread_goal(
             thread_id,
             "create a chat ui demo project",
@@ -9345,6 +9356,7 @@ async fn superloop_plan_loop_rejects_deliverable_apply_patch() -> anyhow::Result
         )
         .await?;
     state_db
+        .thread_goals()
         .update_thread_goal(
             thread_id,
             codex_state::GoalUpdate {
@@ -9819,10 +9831,10 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
         .await?
         .expect("goal status update should succeed");
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        external_set: Box::new(ExternalGoalSet {
+        external_set: ExternalGoalSet {
             goal: updated_goal,
             previous_status: ExternalGoalPreviousStatus::from(&previous_goal),
-        }),
+        },
     })
     .await?;
 
@@ -9874,10 +9886,10 @@ async fn external_objective_change_steers_active_turn() -> anyhow::Result<()> {
         .await?;
 
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        external_set: Box::new(ExternalGoalSet {
+        external_set: ExternalGoalSet {
             goal: new_goal,
             previous_status: ExternalGoalPreviousStatus::from(&old_goal),
-        }),
+        },
     })
     .await?;
 
@@ -9931,10 +9943,10 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
         )
         .await?;
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        external_set: Box::new(ExternalGoalSet {
+        external_set: ExternalGoalSet {
             goal,
             previous_status: ExternalGoalPreviousStatus::NewGoal,
-        }),
+        },
     })
     .await?;
 
