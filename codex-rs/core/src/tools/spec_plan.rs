@@ -2,6 +2,8 @@ use crate::session::turn_context::TurnContext;
 use crate::tools::code_mode::execute_spec::create_code_mode_tool;
 use crate::tools::context::ToolInvocation;
 use crate::tools::handlers::ApplyPatchHandler;
+use crate::tools::handlers::BrainArtifactOpsHandler;
+use crate::tools::handlers::BrainMemoryOpsHandler;
 use crate::tools::handlers::BrainVaultPatchHandler;
 use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
@@ -14,7 +16,9 @@ use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
 use crate::tools::handlers::ListMcpResourcesHandler;
 use crate::tools::handlers::LocalWebSearchHandler;
+use crate::tools::handlers::LspToolHandler;
 use crate::tools::handlers::McpHandler;
+use crate::tools::handlers::shared_lsp_server_manager;
 use crate::tools::handlers::PlanHandler;
 use crate::tools::handlers::ReadMcpResourceHandler;
 use crate::tools::handlers::RequestPermissionsHandler;
@@ -537,6 +541,34 @@ fn add_tool_sources(context: &CoreToolPlanContext<'_>, planned_tools: &mut Plann
     }
 }
 
+fn should_register_lsp_tool(turn_context: &TurnContext) -> bool {
+    if turn_context
+        .model_info
+        .experimental_supported_tools
+        .iter()
+        .any(|tool| tool == "lsp")
+    {
+        return true;
+    }
+    match std::env::var("ILHAE_LSP_TOOL") {
+        Ok(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized != "0" && normalized != "false" && normalized != "off"
+        }
+        Err(_) => true,
+    }
+}
+
+fn should_register_ilhae_brain_native_tools() -> bool {
+    match std::env::var("ILHAE_BRAIN_NATIVE") {
+        Ok(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized != "0" && normalized != "false" && normalized != "off"
+        }
+        Err(_) => true,
+    }
+}
+
 fn should_register_local_web_search_tool(context: &CoreToolPlanContext<'_>) -> bool {
     let turn_context = context.turn_context;
     if standalone_web_run_available(context.extension_tool_executors) {
@@ -668,11 +700,20 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mut
         planned_tools.add(TestSyncHandler);
     }
 
+    if should_register_lsp_tool(turn_context) {
+        planned_tools.add_arc(Arc::new(LspToolHandler::new(shared_lsp_server_manager())));
+    }
+
     if should_register_local_web_search_tool(context) {
         planned_tools.add(LocalWebSearchHandler);
     }
 
     planned_tools.add(BrainVaultPatchHandler);
+
+    if should_register_ilhae_brain_native_tools() {
+        planned_tools.add(BrainMemoryOpsHandler);
+        planned_tools.add(BrainArtifactOpsHandler);
+    }
 
     if environment_mode.has_environment() {
         let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
