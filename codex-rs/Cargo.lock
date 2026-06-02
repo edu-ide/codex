@@ -3376,6 +3376,7 @@ dependencies = [
  "indexmap 2.13.0",
  "insta",
  "libc",
+ "lsp-types",
  "maplit",
  "once_cell",
  "openssl-sys",
