@@ -1312,6 +1312,7 @@ impl GoalTurnAccountingSnapshot {
                 .reasoning_output_tokens
                 .saturating_sub(last.reasoning_output_tokens),
             total_tokens: current.total_tokens.saturating_sub(last.total_tokens),
+            cost_usd: (current.cost_usd - last.cost_usd).max(0.0),
         };
         goal_token_delta_for_usage(&delta)
     }

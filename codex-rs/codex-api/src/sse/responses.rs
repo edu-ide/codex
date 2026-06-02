@@ -128,6 +128,7 @@ impl From<ResponseCompletedUsage> for TokenUsage {
                 .map(|d| d.reasoning_tokens)
                 .unwrap_or(0),
             total_tokens: val.total_tokens,
+            ..TokenUsage::default()
         }
     }
 }

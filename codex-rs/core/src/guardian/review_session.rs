@@ -116,6 +116,7 @@ fn token_usage_delta(start: &TokenUsage, end: &TokenUsage) -> TokenUsage {
         reasoning_output_tokens: (end.reasoning_output_tokens - start.reasoning_output_tokens)
             .max(0),
         total_tokens: (end.total_tokens - start.total_tokens).max(0),
+        cost_usd: (end.cost_usd - start.cost_usd).max(0.0),
     }
 }
 

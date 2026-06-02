@@ -676,6 +676,8 @@ impl Session {
                 total_tokens: (total_token_usage.total_tokens
                     - token_usage_at_turn_start.total_tokens)
                     .max(0),
+                cost_usd: (total_token_usage.cost_usd - token_usage_at_turn_start.cost_usd)
+                    .max(0.0),
             };
             let current_span = Span::current();
             current_span.record(
