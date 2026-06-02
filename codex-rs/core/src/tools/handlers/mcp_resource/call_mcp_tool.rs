@@ -9,6 +9,7 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
 use crate::tools::handlers::mcp_resource_spec::create_call_mcp_tool;
+use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
 use codex_tools::ToolName;
@@ -27,8 +28,8 @@ impl ToolExecutor<ToolInvocation> for CallMcpToolHandler {
         ToolName::plain("call_mcp_tool")
     }
 
-    fn spec(&self) -> Option<ToolSpec> {
-        Some(create_call_mcp_tool())
+    fn spec(&self) -> ToolSpec {
+        create_call_mcp_tool()
     }
 
     async fn handle(
@@ -68,7 +69,7 @@ impl ToolExecutor<ToolInvocation> for CallMcpToolHandler {
             call_id,
             server.clone(),
             tool.clone(),
-            format!("mcp__{server}__{tool}"),
+            HookToolName::new(format!("mcp__{server}__{tool}")),
             arguments,
         )
         .await;

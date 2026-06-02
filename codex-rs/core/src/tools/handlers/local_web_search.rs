@@ -60,8 +60,8 @@ impl ToolExecutor<ToolInvocation> for LocalWebSearchHandler {
         ToolName::plain(LOCAL_WEB_SEARCH_TOOL_NAME)
     }
 
-    fn spec(&self) -> Option<ToolSpec> {
-        Some(create_local_web_search_tool())
+    fn spec(&self) -> ToolSpec {
+        create_local_web_search_tool()
     }
 
     async fn handle(

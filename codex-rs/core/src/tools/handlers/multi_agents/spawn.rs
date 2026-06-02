@@ -25,11 +25,18 @@ impl Handler {
 #[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for Handler {
     fn tool_name(&self) -> ToolName {
-        ToolName::plain("spawn_agent")
+        ToolName::namespaced(MULTI_AGENT_V1_NAMESPACE, "spawn_agent")
     }
 
-    fn spec(&self) -> Option<ToolSpec> {
-        Some(create_spawn_agent_tool_v1(self.options.clone()))
+    fn spec(&self) -> ToolSpec {
+        create_spawn_agent_tool_v1(self.options.clone())
+    }
+
+    fn search_info(&self) -> Option<ToolSearchInfo> {
+        multi_agent_tool_search_info(
+            "spawn_agent spawn agent subagent sub-agent delegate delegation parallel work worker explorer no-apps fork model reasoning",
+            self.spec(),
+        )
     }
 
     async fn handle(
@@ -83,6 +90,9 @@ async fn handle_spawn_agent(
         .await;
     let mut config =
         build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
+    if let Some(service_tier) = args.service_tier.as_ref() {
+        config.service_tier = Some(service_tier.clone());
+    }
     if args.fork_context {
         reject_full_fork_spawn_overrides(role_name, args.model.as_deref(), args.reasoning_effort)?;
     } else {
@@ -121,6 +131,7 @@ async fn handle_spawn_agent(
         SpawnAgentOptions {
             fork_parent_spawn_call_id: args.fork_context.then(|| call_id.clone()),
             fork_mode: args.fork_context.then_some(SpawnAgentForkMode::FullHistory),
+            parent_thread_id: Some(session.conversation_id),
             environments: Some(turn.environments.to_selections()),
         },
     ))

@@ -248,6 +248,64 @@ where
     wait_for_event_with_timeout(codex, predicate, Duration::from_secs(1)).await
 }
 
+/// Waits for a configured MCP server to finish startup and requires it to be ready.
+pub async fn wait_for_mcp_server(codex: &CodexThread, server_name: &str) -> anyhow::Result<()> {
+    use codex_protocol::protocol::EventMsg;
+
+    // Wait for the startup summary regardless of outcome, then interpret the
+    // requested server's ready, failed, or cancelled entry below.
+    let summary = loop {
+        let event = codex
+            .next_event()
+            .await
+            .expect("stream ended unexpectedly while waiting for MCP startup");
+        if let EventMsg::McpStartupComplete(summary) = event.msg {
+            break summary;
+        }
+    };
+    if let Some(failure) = summary
+        .failed
+        .iter()
+        .find(|failure| failure.server == server_name)
+    {
+        let error = &failure.error;
+        anyhow::bail!("MCP server {server_name} failed to start: {error}");
+    }
+    if summary.cancelled.iter().any(|server| server == server_name) {
+        anyhow::bail!("MCP server {server_name} startup was cancelled");
+    }
+    assert!(
+        summary.ready.iter().any(|server| server == server_name),
+        "expected MCP server {server_name} to be ready; startup summary: {summary:?}"
+    );
+    Ok(())
+}
+
+pub async fn submit_thread_settings(
+    codex: &CodexThread,
+    thread_settings: codex_protocol::protocol::ThreadSettingsOverrides,
+) -> anyhow::Result<()> {
+    use codex_protocol::protocol::EventMsg;
+    use codex_protocol::protocol::Op;
+    use tokio::time::Duration;
+    use tokio::time::timeout;
+
+    let submission_id = codex.submit(Op::ThreadSettings { thread_settings }).await?;
+    loop {
+        let ev = timeout(Duration::from_secs(10), codex.next_event())
+            .await
+            .expect("timeout waiting for thread settings update")
+            .expect("stream ended unexpectedly");
+        if ev.id == submission_id {
+            match ev.msg {
+                EventMsg::ThreadSettingsApplied(_) => return Ok(()),
+                EventMsg::Error(err) => panic!("thread settings update failed: {}", err.message),
+                other => panic!("unexpected thread settings update event: {other:?}"),
+            }
+        }
+    }
+}
+
 pub async fn wait_for_event_match<T, F>(codex: &CodexThread, matcher: F) -> T
 where
     F: Fn(&codex_protocol::protocol::EventMsg) -> Option<T>,

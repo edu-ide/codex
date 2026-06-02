@@ -70,8 +70,8 @@ impl ToolExecutor<ToolInvocation> for BrainVaultPatchHandler {
         ToolName::plain(BRAIN_VAULT_PATCH_TOOL_NAME)
     }
 
-    fn spec(&self) -> Option<ToolSpec> {
-        Some(create_brain_vault_patch_tool())
+    fn spec(&self) -> ToolSpec {
+        create_brain_vault_patch_tool()
     }
 
     async fn handle(
@@ -332,6 +332,7 @@ async fn prepare_record_write(
     })
 }
 
+#[allow(clippy::await_holding_invalid_type)]
 async fn commit_record_write(
     target: &VaultRecordTarget,
     write: &PreparedRecordWrite,

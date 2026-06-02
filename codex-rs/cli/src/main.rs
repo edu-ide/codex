@@ -55,12 +55,14 @@ use crate::mcp_cmd::McpCli;
 use crate::plugin_cmd::PluginCli;
 use crate::plugin_cmd::PluginSubcommand;
 
+use codex_config::LoaderOverrides;
 use codex_core::build_models_manager;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
+use codex_core::config::resolve_profile_v2_config_path;
 use codex_features::FEATURES;
 use codex_features::Stage;
 use codex_features::is_known_feature_key;
@@ -73,6 +75,7 @@ use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::user_input::UserInput;
 use codex_terminal_detection::TerminalName;
+use codex_utils_cli::ProfileV2Name;
 
 /// Codex CLI
 ///
@@ -554,19 +557,23 @@ enum ProfileSubcommand {
 
 #[derive(Debug, Parser)]
 struct ExecServerCommand {
+    /// Error out when config.toml contains fields that are not recognized by this version of Codex.
+    #[arg(long = "strict-config", default_value_t = false)]
+    strict_config: bool,
+
     /// Transport endpoint URL. Supported values: `ws://IP:PORT` (default), `stdio`, `stdio://`.
     #[arg(long = "listen", value_name = "URL", conflicts_with = "remote")]
     listen: Option<String>,
 
-    /// Register this exec-server as a remote executor using the given base URL.
-    #[arg(long = "remote", value_name = "URL", requires = "executor_id")]
+    /// Register this exec-server as a remote environment using the given base URL.
+    #[arg(long = "remote", value_name = "URL", requires = "environment_id")]
     remote: Option<String>,
 
-    /// Executor id to attach to when registering remotely.
-    #[arg(long = "executor-id", value_name = "ID")]
-    executor_id: Option<String>,
+    /// Environment id to attach to when registering remotely.
+    #[arg(long = "environment-id", value_name = "ID")]
+    environment_id: Option<String>,
 
-    /// Human-readable executor name.
+    /// Human-readable environment name.
     #[arg(long = "name", value_name = "NAME")]
     name: Option<String>,
 
@@ -1637,8 +1644,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         None => {
             #[cfg(feature = "ilhae")]
             if root_remote.is_none() {
-                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
-                    .await?;
+                codex_ilhae::ensure_native_runtime_for_cli(
+                    interactive.config_profile_v2.as_deref(),
+                )
+                .await?;
             }
             prepend_config_flags(
                 &mut interactive.config_overrides,
@@ -1659,7 +1668,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         }
         #[cfg(feature = "ilhae")]
         Some(Subcommand::Stop) => {
-            codex_ilhae::stop_native_runtime_for_cli(interactive.config_profile.as_deref()).await?;
+            codex_ilhae::stop_native_runtime_for_cli(interactive.config_profile_v2.as_deref())
+                .await?;
         }
         #[cfg(feature = "ilhae")]
         Some(Subcommand::Profile(profile_cli)) => {
@@ -1685,10 +1695,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 .inherit_exec_root_options(&interactive.shared);
             #[cfg(feature = "ilhae")]
             {
-                codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile.as_deref())
+                codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile_v2.as_deref())
                     .await?;
                 if let Some(provider) =
-                    native_runtime_oss_provider(exec_cli.config_profile.as_deref())
+                    native_runtime_oss_provider(exec_cli.config_profile_v2.as_deref())
                 {
                     exec_cli.oss = true;
                     if exec_cli.oss_provider.is_none() {
@@ -1742,10 +1752,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 .inherit_exec_root_options(&interactive.shared);
             #[cfg(feature = "ilhae")]
             {
-                codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile.as_deref())
+                codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile_v2.as_deref())
                     .await?;
                 if let Some(provider) =
-                    native_runtime_oss_provider(exec_cli.config_profile.as_deref())
+                    native_runtime_oss_provider(exec_cli.config_profile_v2.as_deref())
                 {
                     exec_cli.oss = true;
                     exec_cli.oss_provider = Some(provider);
@@ -1779,7 +1789,9 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             )?;
             // Propagate any root-level config overrides (e.g. `-c key=value`).
             prepend_config_flags(&mut mcp_cli.config_overrides, root_config_overrides.clone());
-            mcp_cli.run().await?;
+            let loader_overrides =
+                loader_overrides_for_profile(interactive.config_profile_v2.as_ref())?;
+            mcp_cli.run(loader_overrides).await?;
         }
         Some(Subcommand::Plugin(plugin_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -1862,7 +1874,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         };
                         apply_ilhae_codex_home_loader_overrides(&mut loader_overrides, &codex_home);
                         codex_ilhae::ensure_native_runtime_for_cli(
-                            interactive.config_profile.as_deref(),
+                            interactive.config_profile_v2.as_deref(),
                         )
                         .await?;
                         let _ = codex_ilhae::bootstrap_ilhae_runtime().await?;
@@ -1936,8 +1948,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         })) => {
             #[cfg(feature = "ilhae")]
             {
-                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
-                    .await?;
+                codex_ilhae::ensure_native_runtime_for_cli(
+                    interactive.config_profile_v2.as_deref(),
+                )
+                .await?;
             }
             interactive = finalize_resume_interactive(
                 interactive,
@@ -1968,8 +1982,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         })) => {
             #[cfg(feature = "ilhae")]
             {
-                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
-                    .await?;
+                codex_ilhae::ensure_native_runtime_for_cli(
+                    interactive.config_profile_v2.as_deref(),
+                )
+                .await?;
             }
             interactive = finalize_fork_interactive(
                 interactive,
@@ -1994,16 +2010,18 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         #[cfg(feature = "ilhae")]
         Some(Subcommand::LocalServer(local_cmd)) => match local_cmd {
             LocalServerCommand::Start => {
-                codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
-                    .await?;
+                codex_ilhae::ensure_native_runtime_for_cli(
+                    interactive.config_profile_v2.as_deref(),
+                )
+                .await?;
             }
             LocalServerCommand::Stop => {
-                codex_ilhae::stop_native_runtime_for_cli(interactive.config_profile.as_deref())
+                codex_ilhae::stop_native_runtime_for_cli(interactive.config_profile_v2.as_deref())
                     .await?;
             }
             LocalServerCommand::Status => {
                 if let Some((profile_id, config)) = codex_ilhae::config::get_native_runtime_config(
-                    interactive.config_profile.as_deref(),
+                    interactive.config_profile_v2.as_deref(),
                 ) {
                     let healthy =
                         codex_ilhae::startup_main::native_runtime_healthcheck(&config.health_url)
@@ -2025,12 +2043,12 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "gpu",
             )?;
-            run_gpu_command(gpu_cmd, interactive.config_profile.as_deref()).await?;
+            run_gpu_command(gpu_cmd, interactive.config_profile_v2.as_deref()).await?;
         }
 
         #[cfg(feature = "ilhae")]
         Some(Subcommand::Start) => {
-            codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
+            codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile_v2.as_deref())
                 .await?;
             let exit_info = run_interactive_tui(
                 interactive,
@@ -2160,6 +2178,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     root_remote_auth_token_env.as_deref(),
                     "sandbox macos",
                 )?;
+                let config_profile = seatbelt_cli
+                    .config_profile
+                    .as_ref()
+                    .or(interactive.config_profile_v2.as_ref());
+                let loader_overrides = loader_overrides_for_profile(config_profile)?;
                 prepend_config_flags(
                     &mut seatbelt_cli.config_overrides,
                     root_config_overrides.clone(),
@@ -2167,6 +2190,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 codex_cli::run_command_under_seatbelt(
                     seatbelt_cli,
                     arg0_paths.codex_linux_sandbox_exe.clone(),
+                    loader_overrides,
                 )
                 .await?;
             }
@@ -2176,6 +2200,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     root_remote_auth_token_env.as_deref(),
                     "sandbox linux",
                 )?;
+                let config_profile = landlock_cli
+                    .config_profile
+                    .as_ref()
+                    .or(interactive.config_profile_v2.as_ref());
+                let loader_overrides = loader_overrides_for_profile(config_profile)?;
                 prepend_config_flags(
                     &mut landlock_cli.config_overrides,
                     root_config_overrides.clone(),
@@ -2183,6 +2212,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 codex_cli::run_command_under_landlock(
                     landlock_cli,
                     arg0_paths.codex_linux_sandbox_exe.clone(),
+                    loader_overrides,
                 )
                 .await?;
             }
@@ -2192,13 +2222,19 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     root_remote_auth_token_env.as_deref(),
                     "sandbox windows",
                 )?;
+                let config_profile = windows_cli
+                    .config_profile
+                    .as_ref()
+                    .or(interactive.config_profile_v2.as_ref());
+                let loader_overrides = loader_overrides_for_profile(config_profile)?;
                 prepend_config_flags(
                     &mut windows_cli.config_overrides,
                     root_config_overrides.clone(),
                 );
-                codex_cli::run_command_under_windows(
+                codex_cli::run_command_under_windows_sandbox(
                     windows_cli,
                     arg0_paths.codex_linux_sandbox_exe.clone(),
+                    loader_overrides,
                 )
                 .await?;
             }
@@ -2248,7 +2284,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     root_remote_auth_token_env.as_deref(),
                     "debug clear-memories",
                 )?;
-                run_debug_clear_memories_command(&root_config_overrides, &interactive).await?;
+                run_debug_clear_memories_command(&root_config_overrides).await?;
             }
         },
         Some(Subcommand::Execpolicy(ExecpolicyCommand { sub })) => match sub {
@@ -2308,13 +2344,9 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "exec-server",
             )?;
-            run_exec_server_command(
-                cmd,
-                &arg0_paths,
-                &root_config_overrides,
-                interactive.config_profile.clone(),
-            )
-            .await?;
+            let strict_config = cmd.strict_config || interactive.strict_config;
+            run_exec_server_command(cmd, &arg0_paths, &root_config_overrides, strict_config)
+                .await?;
         }
         Some(Subcommand::Features(FeaturesCli { sub })) => match sub {
             FeaturesSubcommand::List => {
@@ -2336,17 +2368,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     ));
                 }
 
-                // Thread through relevant top-level flags (at minimum, `--profile`).
-                let overrides = ConfigOverrides {
-                    config_profile: interactive.config_profile.clone(),
-                    ..Default::default()
-                };
-
-                let config = Config::load_with_cli_overrides_and_harness_overrides(
-                    cli_kv_overrides,
-                    overrides,
-                )
-                .await?;
+                let config = ConfigBuilder::default()
+                    .cli_overrides(cli_kv_overrides)
+                    .build()
+                    .await?;
                 let mut rows = Vec::with_capacity(FEATURES.len());
                 let mut name_width = 0;
                 let mut stage_width = 0;
@@ -2370,7 +2395,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     root_remote_auth_token_env.as_deref(),
                     "features enable",
                 )?;
-                enable_feature_in_config(&interactive, &feature).await?;
+                enable_feature_in_config(&feature).await?;
             }
             FeaturesSubcommand::Disable(FeatureSetArgs { feature }) => {
                 reject_remote_mode_for_subcommand(
@@ -2378,7 +2403,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     root_remote_auth_token_env.as_deref(),
                     "features disable",
                 )?;
-                disable_feature_in_config(&interactive, &feature).await?;
+                disable_feature_in_config(&feature).await?;
             }
         },
     }
@@ -2569,7 +2594,7 @@ async fn run_exec_server_command(
     cmd: ExecServerCommand,
     arg0_paths: &Arg0DispatchPaths,
     root_config_overrides: &CliConfigOverrides,
-    config_profile: Option<String>,
+    strict_config: bool,
 ) -> anyhow::Result<()> {
     let codex_self_exe = arg0_paths
         .codex_self_exe
@@ -2580,22 +2605,27 @@ async fn run_exec_server_command(
         arg0_paths.codex_linux_sandbox_exe.clone(),
     )?;
     if let Some(base_url) = cmd.remote {
-        let executor_id = cmd
-            .executor_id
-            .ok_or_else(|| anyhow::anyhow!("--executor-id is required when --remote is set"))?;
-        let auth_provider = load_exec_server_remote_auth_provider(
-            root_config_overrides,
-            config_profile,
-            cmd.use_agent_identity_auth,
-        )
-        .await?;
-        let mut remote_config =
-            codex_exec_server::RemoteExecutorConfig::new(base_url, executor_id, auth_provider)?;
+        let environment_id = cmd
+            .environment_id
+            .ok_or_else(|| anyhow::anyhow!("--environment-id is required when --remote is set"))?;
+        let config = load_exec_server_config(root_config_overrides, strict_config).await?;
+        let auth_provider =
+            load_exec_server_remote_auth_provider(&config, &base_url, cmd.use_agent_identity_auth)
+                .await?;
+        let mut remote_config = codex_exec_server::RemoteEnvironmentConfig::new(
+            base_url,
+            environment_id,
+            auth_provider,
+        )?;
         if let Some(name) = cmd.name {
             remote_config.name = name;
         }
-        codex_exec_server::run_remote_executor(remote_config, runtime_paths).await?;
+        codex_exec_server::run_remote_environment(remote_config, runtime_paths).await?;
         return Ok(());
+    }
+    if strict_config {
+        let _validated_config =
+            load_exec_server_config(root_config_overrides, strict_config).await?;
     }
     let listen_url = cmd
         .listen
@@ -2606,12 +2636,26 @@ async fn run_exec_server_command(
         .map_err(anyhow::Error::from_boxed)
 }
 
-async fn load_exec_server_remote_auth_provider(
+async fn load_exec_server_config(
     root_config_overrides: &CliConfigOverrides,
-    config_profile: Option<String>,
+    strict_config: bool,
+) -> anyhow::Result<codex_core::config::Config> {
+    let cli_kv_overrides = root_config_overrides
+        .parse_overrides()
+        .map_err(anyhow::Error::msg)?;
+    ConfigBuilder::default()
+        .cli_overrides(cli_kv_overrides)
+        .strict_config(strict_config)
+        .build()
+        .await
+        .map_err(anyhow::Error::from)
+}
+
+async fn load_exec_server_remote_auth_provider(
+    config: &codex_core::config::Config,
+    base_url: &str,
     use_agent_identity_auth: bool,
 ) -> anyhow::Result<codex_api::SharedAuthProvider> {
-    let config = load_exec_server_remote_config(root_config_overrides, config_profile).await?;
     if use_agent_identity_auth {
         let agent_identity_jwt = read_codex_access_token_from_env().ok_or_else(|| {
             anyhow::anyhow!("CODEX_ACCESS_TOKEN is required when --use-agent-identity-auth is set")
@@ -2623,35 +2667,46 @@ async fn load_exec_server_remote_auth_provider(
     }
 
     let auth = load_exec_server_remote_auth(
-        &config,
-        "remote exec-server registration requires ChatGPT authentication; run `codex login` first",
+        config,
+        "remote exec-server registration requires ChatGPT authentication or API key authentication; run `codex login` or set CODEX_API_KEY",
     )
     .await?;
 
-    if !auth.is_chatgpt_auth() {
+    if !is_supported_exec_server_remote_auth(&auth) {
         anyhow::bail!(
-            "remote exec-server registration requires ChatGPT authentication; API key and Agent Identity auth are not supported"
+            "remote exec-server registration requires ChatGPT authentication or API key authentication; Agent Identity auth requires --use-agent-identity-auth"
         );
+    }
+
+    if auth.is_api_key_auth() {
+        validate_api_key_remote_host(base_url)?;
     }
 
     Ok(codex_model_provider::auth_provider_from_auth(&auth))
 }
 
-async fn load_exec_server_remote_config(
-    root_config_overrides: &CliConfigOverrides,
-    config_profile: Option<String>,
-) -> anyhow::Result<codex_core::config::Config> {
-    let cli_kv_overrides = root_config_overrides
-        .parse_overrides()
-        .map_err(anyhow::Error::msg)?;
-    Ok(ConfigBuilder::default()
-        .cli_overrides(cli_kv_overrides)
-        .harness_overrides(ConfigOverrides {
-            config_profile,
-            ..Default::default()
-        })
-        .build()
-        .await?)
+fn is_supported_exec_server_remote_auth(auth: &CodexAuth) -> bool {
+    auth.is_chatgpt_auth() || auth.is_api_key_auth()
+}
+
+fn validate_api_key_remote_host(base_url: &str) -> anyhow::Result<()> {
+    let url = url::Url::parse(base_url)
+        .map_err(|err| anyhow::anyhow!("invalid remote exec-server registration URL: {err}"))?;
+    let host = url.host().ok_or_else(|| {
+        anyhow::anyhow!("remote exec-server registration URL must include a host")
+    })?;
+
+    let is_loopback = match &host {
+        url::Host::Domain(host) => host.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+    };
+    if !is_loopback {
+        anyhow::bail!(
+            "API key authentication for remote exec-server registration is only supported for localhost URLs"
+        );
+    }
+    Ok(())
 }
 
 async fn load_exec_server_remote_auth(
@@ -2675,24 +2730,22 @@ async fn load_exec_server_remote_auth(
     Ok(auth)
 }
 
-async fn enable_feature_in_config(interactive: &TuiCli, feature: &str) -> anyhow::Result<()> {
+async fn enable_feature_in_config(feature: &str) -> anyhow::Result<()> {
     FeatureToggles::validate_feature(feature)?;
     let codex_home = find_codex_home()?;
     ConfigEditsBuilder::new(&codex_home)
-        .with_profile(interactive.config_profile.as_deref())
         .set_feature_enabled(feature, /*enabled*/ true)
         .apply()
         .await?;
     println!("Enabled feature `{feature}` in config.toml.");
-    maybe_print_under_development_feature_warning(&codex_home, interactive, feature);
+    maybe_print_under_development_feature_warning(&codex_home, feature);
     Ok(())
 }
 
-async fn disable_feature_in_config(interactive: &TuiCli, feature: &str) -> anyhow::Result<()> {
+async fn disable_feature_in_config(feature: &str) -> anyhow::Result<()> {
     FeatureToggles::validate_feature(feature)?;
     let codex_home = find_codex_home()?;
     ConfigEditsBuilder::new(&codex_home)
-        .with_profile(interactive.config_profile.as_deref())
         .set_feature_enabled(feature, /*enabled*/ false)
         .apply()
         .await?;
@@ -2700,15 +2753,23 @@ async fn disable_feature_in_config(interactive: &TuiCli, feature: &str) -> anyho
     Ok(())
 }
 
-fn maybe_print_under_development_feature_warning(
-    codex_home: &std::path::Path,
-    interactive: &TuiCli,
-    feature: &str,
-) {
-    if interactive.config_profile.is_some() {
-        return;
+fn loader_overrides_for_profile(
+    profile_v2: Option<&ProfileV2Name>,
+) -> anyhow::Result<LoaderOverrides> {
+    match profile_v2 {
+        Some(profile_v2) => {
+            let codex_home = find_codex_home()?;
+            Ok(LoaderOverrides {
+                user_config_path: Some(resolve_profile_v2_config_path(&codex_home, profile_v2)),
+                user_config_profile: Some(profile_v2.clone()),
+                ..Default::default()
+            })
+        }
+        None => Ok(LoaderOverrides::default()),
     }
+}
 
+fn maybe_print_under_development_feature_warning(codex_home: &std::path::Path, feature: &str) {
     let Some(spec) = FEATURES.iter().find(|spec| spec.key == feature) else {
         return;
     };
@@ -2742,6 +2803,7 @@ async fn run_debug_prompt_input_command(
     interactive: TuiCli,
     arg0_paths: Arg0DispatchPaths,
 ) -> anyhow::Result<()> {
+    let loader_overrides = loader_overrides_for_profile(interactive.config_profile_v2.as_ref())?;
     let shared = interactive.shared.into_inner();
     let mut cli_kv_overrides = root_config_overrides
         .parse_overrides()
@@ -2765,7 +2827,6 @@ async fn run_debug_prompt_input_command(
     };
     let overrides = ConfigOverrides {
         model: shared.model,
-        config_profile: shared.config_profile,
         approval_policy,
         sandbox_mode,
         cwd: shared.cwd,
@@ -2774,11 +2835,16 @@ async fn run_debug_prompt_input_command(
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe,
         show_raw_agent_reasoning: shared.oss.then_some(true),
         ephemeral: Some(true),
+        bypass_hook_trust: shared.bypass_hook_trust.then_some(true),
         additional_writable_roots: shared.add_dir,
         ..Default::default()
     };
-    let config =
-        Config::load_with_cli_overrides_and_harness_overrides(cli_kv_overrides, overrides).await?;
+    let config = ConfigBuilder::default()
+        .cli_overrides(cli_kv_overrides)
+        .harness_overrides(overrides)
+        .loader_overrides(loader_overrides)
+        .build()
+        .await?;
 
     let mut input = shared
         .images
@@ -2825,34 +2891,25 @@ async fn run_debug_models_command(
 
 async fn run_debug_clear_memories_command(
     root_config_overrides: &CliConfigOverrides,
-    interactive: &TuiCli,
 ) -> anyhow::Result<()> {
     let cli_kv_overrides = root_config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
-    let overrides = ConfigOverrides {
-        config_profile: interactive.config_profile.clone(),
-        ..Default::default()
-    };
-    let config =
-        Config::load_with_cli_overrides_and_harness_overrides(cli_kv_overrides, overrides).await?;
+    let config = ConfigBuilder::default()
+        .cli_overrides(cli_kv_overrides)
+        .build()
+        .await?;
 
-    let state_path = state_db_path(config.sqlite_home.as_path());
-    let mut cleared_state_db = false;
-    if tokio::fs::try_exists(&state_path).await? {
-        let state_db =
-            StateRuntime::init(config.sqlite_home.clone(), config.model_provider_id.clone())
-                .await?;
-        state_db.clear_memory_data().await?;
-        cleared_state_db = true;
-    }
+    let memories_path = codex_state::memories_db_path(config.sqlite_home.as_path());
+    let cleared_memories_db =
+        StateRuntime::clear_memory_data_in_sqlite_home(config.sqlite_home.as_path()).await?;
 
     clear_memory_roots_contents(&config.codex_home).await?;
 
-    let mut message = if cleared_state_db {
-        format!("Cleared memory state from {}.", state_path.display())
+    let mut message = if cleared_memories_db {
+        format!("Cleared memory state from {}.", memories_path.display())
     } else {
-        format!("No state db found at {}.", state_path.display())
+        format!("No memories db found at {}.", memories_path.display())
     };
     message.push_str(&format!(
         " Cleared memory directories under {}.",
@@ -2947,7 +3004,7 @@ async fn run_interactive_tui(
             .await
             .map_err(std::io::Error::other)?;
 
-        codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile.as_deref())
+        codex_ilhae::ensure_native_runtime_for_cli(interactive.config_profile_v2.as_deref())
             .await
             .map_err(std::io::Error::other)?;
     }
@@ -3793,7 +3850,7 @@ args = ["--ctx-size", "131072"]
 
         assert_eq!(interactive.model.as_deref(), Some("gpt-5.1-test"));
         assert!(interactive.oss);
-        assert_eq!(interactive.config_profile.as_deref(), Some("my-profile"));
+        assert_eq!(interactive.config_profile_v2.as_deref(), Some("my-profile"));
         assert_matches!(
             interactive.sandbox_mode,
             Some(codex_utils_cli::SandboxModeCliArg::WorkspaceWrite)

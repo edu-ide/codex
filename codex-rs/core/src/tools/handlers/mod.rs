@@ -8,6 +8,8 @@ mod dynamic;
 pub(crate) mod extension_tools;
 mod goal;
 pub(crate) mod goal_spec;
+mod list_available_plugins_to_install;
+pub(crate) mod list_available_plugins_to_install_spec;
 mod local_web_search;
 pub(crate) mod local_web_search_spec;
 mod mcp;
@@ -59,6 +61,7 @@ pub use dynamic::DynamicToolHandler;
 pub use goal::CreateGoalHandler;
 pub use goal::GetGoalHandler;
 pub use goal::UpdateGoalHandler;
+pub use list_available_plugins_to_install::ListAvailablePluginsToInstallHandler;
 pub use local_web_search::LocalWebSearchHandler;
 pub use mcp::McpHandler;
 pub use mcp_resource::CallMcpToolHandler;
@@ -448,7 +451,7 @@ mod tests {
                         path: FileSystemPath::GlobPattern {
                             pattern: "**/*.env".to_string(),
                         },
-                        access: FileSystemAccessMode::None,
+                        access: FileSystemAccessMode::Deny,
                     },
                 ],
                 glob_scan_max_depth: None,

@@ -1,38 +1,27 @@
 [package]
 name = "codex-utils-image"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true
 
-[package.version]
-workspace = true
+[dependencies]
+base64 = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png", "gif", "webp"] }
+codex-utils-cache = { workspace = true }
+mime_guess = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "rt", "rt-multi-thread", "macros"] }
 
-[package.edition]
-workspace = true
+[dev-dependencies]
+divan = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png", "gif", "webp"] }
 
-[package.license]
-workspace = true
+[lib]
+doctest = false
 
-[dependencies.base64]
-version = "0.22.1"
-
-[dependencies.image]
-workspace = true
-features = [ "jpeg", "png", "gif", "webp",]
-
-[dependencies.codex-utils-cache]
-workspace = true
-
-[dependencies.mime_guess]
-workspace = true
-
-[dependencies.thiserror]
-version = "2.0.17"
-
-[dependencies.tokio]
-version = "1"
-features = [ "fs", "rt", "rt-multi-thread", "macros",]
-
-[dev-dependencies.image]
-workspace = true
-features = [ "jpeg", "png", "gif", "webp",]
+[[bench]]
+name = "prompt_images"
+harness = false

@@ -163,7 +163,9 @@ fn goal_summary_lines(goal: &AppThreadGoal) -> Vec<Line<'static>> {
         AppThreadGoalStatus::Active => {
             "Commands: /goal edit, /goal pause, /superloop <objective>, /goal clear"
         }
-        AppThreadGoalStatus::Paused => {
+        AppThreadGoalStatus::Paused
+        | AppThreadGoalStatus::Blocked
+        | AppThreadGoalStatus::UsageLimited => {
             "Commands: /goal edit, /goal resume, /superloop <objective>, /goal clear"
         }
         AppThreadGoalStatus::BudgetLimited | AppThreadGoalStatus::Complete => {
@@ -237,6 +239,8 @@ fn goal_status_label(status: AppThreadGoalStatus) -> &'static str {
     match status {
         AppThreadGoalStatus::Active => "active",
         AppThreadGoalStatus::Paused => "paused",
+        AppThreadGoalStatus::Blocked => "blocked",
+        AppThreadGoalStatus::UsageLimited => "usage limited",
         AppThreadGoalStatus::BudgetLimited => "limited by budget",
         AppThreadGoalStatus::Complete => "complete",
     }
@@ -245,7 +249,9 @@ fn goal_status_label(status: AppThreadGoalStatus) -> &'static str {
 fn edited_goal_status(status: AppThreadGoalStatus) -> AppThreadGoalStatus {
     match status {
         AppThreadGoalStatus::Active => AppThreadGoalStatus::Active,
-        AppThreadGoalStatus::Paused => AppThreadGoalStatus::Paused,
+        AppThreadGoalStatus::Paused
+        | AppThreadGoalStatus::Blocked
+        | AppThreadGoalStatus::UsageLimited => status,
         AppThreadGoalStatus::BudgetLimited | AppThreadGoalStatus::Complete => {
             AppThreadGoalStatus::Active
         }

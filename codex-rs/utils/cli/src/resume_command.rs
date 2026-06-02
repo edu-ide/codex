@@ -27,6 +27,16 @@ pub fn resume_command_for_binary(
     })
 }
 
+pub fn resume_hint(thread_name: Option<&str>, thread_id: Option<ThreadId>) -> Option<String> {
+    let thread_id = thread_id?;
+    match thread_name.filter(|name| !name.is_empty()) {
+        Some(thread_name) => Some(format!(
+            "codex resume, then select {thread_name} ({thread_id})"
+        )),
+        None => resume_command(/*thread_name*/ None, Some(thread_id)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,13 +81,31 @@ mod tests {
     }
 
     #[test]
-    fn formats_custom_binary() {
+    fn resume_hint_names_picker_item_with_id() {
         let thread_id = ThreadId::from_string("123e4567-e89b-12d3-a456-426614174000").unwrap();
-        let command =
-            resume_command_for_binary("ilhae", /*thread_name*/ None, Some(thread_id));
+        let hint = resume_hint(Some("my-thread"), Some(thread_id));
         assert_eq!(
-            command,
-            Some("ilhae resume 123e4567-e89b-12d3-a456-426614174000".to_string())
+            hint,
+            Some(
+                "codex resume, then select my-thread (123e4567-e89b-12d3-a456-426614174000)"
+                    .to_string()
+            )
         );
+    }
+
+    #[test]
+    fn resume_hint_uses_direct_id_command_without_name() {
+        let thread_id = ThreadId::from_string("123e4567-e89b-12d3-a456-426614174000").unwrap();
+        let hint = resume_hint(/*thread_name*/ None, Some(thread_id));
+        assert_eq!(
+            hint,
+            Some("codex resume 123e4567-e89b-12d3-a456-426614174000".to_string())
+        );
+    }
+
+    #[test]
+    fn resume_hint_requires_thread_id() {
+        let hint = resume_hint(Some("my-thread"), /*thread_id*/ None);
+        assert_eq!(hint, None);
     }
 }

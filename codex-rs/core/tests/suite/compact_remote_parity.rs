@@ -606,6 +606,8 @@ async fn submit_user_input(codex: &codex_core::CodexThread, items: Vec<UserInput
             items,
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_turn_complete(codex).await;
@@ -1045,7 +1047,7 @@ fn canonical_json(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
             let mut entries = map.iter().collect::<Vec<_>>();
-            entries.sort_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+            entries.sort_by_key(|(left_key, _)| *left_key);
             Value::Object(
                 entries
                     .into_iter()

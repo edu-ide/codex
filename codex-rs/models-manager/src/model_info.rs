@@ -64,10 +64,6 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
 
 /// Build a minimal fallback model descriptor for missing/unknown slugs.
 pub fn model_info_from_slug(slug: &str) -> ModelInfo {
-    if slug == "Qwen3.6-27B-UD-Q4_K_XL" {
-        return qwen3_6_27b_ud_q4_k_xl_model_info(slug);
-    }
-
     warn!("Unknown model {slug} is used. This will use fallback model metadata.");
     ModelInfo {
         slug: slug.to_string(),
@@ -81,6 +77,7 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         priority: 99,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
+        default_service_tier: None,
         availability_nux: None,
         upgrade: None,
         base_instructions: BASE_INSTRUCTIONS.to_string(),
@@ -101,50 +98,10 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         experimental_supported_tools: Vec::new(),
         input_modalities: default_input_modalities(),
         used_fallback_model_metadata: true, // this is the fallback model metadata
-        supports_search_tool: fallback_model_supports_search_tool(slug),
+        supports_search_tool: false,
+        auto_review_model_override: None,
+        tool_mode: None,
     }
-}
-
-fn qwen3_6_27b_ud_q4_k_xl_model_info(slug: &str) -> ModelInfo {
-    ModelInfo {
-        slug: slug.to_string(),
-        display_name: "Qwen3.6 27B UD Q4_K_XL".to_string(),
-        description: Some("Local Qwen3.6 27B GGUF model".to_string()),
-        default_reasoning_level: None,
-        supported_reasoning_levels: Vec::new(),
-        shell_type: ConfigShellToolType::Default,
-        visibility: ModelVisibility::None,
-        supported_in_api: true,
-        priority: 99,
-        additional_speed_tiers: Vec::new(),
-        service_tiers: Vec::new(),
-        availability_nux: None,
-        upgrade: None,
-        base_instructions: BASE_INSTRUCTIONS.to_string(),
-        model_messages: None,
-        supports_reasoning_summaries: false,
-        default_reasoning_summary: ReasoningSummary::Auto,
-        support_verbosity: false,
-        default_verbosity: None,
-        apply_patch_tool_type: None,
-        web_search_tool_type: WebSearchToolType::Text,
-        truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
-        supports_parallel_tool_calls: false,
-        supports_image_detail_original: false,
-        context_window: Some(131_072),
-        max_context_window: Some(131_072),
-        auto_compact_token_limit: None,
-        effective_context_window_percent: 95,
-        experimental_supported_tools: Vec::new(),
-        input_modalities: default_input_modalities(),
-        used_fallback_model_metadata: false,
-        supports_search_tool: true,
-    }
-}
-
-fn fallback_model_supports_search_tool(slug: &str) -> bool {
-    let slug = slug.to_ascii_lowercase();
-    slug.contains("qwen") || slug.contains("minimax")
 }
 
 fn local_personality_messages_for_slug(slug: &str) -> Option<ModelMessages> {

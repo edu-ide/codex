@@ -1,5 +1,5 @@
 use codex_arg0::Arg0DispatchPaths;
-use codex_cloud_requirements::cloud_requirements_loader;
+use codex_cloud_config::cloud_requirements_loader;
 use codex_config::CloudRequirementsLoader;
 use codex_config::ConfigLayerStack;
 use codex_config::LoaderOverrides;
@@ -216,15 +216,23 @@ impl ConfigManager {
         &self,
         cli_overrides: &[(String, TomlValue)],
         request_overrides: Option<HashMap<String, serde_json::Value>>,
-        typesafe_overrides: ConfigOverrides,
+        mut typesafe_overrides: ConfigOverrides,
         fallback_cwd: Option<PathBuf>,
     ) -> std::io::Result<Config> {
+        let mut request_overrides = request_overrides.unwrap_or_default();
+        if let Some(value) = request_overrides.remove("bypass_hook_trust") {
+            typesafe_overrides.bypass_hook_trust = Some(value.as_bool().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "`bypass_hook_trust` override must be a boolean",
+                )
+            })?);
+        }
         let merged_cli_overrides = cli_overrides
             .iter()
             .cloned()
             .chain(
                 request_overrides
-                    .unwrap_or_default()
                     .into_iter()
                     .map(|(key, value)| (key, json_to_toml(value))),
             )
