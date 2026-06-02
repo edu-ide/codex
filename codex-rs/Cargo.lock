@@ -3308,6 +3308,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bm25",
+ "brain-rs",
  "chrono",
  "clap",
  "codex-analytics",

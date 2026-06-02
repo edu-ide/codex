@@ -2,6 +2,8 @@ use crate::session::turn_context::TurnContext;
 use crate::tools::code_mode::execute_spec::create_code_mode_tool;
 use crate::tools::context::ToolInvocation;
 use crate::tools::handlers::ApplyPatchHandler;
+use crate::tools::handlers::BrainArtifactOpsHandler;
+use crate::tools::handlers::BrainMemoryOpsHandler;
 use crate::tools::handlers::BrainVaultPatchHandler;
 use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
@@ -557,6 +559,16 @@ fn should_register_lsp_tool(turn_context: &TurnContext) -> bool {
     }
 }
 
+fn should_register_ilhae_brain_native_tools() -> bool {
+    match std::env::var("ILHAE_BRAIN_NATIVE") {
+        Ok(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized != "0" && normalized != "false" && normalized != "off"
+        }
+        Err(_) => true,
+    }
+}
+
 fn should_register_local_web_search_tool(context: &CoreToolPlanContext<'_>) -> bool {
     let turn_context = context.turn_context;
     if standalone_web_run_available(context.extension_tool_executors) {
@@ -697,6 +709,11 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mut
     }
 
     planned_tools.add(BrainVaultPatchHandler);
+
+    if should_register_ilhae_brain_native_tools() {
+        planned_tools.add(BrainMemoryOpsHandler);
+        planned_tools.add(BrainArtifactOpsHandler);
+    }
 
     if environment_mode.has_environment() {
         let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);

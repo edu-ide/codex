@@ -22,6 +22,7 @@ async-channel = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 bm25 = { workspace = true }
+brain-rs = { path = "../../../brain-rs", default-features = false }
 chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
 codex-analytics = { workspace = true }
