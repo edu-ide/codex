@@ -2,6 +2,7 @@ use crate::session::turn_context::TurnContext;
 use crate::tools::code_mode::execute_spec::create_code_mode_tool;
 use crate::tools::context::ToolInvocation;
 use crate::tools::handlers::ApplyPatchHandler;
+use crate::tools::handlers::BrainVaultPatchHandler;
 use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
 use crate::tools::handlers::CreateGoalHandler;
@@ -12,6 +13,7 @@ use crate::tools::handlers::GetGoalHandler;
 use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
 use crate::tools::handlers::ListMcpResourcesHandler;
+use crate::tools::handlers::LocalWebSearchHandler;
 use crate::tools::handlers::McpHandler;
 use crate::tools::handlers::PlanHandler;
 use crate::tools::handlers::ReadMcpResourceHandler;
@@ -57,6 +59,7 @@ use crate::tools::router::ToolRouterParams;
 use codex_features::Feature;
 use codex_login::AuthManager;
 use codex_mcp::ToolInfo;
+use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::InputModality;
@@ -534,6 +537,20 @@ fn add_tool_sources(context: &CoreToolPlanContext<'_>, planned_tools: &mut Plann
     }
 }
 
+fn should_register_local_web_search_tool(context: &CoreToolPlanContext<'_>) -> bool {
+    let turn_context = context.turn_context;
+    if standalone_web_run_available(context.extension_tool_executors) {
+        return false;
+    }
+    if turn_context.provider.capabilities().web_search {
+        return false;
+    }
+    !matches!(
+        turn_context.config.web_search_mode.value(),
+        WebSearchMode::Disabled
+    )
+}
+
 fn standalone_web_run_available(
     extension_tools: &[Arc<dyn ToolExecutor<ExtensionToolCall>>],
 ) -> bool {
@@ -650,6 +667,12 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mut
     {
         planned_tools.add(TestSyncHandler);
     }
+
+    if should_register_local_web_search_tool(context) {
+        planned_tools.add(LocalWebSearchHandler);
+    }
+
+    planned_tools.add(BrainVaultPatchHandler);
 
     if environment_mode.has_environment() {
         let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);

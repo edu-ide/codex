@@ -1259,5 +1259,19 @@ async fn hosted_tools_follow_provider_auth_model_and_config_gates() {
         use_bedrock_provider(turn);
     })
     .await;
-    unsupported_provider.assert_visible_lacks(&["web_search"]);
+    unsupported_provider.assert_visible_contains(&["web_search"]);
+    let ToolSpec::Function(tool) = unsupported_provider.visible_spec("web_search") else {
+        panic!("local web_search should be exposed as a function tool");
+    };
+    assert!(tool.description.contains("local Ilhae web-search adapter"));
+}
+
+#[tokio::test]
+async fn brain_vault_patch_tool_is_exposed_for_goal_loop_records() {
+    let probe = probe(|_turn| {}).await;
+    probe.assert_visible_contains(&["brain_vault_patch"]);
+    let ToolSpec::Function(tool) = probe.visible_spec("brain_vault_patch") else {
+        panic!("brain_vault_patch should be exposed as a function tool");
+    };
+    assert!(tool.description.contains("Brain/Wiki vault"));
 }

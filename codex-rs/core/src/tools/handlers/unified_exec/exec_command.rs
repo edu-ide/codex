@@ -388,10 +388,7 @@ fn parse_sleep_duration_secs(token: &str) -> Option<u64> {
     if token.is_empty() {
         return None;
     }
-    let digits_len = token
-        .bytes()
-        .take_while(u8::is_ascii_digit)
-        .count();
+    let digits_len = token.bytes().take_while(u8::is_ascii_digit).count();
     if digits_len == 0 {
         return None;
     }

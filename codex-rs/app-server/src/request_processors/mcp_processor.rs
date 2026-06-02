@@ -288,21 +288,25 @@ impl McpRequestProcessor {
         )
         .await;
 
+        let configured_servers = codex_mcp::configured_mcp_servers(&mcp_config);
+        let effective_servers = codex_mcp::effective_mcp_servers(&mcp_config, auth.as_ref());
         let McpServerStatusSnapshot {
             server_infos,
             tools_by_server,
             resources,
             resource_templates,
             auth_statuses,
-            mut server_names,
+            server_names: snapshot_server_names,
         } = snapshot;
-        server_names.extend(
-            auth_statuses
-                .keys()
-                .cloned()
-                .chain(resources.keys().cloned())
-                .chain(resource_templates.keys().cloned()),
-        );
+        let mut server_names: Vec<String> = configured_servers
+            .keys()
+            .cloned()
+            .chain(effective_servers.keys().cloned())
+            .chain(snapshot_server_names)
+            .chain(auth_statuses.keys().cloned())
+            .chain(resources.keys().cloned())
+            .chain(resource_templates.keys().cloned())
+            .collect();
         server_names.sort();
         server_names.dedup();
 
