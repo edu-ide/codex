@@ -792,6 +792,7 @@ mod tests {
                     output_tokens: 3,
                     reasoning_output_tokens: 1,
                     total_tokens: 13,
+                    cost_usd: 0.0,
                 }),
             },
             JobResult {
@@ -802,6 +803,7 @@ mod tests {
                     output_tokens: 2,
                     reasoning_output_tokens: 0,
                     total_tokens: 9,
+                    cost_usd: 0.0,
                 }),
             },
             JobResult {
@@ -822,6 +824,7 @@ mod tests {
                 output_tokens: 5,
                 reasoning_output_tokens: 1,
                 total_tokens: 22,
+                cost_usd: 0.0,
             })
         );
     }

@@ -565,6 +565,7 @@ mod tests {
                 objective: objective.to_string(),
                 status: ThreadGoalStatus::Active,
                 token_budget: None,
+                superloop_enabled: false,
                 tokens_used: 0,
                 time_used_seconds: 0,
                 created_at: 0,

@@ -263,6 +263,7 @@ async fn status_snapshot_includes_reasoning_details() {
         output_tokens: 900,
         reasoning_output_tokens: 150,
         total_tokens: 2_250,
+        cost_usd: 0.0,
     };
 
     let captured_at = chrono::Local
@@ -849,6 +850,7 @@ async fn status_snapshot_includes_forked_from() {
         output_tokens: 400,
         reasoning_output_tokens: 0,
         total_tokens: 1_200,
+        cost_usd: 0.0,
     };
 
     let captured_at = chrono::Local
@@ -903,6 +905,7 @@ async fn status_snapshot_includes_monthly_limit() {
         output_tokens: 400,
         reasoning_output_tokens: 0,
         total_tokens: 1_200,
+        cost_usd: 0.0,
     };
 
     let captured_at = chrono::Local
@@ -967,6 +970,7 @@ async fn status_snapshot_includes_enterprise_monthly_credit_limit() {
         output_tokens: 400,
         reasoning_output_tokens: 0,
         total_tokens: 1_200,
+        cost_usd: 0.0,
     };
     let captured_at = chrono::Local
         .with_ymd_and_hms(2024, 5, 6, 7, 8, 9)
@@ -1043,6 +1047,7 @@ async fn status_snapshot_uses_generic_limit_labels_for_unsupported_windows() {
         output_tokens: 400,
         reasoning_output_tokens: 0,
         total_tokens: 1_200,
+        cost_usd: 0.0,
     };
 
     let captured_at = chrono::Local
@@ -1310,6 +1315,7 @@ async fn status_card_token_usage_excludes_cached_tokens() {
         output_tokens: 900,
         reasoning_output_tokens: 0,
         total_tokens: 2_100,
+        cost_usd: 0.0,
     };
 
     let now = chrono::Local
@@ -1358,6 +1364,7 @@ async fn status_snapshot_truncates_in_narrow_terminal() {
         output_tokens: 900,
         reasoning_output_tokens: 150,
         total_tokens: 2_250,
+        cost_usd: 0.0,
     };
 
     let captured_at = chrono::Local
@@ -1423,6 +1430,7 @@ async fn status_snapshot_shows_missing_limits_message() {
         output_tokens: 250,
         reasoning_output_tokens: 0,
         total_tokens: 750,
+        cost_usd: 0.0,
     };
 
     let now = chrono::Local
@@ -1471,6 +1479,7 @@ async fn status_snapshot_uses_default_reasoning_when_config_empty() {
         output_tokens: 250,
         reasoning_output_tokens: 0,
         total_tokens: 750,
+        cost_usd: 0.0,
     };
 
     let now = chrono::Local
@@ -1526,6 +1535,7 @@ async fn status_snapshot_shows_refreshing_limits_notice() {
         output_tokens: 250,
         reasoning_output_tokens: 0,
         total_tokens: 750,
+        cost_usd: 0.0,
     };
     let captured_at = chrono::Local
         .with_ymd_and_hms(2024, 6, 7, 8, 9, 10)
@@ -1593,6 +1603,7 @@ async fn status_snapshot_includes_credits_and_limits() {
         output_tokens: 600,
         reasoning_output_tokens: 0,
         total_tokens: 2_200,
+        cost_usd: 0.0,
     };
 
     let captured_at = chrono::Local
@@ -1664,6 +1675,7 @@ async fn status_snapshot_shows_unavailable_limits_message() {
         output_tokens: 250,
         reasoning_output_tokens: 0,
         total_tokens: 750,
+        cost_usd: 0.0,
     };
 
     let snapshot = RateLimitSnapshot {
@@ -1722,6 +1734,7 @@ async fn status_snapshot_treats_refreshing_empty_limits_as_unavailable() {
         output_tokens: 250,
         reasoning_output_tokens: 0,
         total_tokens: 750,
+        cost_usd: 0.0,
     };
 
     let snapshot = RateLimitSnapshot {
@@ -1782,6 +1795,7 @@ async fn status_snapshot_shows_stale_limits_message() {
         output_tokens: 900,
         reasoning_output_tokens: 150,
         total_tokens: 2_250,
+        cost_usd: 0.0,
     };
 
     let captured_at = chrono::Local
@@ -1850,6 +1864,7 @@ async fn status_snapshot_cached_limits_hide_credits_without_flag() {
         output_tokens: 350,
         reasoning_output_tokens: 0,
         total_tokens: 1_450,
+        cost_usd: 0.0,
     };
 
     let captured_at = chrono::Local
@@ -1921,6 +1936,7 @@ async fn status_context_window_uses_last_usage() {
         output_tokens: 879,
         reasoning_output_tokens: 0,
         total_tokens: 102_000,
+        cost_usd: 0.0,
     };
     let last_usage = TokenUsage {
         input_tokens: 12_800,
@@ -1928,6 +1944,7 @@ async fn status_context_window_uses_last_usage() {
         output_tokens: 879,
         reasoning_output_tokens: 0,
         total_tokens: 13_679,
+        cost_usd: 0.0,
     };
 
     let now = chrono::Local
