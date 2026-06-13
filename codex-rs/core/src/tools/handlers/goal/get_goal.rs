@@ -15,7 +15,6 @@ use super::goal_response;
 
 pub struct GetGoalHandler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for GetGoalHandler {
     fn tool_name(&self) -> ToolName {
         ToolName::plain(GET_GOAL_TOOL_NAME)
@@ -25,7 +24,13 @@ impl ToolExecutor<ToolInvocation> for GetGoalHandler {
         create_get_goal_tool()
     }
 
-    async fn handle(
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
+        Box::pin(self.handle_call(invocation))
+    }
+}
+
+impl GetGoalHandler {
+    async fn handle_call(
         &self,
         invocation: ToolInvocation,
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {

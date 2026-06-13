@@ -22,6 +22,9 @@ workspace = true
 [dependencies.codex-utils-absolute-path]
 workspace = true
 
+[dependencies.libc]
+workspace = true
+
 [dependencies.once_cell]
 workspace = true
 

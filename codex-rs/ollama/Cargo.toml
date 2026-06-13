@@ -34,6 +34,9 @@ workspace = true
 version = "0.3"
 default-features = false
 
+[dependencies.memchr]
+workspace = true
+
 [dependencies.reqwest]
 workspace = true
 features = [ "json", "stream",]

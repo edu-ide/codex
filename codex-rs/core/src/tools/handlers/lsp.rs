@@ -70,7 +70,6 @@ pub(crate) fn shared_lsp_server_manager() -> Arc<LspServerManager> {
     Arc::clone(MANAGER.get_or_init(LspServerManager::new))
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for LspToolHandler {
     fn tool_name(&self) -> ToolName {
         ToolName::plain(LSP_TOOL_NAME)
@@ -84,7 +83,13 @@ impl ToolExecutor<ToolInvocation> for LspToolHandler {
         true
     }
 
-    async fn handle(
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
+        Box::pin(self.handle_call(invocation))
+    }
+}
+
+impl LspToolHandler {
+    async fn handle_call(
         &self,
         invocation: ToolInvocation,
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {

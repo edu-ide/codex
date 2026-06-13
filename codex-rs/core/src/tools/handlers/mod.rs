@@ -11,10 +11,12 @@ mod brain_vault_patch;
 pub(crate) mod brain_vault_patch_spec;
 mod native_tools;
 pub(crate) use native_tools::create_all_brain_tools;
-mod dynamic;
-pub(crate) mod extension_tools;
 mod goal;
 pub(crate) mod goal_spec;
+mod dynamic;
+pub(crate) mod extension_tools;
+mod get_context_remaining;
+pub(crate) mod get_context_remaining_spec;
 mod list_available_plugins_to_install;
 pub(crate) mod list_available_plugins_to_install_spec;
 mod local_web_search;
@@ -28,6 +30,8 @@ pub(crate) mod multi_agents;
 pub(crate) mod multi_agents_common;
 pub(crate) mod multi_agents_spec;
 pub(crate) mod multi_agents_v2;
+mod new_context_window;
+pub(crate) mod new_context_window_spec;
 mod plan;
 pub(crate) mod plan_spec;
 mod request_permissions;
@@ -69,6 +73,7 @@ pub use brain_vault_patch::BrainVaultPatchHandler;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use dynamic::DynamicToolHandler;
+pub use get_context_remaining::GetContextRemainingHandler;
 pub use goal::CreateGoalHandler;
 pub use goal::GetGoalHandler;
 pub use goal::UpdateGoalHandler;
@@ -81,6 +86,7 @@ pub use mcp_resource::CallMcpToolHandler;
 pub use mcp_resource::ListMcpResourceTemplatesHandler;
 pub use mcp_resource::ListMcpResourcesHandler;
 pub use mcp_resource::ReadMcpResourceHandler;
+pub use new_context_window::NewContextWindowHandler;
 pub use plan::PlanHandler;
 pub use request_permissions::RequestPermissionsHandler;
 pub use request_plugin_install::RequestPluginInstallHandler;
@@ -270,7 +276,8 @@ pub(super) fn implicit_granted_permissions(
 
 pub(super) async fn apply_granted_turn_permissions(
     session: &Session,
-    cwd: &std::path::Path,
+    environment_id: &str,
+    cwd: &Path,
     sandbox_permissions: SandboxPermissions,
     additional_permissions: Option<AdditionalPermissionProfile>,
 ) -> EffectiveAdditionalPermissions {
@@ -282,8 +289,8 @@ pub(super) async fn apply_granted_turn_permissions(
         };
     }
 
-    let granted_session_permissions = session.granted_session_permissions().await;
-    let granted_turn_permissions = session.granted_turn_permissions().await;
+    let granted_session_permissions = session.granted_session_permissions(environment_id).await;
+    let granted_turn_permissions = session.granted_turn_permissions(environment_id).await;
     let granted_permissions = merge_permission_profiles(
         granted_session_permissions.as_ref(),
         granted_turn_permissions.as_ref(),

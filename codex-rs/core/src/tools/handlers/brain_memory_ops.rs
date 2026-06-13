@@ -9,7 +9,6 @@ use codex_tools::{ToolName, ToolSpec};
 
 pub struct BrainMemoryOpsHandler;
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for BrainMemoryOpsHandler {
     fn tool_name(&self) -> ToolName {
         ToolName::plain(BRAIN_MEMORY_OPS_TOOL_NAME)
@@ -17,7 +16,13 @@ impl ToolExecutor<ToolInvocation> for BrainMemoryOpsHandler {
     fn spec(&self) -> ToolSpec {
         create_brain_memory_ops_tool()
     }
-    async fn handle(
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
+        Box::pin(self.handle_call(invocation))
+    }
+}
+
+impl BrainMemoryOpsHandler {
+    async fn handle_call(
         &self,
         invocation: ToolInvocation,
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
