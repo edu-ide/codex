@@ -351,6 +351,7 @@ mod tests {
                 output_tokens: 3,
                 reasoning_output_tokens: 2,
                 total_tokens: 15,
+                cost_usd: 0.0,
             }),
             time_to_first_token_ms: Some(123),
             ..GuardianReviewAnalyticsResult::without_session()

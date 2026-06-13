@@ -36,7 +36,9 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::resume_command_for_binary;
 use owo_colors::OwoColorize;
+use std::collections::HashSet;
 use std::io::IsTerminal;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use supports_color::Stream;
@@ -48,12 +50,14 @@ mod desktop_app;
 mod marketplace_cmd;
 mod mcp_cmd;
 mod plugin_cmd;
+mod state_db_recovery;
 #[cfg(not(windows))]
 mod wsl_paths;
 
 use crate::mcp_cmd::McpCli;
 use crate::plugin_cmd::PluginCli;
 use crate::plugin_cmd::PluginSubcommand;
+use state_db_recovery as local_state_db;
 
 use codex_config::LoaderOverrides;
 use codex_core::build_models_manager;
@@ -66,6 +70,7 @@ use codex_core::config::resolve_profile_v2_config_path;
 use codex_features::FEATURES;
 use codex_features::Stage;
 use codex_features::is_known_feature_key;
+use codex_home::CodexHomeUserInstructionsProvider;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::read_codex_access_token_from_env;
@@ -322,7 +327,7 @@ struct ResumeCommand {
     remote: InteractiveRemoteOptions,
 
     #[clap(flatten)]
-    config_overrides: TuiCli,
+    config_overrides: SessionTuiCli,
 }
 
 #[derive(Debug, Parser)]
@@ -333,7 +338,7 @@ struct ForkCommand {
     session_id: Option<String>,
 
     /// Fork the most recent session without showing the picker.
-    #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
+    #[arg(long = "last", default_value_t = false)]
     last: bool,
 
     /// Show all sessions (disables cwd filtering and shows CWD column).
@@ -344,7 +349,33 @@ struct ForkCommand {
     remote: InteractiveRemoteOptions,
 
     #[clap(flatten)]
-    config_overrides: TuiCli,
+    config_overrides: SessionTuiCli,
+}
+
+/// TUI arguments for session commands where a parsed prompt implies an explicit session id.
+///
+/// This keeps `--last PROMPT` valid while rejecting `--last SESSION_ID PROMPT`.
+#[derive(Debug)]
+struct SessionTuiCli(TuiCli);
+
+impl Args for SessionTuiCli {
+    fn augment_args(cmd: clap::Command) -> clap::Command {
+        TuiCli::augment_args(cmd).mut_arg("prompt", |arg| arg.conflicts_with("last"))
+    }
+
+    fn augment_args_for_update(cmd: clap::Command) -> clap::Command {
+        TuiCli::augment_args_for_update(cmd).mut_arg("prompt", |arg| arg.conflicts_with("last"))
+    }
+}
+
+impl clap::FromArgMatches for SessionTuiCli {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        TuiCli::from_arg_matches(matches).map(Self)
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        self.0.update_from_arg_matches(matches)
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -509,6 +540,14 @@ struct AppServerCommand {
     )]
     listen: codex_app_server::AppServerTransport,
 
+    /// Use stdio as the transport (equivalent to `--listen stdio://`).
+    #[arg(long = "stdio", conflicts_with = "listen")]
+    stdio: bool,
+
+    /// Enable remote control for this app-server process without changing persistence.
+    #[arg(long = "remote-control", hide = true)]
+    remote_control: bool,
+
     /// Controls whether analytics are enabled by default.
     ///
     /// Analytics are disabled by default for app-server. Users have to explicitly opt in
@@ -664,6 +703,7 @@ fn format_exit_messages(
     color_enabled: bool,
     resume_binary: &str,
 ) -> Vec<String> {
+    let is_fatal = matches!(&exit_info.exit_reason, ExitReason::Fatal(_));
     let AppExitInfo {
         token_usage,
         thread_id: conversation_id,
@@ -684,6 +724,8 @@ fn format_exit_messages(
             resume_cmd
         };
         lines.push(format!("To continue this session, run {command}"));
+    } else if is_fatal && let Some(conversation_id) = conversation_id {
+        lines.push(format!("Session ID: {conversation_id}"));
     }
 
     lines
@@ -691,18 +733,22 @@ fn format_exit_messages(
 
 /// Handle the app exit and print the results. Optionally run the update action.
 fn handle_app_exit(exit_info: AppExitInfo) -> anyhow::Result<()> {
-    match exit_info.exit_reason {
+    let is_fatal = match &exit_info.exit_reason {
         ExitReason::Fatal(message) => {
             eprintln!("ERROR: {message}");
-            std::process::exit(1);
+            true
         }
-        ExitReason::UserRequested => { /* normal exit */ }
-    }
+        ExitReason::UserRequested => false,
+    };
 
     let update_action = exit_info.update_action;
     let color_enabled = supports_color::on(Stream::Stdout).is_some();
     for line in format_exit_messages(exit_info, color_enabled, resume_binary_for_invocation()) {
         println!("{line}");
+    }
+    if is_fatal {
+        std::io::stdout().flush()?;
+        std::process::exit(1);
     }
     if let Some(action) = update_action {
         run_update_action(action)?;
@@ -867,8 +913,9 @@ fn stage_str(stage: Stage) -> &'static str {
 }
 
 fn main() -> anyhow::Result<()> {
-    arg0_dispatch_or_else(|arg0_paths: Arg0DispatchPaths| async move {
-        cli_main(arg0_paths).await?;
+    let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
+    arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
+        cli_main(arg0_paths, remote_control_disabled).await?;
         Ok(())
     })
 }
@@ -1622,7 +1669,10 @@ enum GpuLlmSubcommand {
     Restart,
 }
 
-async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
+async fn cli_main(
+    arg0_paths: Arg0DispatchPaths,
+    remote_control_disabled: bool,
+) -> anyhow::Result<()> {
     #[cfg(feature = "ilhae")]
     let prepared_ilhae_codex_home = prepare_ilhae_cli_environment_if_needed()?;
 
@@ -1834,6 +1884,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 subcommand,
                 strict_config,
                 listen,
+                stdio,
+                remote_control,
                 analytics_default_enabled,
                 auth,
             } = app_server_cli;
@@ -1844,7 +1896,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             )?;
             match subcommand {
                 None => {
-                    let transport = listen;
+                    let transport = if stdio {
+                        codex_app_server::AppServerTransport::Stdio
+                    } else {
+                        listen
+                    };
                     let auth = auth.try_into_settings()?;
                     let mut loader_overrides = codex_config::LoaderOverrides::default();
                     #[cfg(feature = "ilhae")]
@@ -1882,6 +1938,18 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     let runtime_options = codex_app_server::AppServerRuntimeOptions {
                         external_notifications,
                         runtime_hooks,
+                        remote_control_startup_mode: match (remote_control, remote_control_disabled)
+                        {
+                            (true, _) => {
+                                codex_app_server::RemoteControlStartupMode::EnabledEphemeral
+                            }
+                            (false, true) => {
+                                codex_app_server::RemoteControlStartupMode::DisabledEphemeral
+                            }
+                            (false, false) => {
+                                codex_app_server::RemoteControlStartupMode::ResolvePersisted
+                            }
+                        },
                         ..Default::default()
                     };
                     codex_app_server::run_main_with_transport_options(
@@ -1953,6 +2021,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 )
                 .await?;
             }
+            let SessionTuiCli(config_overrides) = config_overrides;
             interactive = finalize_resume_interactive(
                 interactive,
                 root_config_overrides.clone(),
@@ -1987,6 +2056,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 )
                 .await?;
             }
+            let SessionTuiCli(config_overrides) = config_overrides;
             interactive = finalize_fork_interactive(
                 interactive,
                 root_config_overrides.clone(),
@@ -2859,7 +2929,16 @@ async fn run_debug_prompt_input_command(
         });
     }
 
-    let prompt_input = codex_core::build_prompt_input(config, input, /*state_db*/ None).await?;
+    let user_instructions_provider = Arc::new(CodexHomeUserInstructionsProvider::new(
+        config.codex_home.clone(),
+    ));
+    let prompt_input = codex_core::build_prompt_input(
+        config,
+        input,
+        /*state_db*/ None,
+        user_instructions_provider,
+    )
+    .await?;
     println!("{}", serde_json::to_string_pretty(&prompt_input)?);
 
     Ok(())
@@ -3032,59 +3111,114 @@ async fn run_interactive_tui(
         }
     }
 
-    let mut normalized_remote = remote
-        .as_deref()
-        .map(codex_tui::resolve_remote_addr)
-        .transpose()
-        .map_err(std::io::Error::other)?;
-    if let Some(env_var_name) = remote_auth_token_env {
-        let Some(endpoint) = normalized_remote.as_mut() else {
-            return Ok(AppExitInfo::fatal(
-                "`--remote-auth-token-env` requires `--remote`.",
-            ));
-        };
-        if !codex_tui::remote_addr_supports_auth_token(endpoint) {
-            return Ok(AppExitInfo::fatal(
-                "`--remote-auth-token-env` is only supported for loopback ws:// and wss:// remote app servers.",
-            ));
+    let remote_endpoint = match resolve_remote_endpoint(remote, remote_auth_token_env) {
+        Ok(remote_endpoint) => remote_endpoint,
+        Err(err) if is_remote_auth_usage_error(&err) => {
+            return Ok(AppExitInfo::fatal(err.to_string()));
         }
-        let token = match read_remote_auth_token_from_env_var(&env_var_name) {
-            Ok(token) => token,
-            Err(err) => return Ok(AppExitInfo::fatal(err.to_string())),
-        };
-        match endpoint {
-            codex_tui::RemoteAppServerEndpoint::WebSocket { auth_token, .. } => {
-                *auth_token = Some(token);
-            }
-            codex_tui::RemoteAppServerEndpoint::UnixSocket { .. } => {
-                return Ok(AppExitInfo::fatal(
-                    "`--remote-auth-token-env` is only supported for websocket remote app servers.",
-                ));
-            }
-        }
-    }
+        Err(err) => return Err(err),
+    };
     #[cfg(feature = "ilhae")]
     let external_notifications =
         is_invoked_as_ilhae_cli().then(codex_ilhae::spawn_app_server_external_notification_bridge);
     #[cfg(not(feature = "ilhae"))]
     let external_notifications = None;
     #[cfg(feature = "ilhae")]
-    let runtime_hooks = if normalized_remote.is_none() && is_invoked_as_ilhae_cli() {
+    let runtime_hooks = if remote_endpoint.is_none() && is_invoked_as_ilhae_cli() {
         ilhae_app_server_runtime_hooks()
     } else {
         codex_app_server::AppServerRuntimeHooks::default()
     };
     #[cfg(not(feature = "ilhae"))]
     let runtime_hooks = codex_app_server::AppServerRuntimeHooks::default();
-    codex_tui::run_main(
-        interactive,
-        arg0_paths,
-        loader_overrides,
-        normalized_remote,
-        external_notifications,
-        runtime_hooks,
-    )
-    .await
+    // The auto-backup retry loop below may invoke `start_tui` more than once.
+    // `external_notifications` is a single-consumer receiver, so move it through
+    // a mutable `Option` and `.take()` it on the first launch attempt; later
+    // recovery attempts simply run without the (already consumed) bridge.
+    let mut external_notifications = external_notifications;
+    let mut start_tui = || {
+        codex_tui::run_main(
+            interactive.clone(),
+            arg0_paths.clone(),
+            loader_overrides.clone(),
+            remote_endpoint.clone(),
+            external_notifications.take(),
+            runtime_hooks.clone(),
+        )
+    };
+    let mut attempted_backups = HashSet::new();
+    loop {
+        let err = match start_tui().await {
+            Ok(exit_info) => return Ok(exit_info),
+            Err(err) => err,
+        };
+        let Some(startup_error) = local_state_db::startup_error(&err) else {
+            return Err(err);
+        };
+        if local_state_db::is_locked(startup_error.detail()) {
+            local_state_db::print_locked_guidance(startup_error);
+            return Ok(AppExitInfo::fatal(startup_error.to_string()));
+        }
+        if !local_state_db::is_auto_backup_recoverable(startup_error) {
+            local_state_db::print_diagnostic_guidance(startup_error);
+            return Ok(AppExitInfo::fatal(startup_error.to_string()));
+        }
+        if !attempted_backups.insert(startup_error.database_path().to_path_buf()) {
+            local_state_db::print_diagnostic_guidance(startup_error);
+            return Ok(AppExitInfo::fatal(startup_error.to_string()));
+        }
+
+        local_state_db::print_auto_backup_start(startup_error);
+        match local_state_db::backup_files_for_fresh_start(startup_error).await {
+            Ok(backups) => local_state_db::confirm_fresh_start_rebuild(startup_error, &backups)?,
+            Err(backup_err) => {
+                local_state_db::print_diagnostic_guidance(startup_error);
+                return Ok(AppExitInfo::fatal(format!(
+                    "failed to move damaged Codex local database files into a backup folder automatically: {backup_err}"
+                )));
+            }
+        }
+    }
+}
+
+fn resolve_remote_endpoint(
+    remote: Option<String>,
+    remote_auth_token_env: Option<String>,
+) -> std::io::Result<Option<codex_tui::RemoteAppServerEndpoint>> {
+    let mut remote_endpoint = remote
+        .as_deref()
+        .map(codex_tui::resolve_remote_addr)
+        .transpose()
+        .map_err(std::io::Error::other)?;
+    if let Some(remote_auth_token_env) = remote_auth_token_env {
+        let Some(endpoint) = remote_endpoint.as_mut() else {
+            return Err(std::io::Error::other(
+                "`--remote-auth-token-env` requires `--remote`.",
+            ));
+        };
+        if !codex_tui::remote_addr_supports_auth_token(endpoint) {
+            return Err(std::io::Error::other(
+                "`--remote-auth-token-env` requires a `wss://` or loopback `ws://` remote.",
+            ));
+        }
+        let auth_token = read_remote_auth_token_from_env_var(&remote_auth_token_env)
+            .map_err(std::io::Error::other)?;
+        let codex_tui::RemoteAppServerEndpoint::WebSocket {
+            auth_token: slot, ..
+        } = endpoint
+        else {
+            return Err(std::io::Error::other(
+                "`--remote-auth-token-env` requires a `wss://` or loopback `ws://` remote.",
+            ));
+        };
+        *slot = Some(auth_token);
+    }
+    Ok(remote_endpoint)
+}
+
+fn is_remote_auth_usage_error(err: &std::io::Error) -> bool {
+    err.to_string()
+        .starts_with("`--remote-auth-token-env` requires")
 }
 
 fn confirm(prompt: &str) -> std::io::Result<bool> {
@@ -3104,11 +3238,18 @@ fn finalize_resume_interactive(
     last: bool,
     show_all: bool,
     include_non_interactive: bool,
-    resume_cli: TuiCli,
+    mut resume_cli: TuiCli,
 ) -> TuiCli {
     // Start with the parsed interactive CLI so resume shares the same
     // configuration surface area as `codex` without additional flags.
-    let resume_session_id = session_id;
+    // Clap assigns the first positional to `session_id`. With `--last`, reinterpret it as the
+    // prompt when no second positional prompt was provided.
+    let resume_session_id = if last && resume_cli.prompt.is_none() {
+        resume_cli.prompt = session_id;
+        None
+    } else {
+        session_id
+    };
     interactive.resume_picker = resume_session_id.is_none() && !last;
     interactive.resume_last = last;
     interactive.resume_session_id = resume_session_id;
@@ -3131,11 +3272,18 @@ fn finalize_fork_interactive(
     session_id: Option<String>,
     last: bool,
     show_all: bool,
-    fork_cli: TuiCli,
+    mut fork_cli: TuiCli,
 ) -> TuiCli {
     // Start with the parsed interactive CLI so fork shares the same
     // configuration surface area as `codex` without additional flags.
-    let fork_session_id = session_id;
+    // Clap assigns the first positional to `session_id`. With `--last`, reinterpret it as the
+    // prompt when no second positional prompt was provided.
+    let fork_session_id = if last && fork_cli.prompt.is_none() {
+        fork_cli.prompt = session_id;
+        None
+    } else {
+        session_id
+    };
     interactive.fork_picker = fork_session_id.is_none() && !last;
     interactive.fork_last = last;
     interactive.fork_session_id = fork_session_id;
@@ -3256,6 +3404,7 @@ mod tests {
         else {
             unreachable!()
         };
+        let SessionTuiCli(resume_cli) = resume_cli;
 
         finalize_resume_interactive(
             interactive,
@@ -3288,6 +3437,7 @@ mod tests {
         else {
             unreachable!()
         };
+        let SessionTuiCli(fork_cli) = fork_cli;
 
         finalize_fork_interactive(interactive, root_overrides, session_id, last, all, fork_cli)
     }
@@ -3418,6 +3568,21 @@ args = ["--ctx-size", "131072"]
         );
 
         assert_eq!(phase, codex_state::ThreadGoalLoopPhase::KairosLoop);
+    }
+
+    #[test]
+    fn import_remains_an_interactive_prompt() {
+        let cli = MultitoolCli::try_parse_from(["codex", "import"]).expect("parse");
+
+        assert!(cli.subcommand.is_none());
+        assert_eq!(cli.interactive.prompt.as_deref(), Some("import"));
+    }
+
+    #[test]
+    fn profile_v2_rejects_non_plain_names_at_parse_time() {
+        assert!(
+            MultitoolCli::try_parse_from(["codex", "--profile", "nested/work", "resume"]).is_err()
+        );
     }
 
     #[test]
@@ -3683,12 +3848,13 @@ args = ["--ctx-size", "131072"]
             total_tokens: 2,
             ..Default::default()
         };
+        let thread_id = conversation_id
+            .map(ThreadId::from_string)
+            .map(Result::unwrap);
         AppExitInfo {
             token_usage,
-            thread_id: conversation_id
-                .map(ThreadId::from_string)
-                .map(Result::unwrap),
-            thread_name: thread_name.map(str::to_string),
+            thread_id,
+            resume_hint: codex_utils_cli::resume_hint(thread_name, thread_id),
             update_action: None,
             exit_reason: ExitReason::UserRequested,
         }
@@ -3699,12 +3865,46 @@ args = ["--ctx-size", "131072"]
         let exit_info = AppExitInfo {
             token_usage: TokenUsage::default(),
             thread_id: None,
-            thread_name: None,
+            resume_hint: None,
             update_action: None,
             exit_reason: ExitReason::UserRequested,
         };
         let lines = format_exit_messages(exit_info, /*color_enabled*/ false, "codex");
         assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn format_exit_messages_includes_session_id_for_fatal_exit_without_resume_hint() {
+        let exit_info = AppExitInfo {
+            token_usage: TokenUsage::default(),
+            thread_id: Some(ThreadId::from_string("123e4567-e89b-12d3-a456-426614174000").unwrap()),
+            resume_hint: None,
+            update_action: None,
+            exit_reason: ExitReason::Fatal("boom".to_string()),
+        };
+        let lines = format_exit_messages(exit_info, /*color_enabled*/ false);
+        assert_eq!(
+            lines,
+            vec!["Session ID: 123e4567-e89b-12d3-a456-426614174000".to_string()]
+        );
+    }
+
+    #[test]
+    fn format_exit_messages_includes_resume_hint_for_fatal_exit() {
+        let mut exit_info = sample_exit_info(
+            Some("123e4567-e89b-12d3-a456-426614174000"),
+            /*thread_name*/ None,
+        );
+        exit_info.exit_reason = ExitReason::Fatal("boom".to_string());
+        let lines = format_exit_messages(exit_info, /*color_enabled*/ false);
+        assert_eq!(
+            lines,
+            vec![
+                "Token usage: total=2 input=0 output=2".to_string(),
+                "To continue this session, run codex resume 123e4567-e89b-12d3-a456-426614174000"
+                    .to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -3799,12 +3999,47 @@ args = ["--ctx-size", "131072"]
     }
 
     #[test]
+    fn resume_last_accepts_prompt_positional() {
+        let interactive = finalize_resume_from_args(
+            ["codex", "resume", "--last", "/compact focus on auth"].as_ref(),
+        );
+
+        assert!(!interactive.resume_picker);
+        assert!(interactive.resume_last);
+        assert_eq!(interactive.resume_session_id, None);
+        assert_eq!(
+            interactive.prompt.as_deref(),
+            Some("/compact focus on auth")
+        );
+    }
+
+    #[test]
+    fn resume_last_rejects_explicit_session_and_prompt() {
+        let err =
+            MultitoolCli::try_parse_from(["codex", "resume", "--last", "1234", "continue here"])
+                .expect_err("--last with an explicit session and prompt should be rejected");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
     fn resume_picker_logic_with_session_id() {
         let interactive = finalize_resume_from_args(["codex", "resume", "1234"].as_ref());
         assert!(!interactive.resume_picker);
         assert!(!interactive.resume_last);
         assert_eq!(interactive.resume_session_id.as_deref(), Some("1234"));
         assert!(!interactive.resume_show_all);
+    }
+
+    #[test]
+    fn resume_with_session_id_accepts_prompt_positional() {
+        let interactive =
+            finalize_resume_from_args(["codex", "resume", "1234", "continue here"].as_ref());
+
+        assert!(!interactive.resume_picker);
+        assert!(!interactive.resume_last);
+        assert_eq!(interactive.resume_session_id.as_deref(), Some("1234"));
+        assert_eq!(interactive.prompt.as_deref(), Some("continue here"));
     }
 
     #[test]
@@ -3913,12 +4148,46 @@ args = ["--ctx-size", "131072"]
     }
 
     #[test]
+    fn fork_last_accepts_prompt_positional() {
+        let interactive =
+            finalize_fork_from_args(["codex", "fork", "--last", "/compact focus on auth"].as_ref());
+
+        assert!(!interactive.fork_picker);
+        assert!(interactive.fork_last);
+        assert_eq!(interactive.fork_session_id, None);
+        assert_eq!(
+            interactive.prompt.as_deref(),
+            Some("/compact focus on auth")
+        );
+    }
+
+    #[test]
+    fn fork_last_rejects_explicit_session_and_prompt() {
+        let err =
+            MultitoolCli::try_parse_from(["codex", "fork", "--last", "1234", "continue here"])
+                .expect_err("--last with an explicit session and prompt should be rejected");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
     fn fork_picker_logic_with_session_id() {
         let interactive = finalize_fork_from_args(["codex", "fork", "1234"].as_ref());
         assert!(!interactive.fork_picker);
         assert!(!interactive.fork_last);
         assert_eq!(interactive.fork_session_id.as_deref(), Some("1234"));
         assert!(!interactive.fork_show_all);
+    }
+
+    #[test]
+    fn fork_with_session_id_accepts_prompt_positional() {
+        let interactive =
+            finalize_fork_from_args(["codex", "fork", "1234", "continue here"].as_ref());
+
+        assert!(!interactive.fork_picker);
+        assert!(!interactive.fork_last);
+        assert_eq!(interactive.fork_session_id.as_deref(), Some("1234"));
+        assert_eq!(interactive.prompt.as_deref(), Some("continue here"));
     }
 
     #[test]
@@ -3936,6 +4205,12 @@ args = ["--ctx-size", "131072"]
             app_server.listen,
             codex_app_server::AppServerTransport::Stdio
         );
+    }
+
+    #[test]
+    fn app_server_remote_control_startup_flag_enables_remote_control() {
+        let enabled = app_server_from_args(["codex", "app-server", "--remote-control"].as_ref());
+        assert!(enabled.remote_control);
     }
 
     #[test]

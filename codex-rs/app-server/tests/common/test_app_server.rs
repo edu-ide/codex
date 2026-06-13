@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::path::Path;
+use std::process::ExitStatus;
 use std::process::Stdio;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
@@ -67,6 +68,10 @@ use codex_app_server_protocol::ProcessKillParams;
 use codex_app_server_protocol::ProcessResizePtyParams;
 use codex_app_server_protocol::ProcessSpawnParams;
 use codex_app_server_protocol::ProcessWriteStdinParams;
+use codex_app_server_protocol::RemoteControlClientsListParams;
+use codex_app_server_protocol::RemoteControlClientsRevokeParams;
+use codex_app_server_protocol::RemoteControlPairingStartParams;
+use codex_app_server_protocol::RemoteControlPairingStatusParams;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ReviewStartParams;
 use codex_app_server_protocol::SendAddCreditsNudgeEmailParams;
@@ -75,6 +80,7 @@ use codex_app_server_protocol::SkillsExtraRootsSetParams;
 use codex_app_server_protocol::SkillsListParams;
 use codex_app_server_protocol::ThreadArchiveParams;
 use codex_app_server_protocol::ThreadCompactStartParams;
+use codex_app_server_protocol::ThreadDeleteParams;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadInjectItemsParams;
 use codex_app_server_protocol::ThreadListParams;
@@ -123,6 +129,10 @@ pub const DISABLE_PLUGIN_STARTUP_TASKS_ARG: &str = "--disable-plugin-startup-tas
 const DISABLE_MANAGED_CONFIG_ENV_VAR: &str = "CODEX_APP_SERVER_DISABLE_MANAGED_CONFIG";
 
 impl TestAppServer {
+    pub async fn wait_for_exit(&mut self) -> std::io::Result<ExitStatus> {
+        self.process.wait().await
+    }
+
     pub async fn new(codex_home: &Path) -> anyhow::Result<Self> {
         Self::new_with_env_and_args(codex_home, &[], &[DISABLE_PLUGIN_STARTUP_TASKS_ARG]).await
     }
@@ -452,6 +462,15 @@ impl TestAppServer {
         self.send_request("thread/archive", params).await
     }
 
+    /// Send a `thread/delete` JSON-RPC request.
+    pub async fn send_thread_delete_request(
+        &mut self,
+        params: ThreadDeleteParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("thread/delete", params).await
+    }
+
     /// Send a `thread/name/set` JSON-RPC request.
     pub async fn send_thread_set_name_request(
         &mut self,
@@ -631,15 +650,72 @@ impl TestAppServer {
             .await
     }
 
+    /// Send a runtime-only `remoteControl/enable` JSON-RPC request.
+    pub async fn send_remote_control_ephemeral_enable_request(&mut self) -> anyhow::Result<i64> {
+        self.send_request(
+            "remoteControl/enable",
+            Some(serde_json::json!({ "ephemeral": true })),
+        )
+        .await
+    }
+
     /// Send a `remoteControl/disable` JSON-RPC request.
     pub async fn send_remote_control_disable_request(&mut self) -> anyhow::Result<i64> {
         self.send_request("remoteControl/disable", /*params*/ None)
             .await
     }
 
+    /// Send a runtime-only `remoteControl/disable` JSON-RPC request.
+    pub async fn send_remote_control_ephemeral_disable_request(&mut self) -> anyhow::Result<i64> {
+        self.send_request(
+            "remoteControl/disable",
+            Some(serde_json::json!({ "ephemeral": true })),
+        )
+        .await
+    }
+
     /// Send a `remoteControl/status/read` JSON-RPC request.
     pub async fn send_remote_control_status_read_request(&mut self) -> anyhow::Result<i64> {
         self.send_request("remoteControl/status/read", /*params*/ None)
+            .await
+    }
+
+    /// Send a `remoteControl/pairing/start` JSON-RPC request.
+    pub async fn send_remote_control_pairing_start_request(
+        &mut self,
+        params: RemoteControlPairingStartParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("remoteControl/pairing/start", params)
+            .await
+    }
+
+    /// Send a `remoteControl/pairing/status` JSON-RPC request.
+    pub async fn send_remote_control_pairing_status_request(
+        &mut self,
+        params: RemoteControlPairingStatusParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("remoteControl/pairing/status", params)
+            .await
+    }
+
+    /// Send a `remoteControl/client/list` JSON-RPC request.
+    pub async fn send_remote_control_clients_list_request(
+        &mut self,
+        params: RemoteControlClientsListParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("remoteControl/client/list", params).await
+    }
+
+    /// Send a `remoteControl/client/revoke` JSON-RPC request.
+    pub async fn send_remote_control_clients_revoke_request(
+        &mut self,
+        params: RemoteControlClientsRevokeParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("remoteControl/client/revoke", params)
             .await
     }
 

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::goal_display::format_goal_elapsed_seconds;
+use crate::goal_files;
 use crate::status::format_tokens_compact;
 use codex_app_server_protocol::ThreadGoalLoopHistoryEntry as AppThreadGoalLoopHistoryEntry;
 use codex_app_server_protocol::ThreadGoalLoopPhase as AppThreadGoalLoopPhase;
@@ -50,9 +51,12 @@ impl ChatWidget {
             goal.objective,
             /*context_label*/ None,
             Box::new(move |objective: String| {
-                tx.send(AppEvent::SetThreadGoalObjective {
+                tx.send(AppEvent::SetThreadGoalDraft {
                     thread_id,
-                    objective,
+                    draft: goal_files::GoalDraft {
+                        objective,
+                        ..Default::default()
+                    },
                     mode: crate::app_event::ThreadGoalSetMode::UpdateExisting {
                         status,
                         token_budget,

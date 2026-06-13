@@ -64,7 +64,6 @@ struct PreparedRecordWrite {
     changes: HashMap<PathBuf, FileChange>,
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for BrainVaultPatchHandler {
     fn tool_name(&self) -> ToolName {
         ToolName::plain(BRAIN_VAULT_PATCH_TOOL_NAME)
@@ -74,7 +73,13 @@ impl ToolExecutor<ToolInvocation> for BrainVaultPatchHandler {
         create_brain_vault_patch_tool()
     }
 
-    async fn handle(
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
+        Box::pin(self.handle_call(invocation))
+    }
+}
+
+impl BrainVaultPatchHandler {
+    async fn handle_call(
         &self,
         invocation: ToolInvocation,
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
@@ -100,7 +105,7 @@ impl ToolExecutor<ToolInvocation> for BrainVaultPatchHandler {
         let cwd = turn
             .environments
             .primary()
-            .map(|environment| environment.cwd.to_path_buf())
+            .map(|environment| environment.cwd().to_path_buf())
             .unwrap_or(fallback_cwd);
         let record = build_record(&args);
         let target = vault_record_target(&cwd, &args)?;
