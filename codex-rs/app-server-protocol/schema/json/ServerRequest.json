@@ -27,7 +27,7 @@
         "read": {
           "description": "This will be removed in favor of `entries`.",
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           },
           "type": [
             "array",
@@ -37,7 +37,7 @@
         "write": {
           "description": "This will be removed in favor of `entries`.",
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           },
           "type": [
             "array",
@@ -344,10 +344,31 @@
     },
     "CommandExecutionRequestApprovalParams": {
       "properties": {
+        "additionalPermissions": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AdditionalPermissionProfile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional additional permissions requested for this command."
+        },
         "approvalId": {
           "description": "Unique identifier for this specific approval callback.\n\nFor regular shell/unified_exec approvals, this is null.\n\nFor zsh-exec-bridge subcommand approvals, multiple callbacks can belong to one parent `itemId`, so `approvalId` is a distinct opaque callback id (a UUID) used to disambiguate routing.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "availableDecisions": {
+          "description": "Ordered list of decisions the client may present for this prompt.",
+          "items": {
+            "$ref": "#/definitions/CommandExecutionApprovalDecision"
+          },
+          "type": [
+            "array",
             "null"
           ]
         },
@@ -371,13 +392,21 @@
         "cwd": {
           "anyOf": [
             {
-              "$ref": "#/definitions/AbsolutePathBuf"
+              "$ref": "#/definitions/LegacyAppPathString"
             },
             {
               "type": "null"
             }
           ],
           "description": "The command's working directory."
+        },
+        "environmentId": {
+          "default": null,
+          "description": "Environment in which the command will run.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "itemId": {
           "type": "string"
@@ -437,6 +466,17 @@
         "startedAtMs",
         "threadId",
         "turnId"
+      ],
+      "type": "object"
+    },
+    "CurrentTimeReadParams": {
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
       ],
       "type": "object"
     },
@@ -640,7 +680,7 @@
         {
           "properties": {
             "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
+              "$ref": "#/definitions/LegacyAppPathString"
             },
             "type": {
               "enum": [
@@ -822,6 +862,9 @@
           "type": "object"
         }
       ]
+    },
+    "LegacyAppPathString": {
+      "type": "string"
     },
     "McpElicitationArrayType": {
       "enum": [
@@ -1371,6 +1414,27 @@
             "requestedSchema": {
               "$ref": "#/definitions/McpElicitationSchema"
             }
+          },
+          "required": [
+            "message",
+            "mode",
+            "requestedSchema"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "_meta": true,
+            "message": {
+              "type": "string"
+            },
+            "mode": {
+              "enum": [
+                "openai/form"
+              ],
+              "type": "string"
+            },
+            "requestedSchema": true
           },
           "required": [
             "message",
@@ -1960,6 +2024,31 @@
         "params"
       ],
       "title": "Attestation/generateRequest",
+      "type": "object"
+    },
+    {
+      "description": "Read the current time from an external clock owned by the client.",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "currentTime/read"
+          ],
+          "title": "CurrentTime/readRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/CurrentTimeReadParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "CurrentTime/readRequest",
       "type": "object"
     },
     {

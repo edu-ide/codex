@@ -181,6 +181,21 @@ impl ThreadGoalRequestProcessor {
             Some(goal) => api_thread_goal_from_state(goal),
             None => ThreadGoal::from(outcome.goal.clone()),
         };
+
+        let persist_result = match self.thread_manager.get_thread(thread_id).await {
+            Ok(thread) => {
+                // Live goal-first threads can be listed before any user turn is written.
+                // Use the live path so JSONL and SQLite preview metadata stay in sync.
+                thread
+                    .append_rollout_items(&[outcome.thread_goal_updated_item()])
+                    .await
+            }
+            Err(_) => Ok(()),
+        };
+        if let Err(err) = persist_result {
+            warn!("failed to persist goal update for live thread {thread_id}: {err}");
+        }
+
         self.outgoing
             .send_response(
                 request_id.clone(),

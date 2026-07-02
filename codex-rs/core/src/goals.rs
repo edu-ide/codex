@@ -29,8 +29,6 @@ use codex_prompts::budget_limit_prompt;
 use codex_prompts::continuation_prompt;
 use codex_prompts::objective_updated_prompt;
 use codex_protocol::config_types::ModeKind;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
@@ -1662,6 +1660,9 @@ impl Session {
                     self.thread_id
                 )
             })?;
+        state_db
+            .set_thread_preview_if_empty(self.thread_id, objective)
+            .await?;
 
         let goal_id = goal.goal_id.clone();
         self.emit_goal_created_metric();
@@ -2031,7 +2032,13 @@ impl Session {
                         .to_string(),
                 );
             };
-            validate_non_execution_apply_patch_payload(payload, turn_environment.cwd())?;
+            let cwd = turn_environment.cwd().to_abs_path().map_err(|err| {
+                format!(
+                    "apply_patch cannot run during a non-execution goal loop with non-local cwd {}: {err}",
+                    turn_environment.cwd().inferred_native_path_string()
+                )
+            })?;
+            validate_non_execution_apply_patch_payload(payload, &cwd)?;
             mark_thread_goal_tool_usage(continuation_turn, tool_name);
             return Ok(());
         }
@@ -2615,7 +2622,7 @@ impl Session {
         let turn_context = self
             .new_default_turn_with_sub_id(uuid::Uuid::new_v4().to_string())
             .await;
-        self.maybe_emit_unknown_model_warning_for_turn(turn_context.as_ref())
+        self.maybe_emit_model_warnings_for_turn(turn_context.as_ref())
             .await;
         let still_reserved = {
             let active_turn = self.active_turn.lock().await;
@@ -3396,6 +3403,7 @@ mod tests {
     use codex_config::config_toml::SuperloopProfileToml;
     use codex_protocol::ThreadId;
     use codex_protocol::config_types::ModeKind;
+    use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
     use codex_protocol::plan_tool::StepStatus;
     use codex_protocol::plan_tool::UpdatePlanArgs;
@@ -3540,6 +3548,7 @@ mod tests {
                         .to_string(),
                 }],
                 phase: None,
+                internal_chat_message_metadata_passthrough: None,
             }
         );
     }
@@ -4224,7 +4233,7 @@ mod tests {
             GoalContinuationPhase::AgentSkillResearch,
             &ToolName::plain("exec_command")
         ));
-        assert!(is_blocked_in_non_execution_goal_phase(
+        assert!(!is_blocked_in_non_execution_goal_phase(
             GoalContinuationPhase::AgentSkillResearch,
             &ToolName::plain("web_search")
         ));
@@ -4595,6 +4604,7 @@ mod tests {
             role,
             content,
             phase,
+            internal_chat_message_metadata_passthrough,
         } = item
         else {
             panic!("expected loop context to be a message");
@@ -4602,6 +4612,7 @@ mod tests {
         assert_eq!(None, id);
         assert_eq!("user", role);
         assert_eq!(None, phase);
+        assert_eq!(None, internal_chat_message_metadata_passthrough);
         assert_eq!(
             vec![ContentItem::InputText {
                 text: concat!(

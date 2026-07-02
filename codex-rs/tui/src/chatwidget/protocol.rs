@@ -153,6 +153,9 @@ impl ChatWidget {
             ServerNotification::GpuQueueRuntimeEvent(notification) => {
                 self.add_info_message(notification.message, /*hint*/ None)
             }
+            ServerNotification::ModelSafetyBufferingUpdated(notification) => {
+                self.on_model_safety_buffering_updated(notification, replay_kind)
+            }
             ServerNotification::Warning(notification) => self.on_warning(notification.message),
             ServerNotification::GuardianWarning(notification) => {
                 self.on_warning(notification.message)
@@ -211,6 +214,7 @@ impl ChatWidget {
             | ServerNotification::McpServerOauthLoginCompleted(_)
             | ServerNotification::AppListUpdated(_)
             | ServerNotification::RemoteControlStatusChanged(_)
+            | ServerNotification::ExternalAgentConfigImportProgress(_)
             | ServerNotification::ExternalAgentConfigImportCompleted(_)
             | ServerNotification::FsChanged(_)
             | ServerNotification::TurnModerationMetadata(_)

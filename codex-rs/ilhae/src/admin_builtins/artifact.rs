@@ -381,5 +381,204 @@ macro_rules! register_admin_artifact_handlers {
                 },
                 sacp::on_receive_request!(),
             )
+            // ═══ Workflow Spec — list (seeds a sample on first run) ═══
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let ilhae_dir = s.infra.ilhae_dir.clone();
+                    async move |req: WorkflowSpecListRequest,
+                                responder: Responder<WorkflowSpecListResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        info!(
+                            "ilhae/app/workflow/spec/list RPC industry={:?}",
+                            req.industry
+                        );
+                        let vault_dir = ilhae_dir.join("vault").join("workflow");
+                        let _ = std::fs::create_dir_all(&vault_dir);
+
+                        // Seed a sample WORKFLOW spec if none exists yet, so the
+                        // canvas is never empty on a fresh install.
+                        let has_spec = std::fs::read_dir(&vault_dir)
+                            .map(|entries| {
+                                entries.flatten().any(|entry| {
+                                    entry.file_name().to_str().is_some_and(|name| {
+                                        name.starts_with("WF_") && name.ends_with(".json")
+                                    })
+                                })
+                            })
+                            .unwrap_or(false);
+                        if !has_spec {
+                            let seed = $crate::admin_builtins::artifact::WORKFLOW_SEED_JSON;
+                            let _ = std::fs::write(vault_dir.join("WF_tax_monthly.json"), seed);
+                        }
+
+                        let mut specs = Vec::new();
+                        if let Ok(entries) = std::fs::read_dir(&vault_dir) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                let name = match path.file_name().and_then(|name| name.to_str()) {
+                                    Some(name)
+                                        if name.starts_with("WF_") && name.ends_with(".json") =>
+                                    {
+                                        name.to_string()
+                                    }
+                                    _ => continue,
+                                };
+                                let content = std::fs::read_to_string(&path).unwrap_or_default();
+                                let spec: WorkflowSpec = match serde_json::from_str(&content) {
+                                    Ok(spec) => spec,
+                                    Err(err) => {
+                                        warn!("skip malformed workflow spec {name}: {err}");
+                                        continue;
+                                    }
+                                };
+                                if let Some(filter) = &req.industry
+                                    && spec.industry.as_ref() != Some(filter)
+                                {
+                                    continue;
+                                }
+                                let timestamp = entry
+                                    .metadata()
+                                    .and_then(|metadata| metadata.modified())
+                                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis()
+                                    as i64;
+                                specs.push(WorkflowSpecSummary {
+                                    id: name,
+                                    title: spec.title,
+                                    industry: spec.industry,
+                                    coverage: spec.coverage,
+                                    timestamp,
+                                });
+                            }
+                        }
+                        specs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                        responder.respond(WorkflowSpecListResponse { specs })
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            // ═══ Workflow Spec — get full graph ═══
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let ilhae_dir = s.infra.ilhae_dir.clone();
+                    async move |req: WorkflowSpecGetRequest,
+                                responder: Responder<WorkflowSpecGetResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        info!("ilhae/app/workflow/spec/get RPC id={:?}", req.id);
+                        let vault_dir = ilhae_dir.join("vault").join("workflow");
+                        // Reject path traversal — id must be a bare filename.
+                        let spec = if req.id.contains('/') || req.id.contains('\\') {
+                            warn!("rejecting workflow spec id with separators: {}", req.id);
+                            None
+                        } else {
+                            std::fs::read_to_string(vault_dir.join(&req.id))
+                                .ok()
+                                .and_then(|content| {
+                                    serde_json::from_str::<WorkflowSpec>(&content).ok()
+                                })
+                        };
+                        responder.respond(WorkflowSpecGetResponse { spec })
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            // ═══ Workflow Spec — save (create or overwrite) ═══
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let ilhae_dir = s.infra.ilhae_dir.clone();
+                    async move |req: WorkflowSpecSaveRequest,
+                                responder: Responder<WorkflowSpecSaveResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        let mut id = req.spec.id.clone();
+                        if !id.starts_with("WF_") {
+                            id = format!("WF_{id}");
+                        }
+                        if !id.ends_with(".json") {
+                            id.push_str(".json");
+                        }
+                        info!("ilhae/app/workflow/spec/save RPC id={id}");
+                        let saved = if id.contains('/') || id.contains('\\') {
+                            warn!("rejecting workflow spec id with separators: {id}");
+                            false
+                        } else {
+                            let vault_dir = ilhae_dir.join("vault").join("workflow");
+                            let _ = std::fs::create_dir_all(&vault_dir);
+                            let mut spec = req.spec;
+                            spec.id = id.clone();
+                            spec.artifact_type = "WORKFLOW".to_string();
+                            match serde_json::to_string_pretty(&spec) {
+                                Ok(json) => std::fs::write(vault_dir.join(&id), json).is_ok(),
+                                Err(err) => {
+                                    warn!("serialize workflow spec failed: {err}");
+                                    false
+                                }
+                            }
+                        };
+                        responder.respond(WorkflowSpecSaveResponse { id, saved })
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
     }};
+}
+
+/// Seed workflow spec written on first list when the vault is empty.
+/// Mirrors the 세무 월기장 6-step sample the WorkflowPage prototype shipped with.
+pub const WORKFLOW_SEED_JSON: &str = r#"{
+  "artifact_type": "WORKFLOW",
+  "id": "WF_tax_monthly.json",
+  "title": "월 기장 → 부가세·원천 신고 → 고객 안내",
+  "industry": "세무",
+  "coverage": { "total_steps": 6, "automatable": 5, "tools_ready": 4, "tools_to_build": 2 },
+  "nodes": [
+    { "id": "n1", "step": "STEP 1", "label": "증빙 수집·분류", "mcp": "doc-mcp/classify_documents", "kind": "auto", "status": "ready", "x": 300, "y": 128 },
+    { "id": "n2", "step": "STEP 2", "label": "계정과목 매핑", "mcp": "tax-mcp/map_accounts", "kind": "auto", "status": "to_build", "x": 300, "y": 262 },
+    { "id": "n3", "step": "STEP 3", "label": "세무조정 계산", "mcp": "tax-mcp/compute_adjustment", "kind": "auto", "status": "to_build", "x": 300, "y": 396 },
+    { "id": "n4", "step": "STEP 4", "label": "신고서 양식 작성", "mcp": "office-mcp/fill_form", "kind": "auto", "status": "prebuilt", "x": 300, "y": 530 },
+    { "id": "n5", "step": "STEP 5", "label": "최종 검토·신고 결정", "mcp": null, "kind": "approval", "status": "human", "note": "면허·책임 직군: 자동화 대상이 아니라 사람이 승인하는 게이트로 설계됨.", "x": 300, "y": 664 },
+    { "id": "n6", "step": "STEP 6 · 병렬", "label": "고객 안내문 작성", "mcp": "doc-mcp/draft_notice", "kind": "auto", "status": "ready", "x": 654, "y": 498 }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n2", "to": "n3" },
+    { "from": "n3", "to": "n4" },
+    { "from": "n4", "to": "n5", "kind": "approval" },
+    { "from": "n4", "to": "n6" }
+  ]
+}"#;
+
+#[cfg(test)]
+mod tests {
+    use super::WORKFLOW_SEED_JSON;
+    use crate::WorkflowSpec;
+
+    #[test]
+    fn seed_json_roundtrips_into_workflow_spec() {
+        // The list handler writes this seed then immediately parses every
+        // WF_*.json back into WorkflowSpec. A schema mismatch would yield an
+        // empty canvas.
+        let spec: WorkflowSpec =
+            serde_json::from_str(WORKFLOW_SEED_JSON).expect("seed must parse into WorkflowSpec");
+        assert_eq!(spec.artifact_type, "WORKFLOW");
+        assert_eq!(spec.nodes.len(), 6, "6 nodes");
+        assert_eq!(spec.edges.len(), 5, "5 edges");
+        assert_eq!(spec.coverage.total_steps, 6);
+
+        let gate = spec
+            .nodes
+            .iter()
+            .find(|node| node.kind == "approval")
+            .expect("seed includes approval node");
+        assert!(gate.mcp.is_none());
+
+        let json = serde_json::to_string_pretty(&spec).expect("seed serializes");
+        let back: WorkflowSpec = serde_json::from_str(&json).expect("seed re-parses");
+        assert_eq!(back.nodes.len(), 6);
+        assert_eq!(back.edges.len(), 5);
+    }
 }

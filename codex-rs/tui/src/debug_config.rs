@@ -2,9 +2,9 @@ use crate::history_cell::PlainHistoryCell;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::Permissions;
 use crate::session_state::SessionNetworkProxyRuntime;
-use codex_app_server_protocol::ConfigLayerSource;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerEntry;
+use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::ManagedHooksRequirementsToml;
@@ -191,6 +191,17 @@ fn render_debug_config_lines(
             allow_appshots.to_string(),
             requirements
                 .allow_appshots
+                .as_ref()
+                .map(|sourced| &sourced.source),
+        ));
+    }
+
+    if let Some(allow_remote_control) = requirements_toml.allow_remote_control {
+        requirement_lines.push(requirement_line(
+            "allow_remote_control",
+            allow_remote_control.to_string(),
+            requirements
+                .allow_remote_control
                 .as_ref()
                 .map(|sourced| &sourced.source),
         ));
@@ -546,8 +557,8 @@ mod tests {
     use super::session_all_proxy_url;
     use crate::legacy_core::config::Permissions;
     use codex_app_server_protocol::AskForApproval;
-    use codex_app_server_protocol::ConfigLayerSource;
     use codex_config::ConfigLayerEntry;
+    use codex_config::ConfigLayerSource;
     use codex_config::ConfigLayerStack;
     use codex_config::ConfigRequirements;
     use codex_config::ConfigRequirementsToml;
@@ -688,7 +699,7 @@ mod tests {
             mcp_servers: Some(Sourced::new(
                 BTreeMap::from([(
                     "docs".to_string(),
-                    McpServerRequirement {
+                    McpServerRequirement::Identity {
                         identity: McpServerIdentity::Command {
                             command: "codex-mcp".to_string(),
                         },
@@ -709,6 +720,10 @@ mod tests {
                 RequirementSource::LegacyManagedConfigTomlFromMdm,
             )),
             allow_appshots: Some(Sourced::new(
+                /*value*/ false,
+                RequirementSource::LegacyManagedConfigTomlFromMdm,
+            )),
+            allow_remote_control: Some(Sourced::new(
                 /*value*/ false,
                 RequirementSource::LegacyManagedConfigTomlFromMdm,
             )),
@@ -753,6 +768,7 @@ mod tests {
             allowed_web_search_modes: Some(vec![WebSearchModeRequirement::Cached]),
             allow_managed_hooks_only: Some(true),
             allow_appshots: Some(false),
+            allow_remote_control: Some(false),
             computer_use: None,
             windows: None,
             guardian_policy_config: Some("Use the managed guardian policy.".to_string()),
@@ -762,18 +778,20 @@ mod tests {
             hooks: None,
             mcp_servers: Some(BTreeMap::from([(
                 "docs".to_string(),
-                McpServerRequirement {
+                McpServerRequirement::Identity {
                     identity: McpServerIdentity::Command {
                         command: "codex-mcp".to_string(),
                     },
                 },
             )])),
             plugins: None,
+            marketplaces: None,
             apps: None,
             rules: None,
             enforce_residency: Some(ResidencyRequirement::Us),
             network: None,
             permissions: None,
+            models: None,
         };
 
         let user_file = if cfg!(windows) {
@@ -795,6 +813,9 @@ mod tests {
         .expect("config layer stack");
 
         let rendered = render_stack_to_text(&stack);
+        #[cfg(not(windows))]
+        insta::assert_snapshot!("debug_config_requirement_sources", rendered.as_str());
+
         let requirements_source = (RequirementSource::LegacyManagedConfigTomlFromMdm).to_string();
         assert!(rendered.contains(&format!(
             "allowed_approval_policies: on-request (source: {requirements_source})"
@@ -819,6 +840,9 @@ mod tests {
         )));
         assert!(rendered.contains(&format!(
             "allow_appshots: false (source: {requirements_source})"
+        )));
+        assert!(rendered.contains(&format!(
+            "allow_remote_control: false (source: {requirements_source})"
         )));
         assert!(rendered.contains(&format!(
             "guardian_policy_config: configured (source: {requirements_source})"
@@ -1112,6 +1136,7 @@ approval_policy = "never"
             allowed_web_search_modes: Some(Vec::new()),
             allow_managed_hooks_only: None,
             allow_appshots: None,
+            allow_remote_control: None,
             computer_use: None,
             windows: None,
             guardian_policy_config: None,
@@ -1119,11 +1144,13 @@ approval_policy = "never"
             hooks: None,
             mcp_servers: None,
             plugins: None,
+            marketplaces: None,
             apps: None,
             rules: None,
             enforce_residency: None,
             network: None,
             permissions: None,
+            models: None,
         };
 
         let stack = ConfigLayerStack::new(Vec::new(), requirements, requirements_toml)

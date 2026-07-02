@@ -11,12 +11,13 @@ mod brain_vault_patch;
 pub(crate) mod brain_vault_patch_spec;
 mod native_tools;
 pub(crate) use native_tools::create_all_brain_tools;
-mod goal;
-pub(crate) mod goal_spec;
+mod current_time;
 mod dynamic;
 pub(crate) mod extension_tools;
 mod get_context_remaining;
 pub(crate) mod get_context_remaining_spec;
+mod goal;
+pub(crate) mod goal_spec;
 mod list_available_plugins_to_install;
 pub(crate) mod list_available_plugins_to_install_spec;
 mod local_web_search;
@@ -41,6 +42,7 @@ mod request_user_input;
 pub(crate) mod request_user_input_spec;
 mod shell;
 pub(crate) mod shell_spec;
+mod sleep;
 mod test_sync;
 pub(crate) mod test_sync_spec;
 mod tool_search;
@@ -48,6 +50,7 @@ pub(crate) mod tool_search_spec;
 pub(crate) mod unified_exec;
 mod view_image;
 pub(crate) mod view_image_spec;
+mod wait_for_environment;
 
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
@@ -59,10 +62,10 @@ use serde_json::Map;
 use serde_json::Value;
 use std::path::Path;
 
+use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
-use crate::session::turn_context::TurnContext;
 use crate::session::turn_context::TurnEnvironment;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
@@ -72,6 +75,7 @@ pub use brain_memory_ops::BrainMemoryOpsHandler;
 pub use brain_vault_patch::BrainVaultPatchHandler;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
+pub use current_time::CurrentTimeHandler;
 pub use dynamic::DynamicToolHandler;
 pub use get_context_remaining::GetContextRemainingHandler;
 pub use goal::CreateGoalHandler;
@@ -79,8 +83,8 @@ pub use goal::GetGoalHandler;
 pub use goal::UpdateGoalHandler;
 pub use list_available_plugins_to_install::ListAvailablePluginsToInstallHandler;
 pub use local_web_search::LocalWebSearchHandler;
-pub use lsp::{LSP_TOOL_NAME, LspToolHandler};
 pub(crate) use lsp::shared_lsp_server_manager;
+pub use lsp::{LSP_TOOL_NAME, LspToolHandler};
 pub use mcp::McpHandler;
 pub use mcp_resource::CallMcpToolHandler;
 pub use mcp_resource::ListMcpResourceTemplatesHandler;
@@ -93,12 +97,14 @@ pub use request_plugin_install::RequestPluginInstallHandler;
 pub use request_user_input::RequestUserInputHandler;
 pub use shell::ShellCommandHandler;
 pub(crate) use shell::ShellCommandHandlerOptions;
+pub use sleep::SleepHandler;
 pub use test_sync::TestSyncHandler;
-pub use tool_search::ToolSearchHandler;
+pub(crate) use tool_search::ToolSearchHandlerCache;
 pub use unified_exec::ExecCommandHandler;
 pub(crate) use unified_exec::ExecCommandHandlerOptions;
 pub use unified_exec::WriteStdinHandler;
 pub use view_image::ViewImageHandler;
+pub(crate) use wait_for_environment::WaitForEnvironmentHandler;
 
 pub(crate) fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where
@@ -174,13 +180,13 @@ fn resolve_workdir_base_path(
 }
 
 fn resolve_tool_environment<'a>(
-    turn: &'a TurnContext,
+    environments: &'a TurnEnvironmentSnapshot,
     environment_id: Option<&str>,
 ) -> Result<Option<&'a TurnEnvironment>, FunctionCallError> {
     environment_id.map_or_else(
-        || Ok(turn.environments.primary()),
+        || Ok(environments.primary()),
         |environment_id| {
-            turn.environments
+            environments
                 .turn_environments
                 .iter()
                 .find(|environment| environment.environment_id == environment_id)

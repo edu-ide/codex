@@ -1470,6 +1470,103 @@ pub struct ReadWorkflowArtifactResponse {
     pub content: String,
 }
 
+// ─── Workflow Specs (executable automation graph, artifact_type = "WORKFLOW") ───
+// Stored as WF_*.json in ~/ilhae/vault/workflow/. Distinct from the DESIGN/PLAN/
+// VERIFICATION markdown artifacts above (those are dev documents; these are the
+// visual automation graphs the WorkflowPage renders and edits).
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowCoverage {
+    pub total_steps: u32,
+    pub automatable: u32,
+    pub tools_ready: u32,
+    pub tools_to_build: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowNode {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub step: Option<String>,
+    /// e.g. "doc-mcp/classify_documents"; None for human-only gates.
+    #[serde(default)]
+    pub mcp: Option<String>,
+    /// "auto" | "approval"
+    pub kind: String,
+    /// "ready" | "prebuilt" | "to_build" | "human"
+    pub status: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowEdge {
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowSpec {
+    pub artifact_type: String, // "WORKFLOW"
+    pub id: String,            // WF_<slug>.json
+    pub title: String,
+    #[serde(default)]
+    pub industry: Option<String>,
+    pub coverage: WorkflowCoverage,
+    pub nodes: Vec<WorkflowNode>,
+    #[serde(default)]
+    pub edges: Vec<WorkflowEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowSpecSummary {
+    pub id: String,
+    pub title: String,
+    pub industry: Option<String>,
+    pub coverage: WorkflowCoverage,
+    pub timestamp: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/workflow/spec/list", response = WorkflowSpecListResponse)]
+pub struct WorkflowSpecListRequest {
+    #[serde(default)]
+    pub industry: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct WorkflowSpecListResponse {
+    pub specs: Vec<WorkflowSpecSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/workflow/spec/get", response = WorkflowSpecGetResponse)]
+pub struct WorkflowSpecGetRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct WorkflowSpecGetResponse {
+    pub spec: Option<WorkflowSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/workflow/spec/save", response = WorkflowSpecSaveResponse)]
+pub struct WorkflowSpecSaveRequest {
+    pub spec: WorkflowSpec,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct WorkflowSpecSaveResponse {
+    pub id: String,
+    pub saved: bool,
+}
+
 pub fn default_memory_limit() -> usize {
     10
 }

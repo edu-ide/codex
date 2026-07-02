@@ -1,6 +1,9 @@
 use super::*;
+use crate::model::ThreadGoalLoopHistoryRow;
 use crate::model::ThreadGoalRow;
 use uuid::Uuid;
+
+const THREAD_GOAL_LOOP_HISTORY_LIMIT: i64 = 50;
 
 #[derive(Clone)]
 pub struct GoalStore {
@@ -43,6 +46,48 @@ impl GoalStore {
         &self,
         thread_id: ThreadId,
     ) -> anyhow::Result<Option<crate::ThreadGoal>> {
+        let Some(mut goal) = self.get_thread_goal_base(thread_id).await? else {
+            return Ok(None);
+        };
+        let rows = sqlx::query(
+            r#"
+SELECT
+    id,
+    cycle_number,
+    phase,
+    status,
+    title,
+    summary,
+    detail,
+    error,
+    started_at_ms,
+    updated_at_ms,
+    completed_at_ms
+FROM thread_goal_loop_history
+WHERE thread_id = ? AND goal_id = ?
+ORDER BY updated_at_ms DESC, id DESC
+LIMIT ?
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .bind(&goal.goal_id)
+        .bind(THREAD_GOAL_LOOP_HISTORY_LIMIT)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        goal.loop_history = rows
+            .into_iter()
+            .map(|row| {
+                ThreadGoalLoopHistoryRow::try_from_row(&row)
+                    .and_then(crate::ThreadGoalLoopHistoryEntry::try_from)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(Some(goal))
+    }
+
+    async fn get_thread_goal_base(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<crate::ThreadGoal>> {
         let row = sqlx::query(
             r#"
 SELECT
@@ -51,10 +96,16 @@ SELECT
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
-    updated_at_ms
+    updated_at_ms,
+    loop_cycle_number,
+    loop_phase,
+    loop_status,
+    loop_summary,
+    loop_updated_at_ms
 FROM thread_goals
 WHERE thread_id = ?
             "#,
@@ -104,10 +155,16 @@ RETURNING
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
-    updated_at_ms
+    updated_at_ms,
+    loop_cycle_number,
+    loop_phase,
+    loop_status,
+    loop_summary,
+    loop_updated_at_ms
             "#,
         )
         .bind(thread_id.to_string())
@@ -162,10 +219,16 @@ RETURNING
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
-    updated_at_ms
+    updated_at_ms,
+    loop_cycle_number,
+    loop_phase,
+    loop_status,
+    loop_summary,
+    loop_updated_at_ms
             "#,
         )
         .bind(thread_id.to_string())
@@ -345,7 +408,7 @@ WHERE thread_id = ?
         thread_id: ThreadId,
         event: crate::ThreadGoalLoopEvent,
     ) -> anyhow::Result<Option<crate::ThreadGoal>> {
-        let Some(goal) = self.get_thread_goal(thread_id).await? else {
+        let Some(goal) = self.get_thread_goal_base(thread_id).await? else {
             return Ok(None);
         };
 
@@ -519,10 +582,16 @@ RETURNING
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
-    updated_at_ms
+    updated_at_ms,
+    loop_cycle_number,
+    loop_phase,
+    loop_status,
+    loop_summary,
+    loop_updated_at_ms
             "#,
         )
         .bind(thread_id.to_string())
@@ -627,10 +696,16 @@ RETURNING
     objective,
     status,
     token_budget,
+    superloop_enabled,
     tokens_used,
     time_used_seconds,
     created_at_ms,
-    updated_at_ms
+    updated_at_ms,
+    loop_cycle_number,
+    loop_phase,
+    loop_status,
+    loop_summary,
+    loop_updated_at_ms
             "#,
         );
 
@@ -788,6 +863,53 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn get_thread_goal_includes_recent_loop_history() {
+        let runtime = test_runtime().await;
+        let thread_id = test_thread_id();
+        upsert_test_thread(&runtime, thread_id).await;
+        runtime
+            .thread_goals()
+            .replace_thread_goal(
+                thread_id,
+                "exercise loop history",
+                crate::ThreadGoalStatus::Active,
+                /*token_budget*/ None,
+            )
+            .await
+            .expect("goal replacement should succeed");
+
+        let event = crate::ThreadGoalLoopEvent {
+            id: "goal_continuation:plan:turn-1".to_string(),
+            phase: crate::ThreadGoalLoopPhase::PlanLoop,
+            status: crate::ThreadGoalLoopStatus::InProgress,
+            title: "Running Plan Loop".to_string(),
+            summary: "Plan loop agent turn started".to_string(),
+            detail: Some("started from idle continuation".to_string()),
+            error: None,
+        };
+        let goal = runtime
+            .thread_goals()
+            .record_thread_goal_loop_event(thread_id, event.clone())
+            .await
+            .expect("loop event should record")
+            .expect("goal should still exist");
+
+        let [entry] = goal.loop_history.as_slice() else {
+            panic!(
+                "expected one loop history entry, got {:?}",
+                goal.loop_history
+            );
+        };
+        assert_eq!(event.id, entry.id);
+        assert_eq!(event.phase, entry.phase);
+        assert_eq!(event.status, entry.status);
+        assert_eq!(event.title, entry.title);
+        assert_eq!(event.summary, entry.summary);
+        assert_eq!(event.detail, entry.detail);
+        assert_eq!(event.error, entry.error);
     }
 
     #[tokio::test]

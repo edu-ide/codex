@@ -34,6 +34,7 @@ use codex_tui::ExitReason;
 use codex_tui::UpdateAction;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
+use codex_utils_cli::SharedCliOptions;
 use codex_utils_cli::resume_command_for_binary;
 use owo_colors::OwoColorize;
 use std::collections::HashSet;
@@ -47,9 +48,12 @@ use supports_color::Stream;
 mod app_cmd;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop_app;
+mod doctor;
+mod exec_server_telemetry;
 mod marketplace_cmd;
 mod mcp_cmd;
 mod plugin_cmd;
+mod remote_control_cmd;
 mod state_db_recovery;
 #[cfg(not(windows))]
 mod wsl_paths;
@@ -57,6 +61,8 @@ mod wsl_paths;
 use crate::mcp_cmd::McpCli;
 use crate::plugin_cmd::PluginCli;
 use crate::plugin_cmd::PluginSubcommand;
+use crate::remote_control_cmd::RemoteControlCommand;
+use doctor::DoctorCommand;
 use state_db_recovery as local_state_db;
 
 use codex_config::LoaderOverrides;
@@ -141,6 +147,9 @@ enum Subcommand {
     /// [experimental] Run the app server or related tooling.
     AppServer(AppServerCommand),
 
+    /// [experimental] Manage the app-server daemon with remote control enabled.
+    RemoteControl(RemoteControlCommand),
+
     /// Launch the Ilhae proxy server (Telegram, Discord, UI daemon) natively.
     #[cfg(feature = "ilhae")]
     #[clap(name = "proxy", visible_aliases = ["desktop", "ilhae-proxy"])]
@@ -181,6 +190,9 @@ enum Subcommand {
     /// Update Codex to the latest version.
     Update,
 
+    /// Diagnose local Codex installation, config, auth, and runtime health.
+    Doctor(DoctorCommand),
+
     /// Run commands within a Codex-provided sandbox.
     Sandbox(SandboxArgs),
 
@@ -197,6 +209,15 @@ enum Subcommand {
 
     /// Resume a previous interactive session (picker by default; use --last to continue the most recent).
     Resume(ResumeCommand),
+
+    /// Archive a saved session by id or session name.
+    Archive(SessionArchiveCommand),
+
+    /// Permanently delete a saved session by id or session name.
+    Delete(DeleteCommand),
+
+    /// Unarchive a saved session by id or session name.
+    Unarchive(SessionArchiveCommand),
 
     /// Fork a previous interactive session (picker by default; use --last to fork the most recent).
     Fork(ForkCommand),
@@ -328,6 +349,42 @@ struct ResumeCommand {
 
     #[clap(flatten)]
     config_overrides: SessionTuiCli,
+}
+
+#[derive(Debug, Parser)]
+struct SessionArchiveCommand {
+    /// Session id (UUID) or session name. UUIDs take precedence if it parses.
+    #[arg(value_name = "SESSION")]
+    target: String,
+
+    #[clap(flatten)]
+    remote: InteractiveRemoteOptions,
+
+    #[clap(flatten)]
+    config_overrides: SessionArchiveConfigOverrides,
+}
+
+#[derive(Debug, Args, Clone, Default)]
+struct SessionArchiveConfigOverrides {
+    #[clap(flatten)]
+    shared: SharedCliOptions,
+
+    /// Error out when config.toml contains fields that are not recognized by this version of Codex.
+    #[arg(long = "strict-config", default_value_t = false)]
+    strict_config: bool,
+
+    #[clap(flatten)]
+    config_overrides: CliConfigOverrides,
+}
+
+#[derive(Debug, Args)]
+struct DeleteCommand {
+    #[clap(flatten)]
+    session: SessionArchiveCommand,
+
+    /// Delete without prompting. SESSION must be a UUID.
+    #[arg(long, default_value_t = false)]
+    force: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -820,6 +877,50 @@ fn run_update_command() -> anyhow::Result<()> {
 
 fn run_execpolicycheck(cmd: ExecPolicyCheckCommand) -> anyhow::Result<()> {
     cmd.run()
+}
+
+async fn run_session_archive_cli_command(
+    action: codex_tui::SessionArchiveAction,
+    cmd: SessionArchiveCommand,
+    mut interactive: TuiCli,
+    root_config_overrides: CliConfigOverrides,
+    root_remote: Option<String>,
+    root_remote_auth_token_env: Option<String>,
+    arg0_paths: Arg0DispatchPaths,
+) -> anyhow::Result<String> {
+    let SessionArchiveCommand {
+        target,
+        remote,
+        config_overrides,
+    } = cmd;
+    interactive =
+        finalize_session_archive_interactive(interactive, root_config_overrides, config_overrides);
+    let explicit_remote_endpoint = resolve_remote_endpoint(
+        remote.remote.or(root_remote),
+        remote.remote_auth_token_env.or(root_remote_auth_token_env),
+    )?;
+    codex_tui::run_session_archive_command(
+        action,
+        target,
+        codex_tui::SessionArchiveCommandOptions {
+            cli: interactive,
+            arg0_paths,
+            explicit_remote_endpoint,
+        },
+    )
+    .await
+    .map_err(|err| anyhow::anyhow!("{err}"))
+}
+
+fn delete_action(target: &str, force: bool) -> anyhow::Result<codex_tui::SessionArchiveAction> {
+    if force && codex_protocol::ThreadId::from_string(target).is_err() {
+        anyhow::bail!("--force requires a session UUID; names must be confirmed interactively");
+    }
+    let confirmation = match force {
+        true => codex_tui::DeleteConfirmation::Skip,
+        false => codex_tui::DeleteConfirmation::Prompt,
+    };
+    Ok(codex_tui::SessionArchiveAction::Delete(confirmation))
 }
 
 async fn run_debug_app_server_command(cmd: DebugAppServerCommand) -> anyhow::Result<()> {
@@ -1689,6 +1790,7 @@ async fn cli_main(
     root_config_overrides.raw_overrides.extend(toggle_overrides);
     let root_remote = remote.remote;
     let root_remote_auth_token_env = remote.remote_auth_token_env;
+    reject_root_strict_config_for_subcommand(interactive.strict_config, &subcommand)?;
 
     match subcommand {
         None => {
@@ -1894,6 +1996,10 @@ async fn cli_main(
                 root_remote_auth_token_env.as_deref(),
                 subcommand.as_ref(),
             )?;
+            reject_strict_config_for_app_server_subcommand(
+                interactive.strict_config || strict_config,
+                subcommand.as_ref(),
+            )?;
             match subcommand {
                 None => {
                     let transport = if stdio {
@@ -1997,6 +2103,20 @@ async fn cli_main(
                 }
             }
         }
+        Some(Subcommand::RemoteControl(remote_control_cli)) => {
+            let subcommand_name = remote_control_cli.subcommand_name();
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                subcommand_name,
+            )?;
+            remote_control_cmd::run(
+                remote_control_cli,
+                arg0_paths.clone(),
+                root_config_overrides.clone(),
+            )
+            .await?;
+        }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         Some(Subcommand::App(app_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -2041,6 +2161,46 @@ async fn cli_main(
             )
             .await?;
             handle_app_exit(exit_info)?;
+        }
+        Some(Subcommand::Archive(cmd)) => {
+            let output = run_session_archive_cli_command(
+                codex_tui::SessionArchiveAction::Archive,
+                cmd,
+                interactive,
+                root_config_overrides.clone(),
+                root_remote.clone(),
+                root_remote_auth_token_env.clone(),
+                arg0_paths.clone(),
+            )
+            .await?;
+            println!("{output}");
+        }
+        Some(Subcommand::Delete(DeleteCommand { session, force })) => {
+            let action = delete_action(&session.target, force)?;
+            let output = run_session_archive_cli_command(
+                action,
+                session,
+                interactive,
+                root_config_overrides.clone(),
+                root_remote.clone(),
+                root_remote_auth_token_env.clone(),
+                arg0_paths.clone(),
+            )
+            .await?;
+            println!("{output}");
+        }
+        Some(Subcommand::Unarchive(cmd)) => {
+            let output = run_session_archive_cli_command(
+                codex_tui::SessionArchiveAction::Unarchive,
+                cmd,
+                interactive,
+                root_config_overrides.clone(),
+                root_remote.clone(),
+                root_remote_auth_token_env.clone(),
+                arg0_paths.clone(),
+            )
+            .await?;
+            println!("{output}");
         }
         Some(Subcommand::Fork(ForkCommand {
             session_id,
@@ -2224,6 +2384,15 @@ async fn cli_main(
                 "update",
             )?;
             run_update_command()?;
+        }
+        Some(Subcommand::Doctor(doctor_cli)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "doctor",
+            )?;
+            doctor::run_doctor(doctor_cli, root_config_overrides, &interactive, &arg0_paths)
+                .await?;
         }
         Some(Subcommand::Cloud(mut cloud_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -2679,6 +2848,7 @@ async fn run_exec_server_command(
             .environment_id
             .ok_or_else(|| anyhow::anyhow!("--environment-id is required when --remote is set"))?;
         let config = load_exec_server_config(root_config_overrides, strict_config).await?;
+        let (_otel, telemetry) = exec_server_telemetry::init(Some(&config));
         let auth_provider =
             load_exec_server_remote_auth_provider(&config, &base_url, cmd.use_agent_identity_auth)
                 .await?;
@@ -2690,20 +2860,29 @@ async fn run_exec_server_command(
         if let Some(name) = cmd.name {
             remote_config.name = name;
         }
-        codex_exec_server::run_remote_environment(remote_config, runtime_paths).await?;
-        return Ok(());
-    }
-    if strict_config {
-        let _validated_config =
-            load_exec_server_config(root_config_overrides, strict_config).await?;
-    }
-    let listen_url = cmd
-        .listen
-        .as_deref()
-        .unwrap_or(codex_exec_server::DEFAULT_LISTEN_URL);
-    codex_exec_server::run_main(listen_url, runtime_paths)
+        let remote_config = remote_config.with_telemetry(telemetry);
+        exec_server_telemetry::run_until_shutdown(async move {
+            codex_exec_server::run_remote_environment(remote_config, runtime_paths).await
+        })
+        .await?;
+        Ok(())
+    } else {
+        let config_result = load_exec_server_config(root_config_overrides, strict_config).await;
+        let config = if strict_config {
+            Some(config_result?)
+        } else {
+            config_result.ok()
+        };
+        let (_otel, telemetry) = exec_server_telemetry::init(config.as_ref());
+        let listen_url = cmd
+            .listen
+            .unwrap_or_else(|| codex_exec_server::DEFAULT_LISTEN_URL.to_string());
+        exec_server_telemetry::run_until_shutdown(async move {
+            codex_exec_server::run_main_with_telemetry(&listen_url, runtime_paths, telemetry).await
+        })
         .await
         .map_err(anyhow::Error::from_boxed)
+    }
 }
 
 async fn load_exec_server_config(
@@ -2730,9 +2909,13 @@ async fn load_exec_server_remote_auth_provider(
         let agent_identity_jwt = read_codex_access_token_from_env().ok_or_else(|| {
             anyhow::anyhow!("CODEX_ACCESS_TOKEN is required when --use-agent-identity-auth is set")
         })?;
-        let auth =
-            CodexAuth::from_agent_identity_jwt(&agent_identity_jwt, Some(&config.chatgpt_base_url))
-                .await?;
+        let auth_route_config = config.auth_route_config();
+        let auth = CodexAuth::from_agent_identity_jwt(
+            &agent_identity_jwt,
+            Some(&config.chatgpt_base_url),
+            auth_route_config.as_ref(),
+        )
+        .await?;
         return Ok(codex_model_provider::auth_provider_from_auth(&auth));
     }
 
@@ -3029,12 +3212,101 @@ fn reject_remote_mode_for_subcommand(
     Ok(())
 }
 
-fn reject_remote_mode_for_app_server_subcommand(
-    remote: Option<&str>,
-    remote_auth_token_env: Option<&str>,
+fn reject_root_strict_config_for_subcommand(
+    strict_config: bool,
+    subcommand: &Option<Subcommand>,
+) -> anyhow::Result<()> {
+    if !strict_config {
+        return Ok(());
+    }
+
+    match unsupported_subcommand_name_for_strict_config(subcommand) {
+        Some(subcommand_name) => {
+            reject_strict_config_for_unsupported_subcommand(strict_config, subcommand_name)
+        }
+        None => Ok(()),
+    }
+}
+
+fn unsupported_subcommand_name_for_strict_config(
+    subcommand: &Option<Subcommand>,
+) -> Option<&'static str> {
+    match subcommand {
+        None
+        | Some(Subcommand::Exec(_))
+        | Some(Subcommand::Review(_))
+        | Some(Subcommand::McpServer)
+        | Some(Subcommand::ExecServer(_))
+        | Some(Subcommand::Resume(_))
+        | Some(Subcommand::Archive(_))
+        | Some(Subcommand::Delete(_))
+        | Some(Subcommand::Unarchive(_))
+        | Some(Subcommand::Fork(_))
+        | Some(Subcommand::Doctor(_)) => None,
+        Some(Subcommand::AppServer(app_server)) if app_server.subcommand.is_none() => None,
+        Some(Subcommand::AppServer(app_server)) => {
+            Some(app_server_subcommand_name(app_server.subcommand.as_ref()))
+        }
+        Some(Subcommand::RemoteControl(remote_control)) => Some(remote_control.subcommand_name()),
+        Some(Subcommand::Mcp(_)) => Some("mcp"),
+        Some(Subcommand::Plugin(_)) => Some("plugin"),
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Proxy) => Some("proxy"),
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Stop) => Some("stop"),
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Profile(_)) => Some("profile"),
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Auth(_)) => Some("auth"),
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::LocalServer(_)) => Some("local-server"),
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Start) => Some("start"),
+        #[cfg(feature = "ilhae")]
+        Some(Subcommand::Gpu(_)) => Some("gpu"),
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        Some(Subcommand::App(_)) => Some("app"),
+        Some(Subcommand::Login(_)) => Some("login"),
+        Some(Subcommand::Logout(_)) => Some("logout"),
+        Some(Subcommand::Completion(_)) => Some("completion"),
+        Some(Subcommand::Update) => Some("update"),
+        Some(Subcommand::Cloud(_)) => Some("cloud"),
+        Some(Subcommand::Sandbox(_)) => Some("sandbox"),
+        Some(Subcommand::Debug(_)) => Some("debug"),
+        Some(Subcommand::Execpolicy(_)) => Some("execpolicy"),
+        Some(Subcommand::Apply(_)) => Some("apply"),
+        Some(Subcommand::ResponsesApiProxy(_)) => Some("responses-api-proxy"),
+        Some(Subcommand::StdioToUds(_)) => Some("stdio-to-uds"),
+        Some(Subcommand::Internal(_)) => Some("internal"),
+        Some(Subcommand::Features(_)) => Some("features"),
+    }
+}
+
+fn reject_strict_config_for_app_server_subcommand(
+    strict_config: bool,
     subcommand: Option<&AppServerSubcommand>,
 ) -> anyhow::Result<()> {
-    let subcommand_name = match subcommand {
+    if subcommand.is_none() {
+        return Ok(());
+    }
+    reject_strict_config_for_unsupported_subcommand(
+        strict_config,
+        app_server_subcommand_name(subcommand),
+    )
+}
+
+fn reject_strict_config_for_unsupported_subcommand(
+    strict_config: bool,
+    subcommand: &str,
+) -> anyhow::Result<()> {
+    if strict_config {
+        anyhow::bail!("`--strict-config` is not supported for `codex {subcommand}`");
+    }
+    Ok(())
+}
+
+fn app_server_subcommand_name(subcommand: Option<&AppServerSubcommand>) -> &'static str {
+    match subcommand {
         None => "app-server",
         Some(AppServerSubcommand::Proxy(_)) => "app-server proxy",
         Some(AppServerSubcommand::GenerateTs(_)) => "app-server generate-ts",
@@ -3042,8 +3314,19 @@ fn reject_remote_mode_for_app_server_subcommand(
         Some(AppServerSubcommand::GenerateInternalJsonSchema(_)) => {
             "app-server generate-internal-json-schema"
         }
-    };
-    reject_remote_mode_for_subcommand(remote, remote_auth_token_env, subcommand_name)
+    }
+}
+
+fn reject_remote_mode_for_app_server_subcommand(
+    remote: Option<&str>,
+    remote_auth_token_env: Option<&str>,
+    subcommand: Option<&AppServerSubcommand>,
+) -> anyhow::Result<()> {
+    reject_remote_mode_for_subcommand(
+        remote,
+        remote_auth_token_env,
+        app_server_subcommand_name(subcommand),
+    )
 }
 
 fn read_remote_auth_token_from_env_var_with<F>(
@@ -3298,6 +3581,28 @@ fn finalize_fork_interactive(
     interactive
 }
 
+fn finalize_session_archive_interactive(
+    mut interactive: TuiCli,
+    root_config_overrides: CliConfigOverrides,
+    archive_cli: SessionArchiveConfigOverrides,
+) -> TuiCli {
+    let SessionArchiveConfigOverrides {
+        shared,
+        strict_config,
+        config_overrides,
+    } = archive_cli;
+    interactive.shared.apply_subcommand_overrides(shared);
+    if strict_config {
+        interactive.strict_config = true;
+    }
+    interactive
+        .config_overrides
+        .raw_overrides
+        .extend(config_overrides.raw_overrides);
+    prepend_config_flags(&mut interactive.config_overrides, root_config_overrides);
+    interactive
+}
+
 /// Merge flags provided to `codex resume`/`codex fork` so they take precedence over any
 /// root-level flags. Only overrides fields explicitly set on the subcommand-scoped
 /// CLI. Also appends `-c key=value` overrides with highest precedence.
@@ -3440,6 +3745,32 @@ mod tests {
         let SessionTuiCli(fork_cli) = fork_cli;
 
         finalize_fork_interactive(interactive, root_overrides, session_id, last, all, fork_cli)
+    }
+
+    fn finalize_archive_from_args(args: &[&str]) -> (String, TuiCli, InteractiveRemoteOptions) {
+        let cli = MultitoolCli::try_parse_from(args).expect("parse");
+        let MultitoolCli {
+            interactive,
+            config_overrides: root_overrides,
+            subcommand,
+            feature_toggles: _,
+            remote: _,
+        } = cli;
+
+        let Subcommand::Archive(SessionArchiveCommand {
+            target,
+            remote,
+            config_overrides: archive_cli,
+        }) = subcommand.expect("archive present")
+        else {
+            unreachable!()
+        };
+
+        (
+            target,
+            finalize_session_archive_interactive(interactive, root_overrides, archive_cli),
+            remote,
+        )
     }
 
     #[cfg(feature = "ilhae")]
@@ -3758,7 +4089,77 @@ args = ["--ctx-size", "131072"]
     }
 
     #[test]
-    fn sandbox_macos_parses_permissions_profile() {
+    fn archive_merges_scoped_tui_flags() {
+        let (target, interactive, remote) = finalize_archive_from_args(
+            [
+                "codex",
+                "-C",
+                "/root",
+                "archive",
+                "--remote",
+                "unix://archive.sock",
+                "--strict-config",
+                "--dangerously-bypass-hook-trust",
+                "-m",
+                "gpt-5.1-test",
+                "-p",
+                "work",
+                "-C",
+                "/archive",
+                "my-thread",
+            ]
+            .as_ref(),
+        );
+
+        assert_eq!(target, "my-thread");
+        assert_eq!(remote.remote.as_deref(), Some("unix://archive.sock"));
+        assert_eq!(interactive.model.as_deref(), Some("gpt-5.1-test"));
+        assert_eq!(interactive.config_profile_v2.as_deref(), Some("work"));
+        assert_eq!(
+            interactive.cwd.as_deref(),
+            Some(std::path::Path::new("/archive"))
+        );
+        assert!(interactive.strict_config);
+        assert!(interactive.bypass_hook_trust);
+    }
+
+    #[test]
+    fn delete_force_requires_uuid() {
+        assert!(delete_action("123e4567-e89b-12d3-a456-426614174000", true).is_ok());
+
+        let err = delete_action("my-thread", true).expect_err("name should require prompt");
+        assert_eq!(
+            err.to_string(),
+            "--force requires a session UUID; names must be confirmed interactively"
+        );
+    }
+
+    #[test]
+    fn sandbox_macos_parses_permission_profile() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "sandbox",
+            "macos",
+            "--permission-profile",
+            ":workspace",
+            "--",
+            "echo",
+        ])
+        .expect("parse");
+
+        let Some(Subcommand::Sandbox(SandboxArgs {
+            cmd: SandboxCommand::Macos(command),
+        })) = cli.subcommand
+        else {
+            panic!("expected sandbox macos command");
+        };
+
+        assert_eq!(command.permissions_profile.as_deref(), Some(":workspace"));
+        assert_eq!(command.command, vec!["echo"]);
+    }
+
+    #[test]
+    fn sandbox_macos_parses_legacy_permissions_profile_alias() {
         let cli = MultitoolCli::try_parse_from([
             "codex",
             "sandbox",
@@ -3778,6 +4179,61 @@ args = ["--ctx-size", "131072"]
         };
 
         assert_eq!(command.permissions_profile.as_deref(), Some(":workspace"));
+        assert_eq!(command.command, vec!["echo"]);
+    }
+
+    #[test]
+    fn sandbox_macos_help_only_shows_singular_permission_profile() {
+        let help = help_from_args(&["codex", "sandbox", "macos", "--help"]);
+        assert!(help.contains("--permission-profile"), "{help}");
+        assert!(!help.contains("--permissions-profile"), "{help}");
+    }
+
+    #[test]
+    fn sandbox_macos_parses_permissions_profile_short_alias() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "sandbox",
+            "macos",
+            "-P",
+            ":workspace",
+            "--",
+            "echo",
+        ])
+        .expect("parse");
+
+        let Some(Subcommand::Sandbox(SandboxArgs {
+            cmd: SandboxCommand::Macos(command),
+        })) = cli.subcommand
+        else {
+            panic!("expected sandbox macos command");
+        };
+
+        assert_eq!(command.permissions_profile.as_deref(), Some(":workspace"));
+        assert_eq!(command.command, vec!["echo"]);
+    }
+
+    #[test]
+    fn sandbox_macos_parses_config_profile() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "sandbox",
+            "macos",
+            "--profile",
+            "work",
+            "--",
+            "echo",
+        ])
+        .expect("parse");
+
+        let Some(Subcommand::Sandbox(SandboxArgs {
+            cmd: SandboxCommand::Macos(command),
+        })) = cli.subcommand
+        else {
+            panic!("expected sandbox macos command");
+        };
+
+        assert_eq!(command.config_profile.as_deref(), Some("work"));
         assert_eq!(command.command, vec!["echo"]);
     }
 
@@ -3874,7 +4330,7 @@ args = ["--ctx-size", "131072"]
     }
 
     #[test]
-    fn format_exit_messages_includes_session_id_for_fatal_exit_without_resume_hint() {
+    fn format_exit_messages_includes_resume_command_for_fatal_exit_without_resume_hint() {
         let exit_info = AppExitInfo {
             token_usage: TokenUsage::default(),
             thread_id: Some(ThreadId::from_string("123e4567-e89b-12d3-a456-426614174000").unwrap()),
@@ -3882,10 +4338,13 @@ args = ["--ctx-size", "131072"]
             update_action: None,
             exit_reason: ExitReason::Fatal("boom".to_string()),
         };
-        let lines = format_exit_messages(exit_info, /*color_enabled*/ false);
+        let lines = format_exit_messages(exit_info, /*color_enabled*/ false, "codex");
         assert_eq!(
             lines,
-            vec!["Session ID: 123e4567-e89b-12d3-a456-426614174000".to_string()]
+            vec![
+                "To continue this session, run codex resume 123e4567-e89b-12d3-a456-426614174000"
+                    .to_string(),
+            ]
         );
     }
 
@@ -3896,7 +4355,7 @@ args = ["--ctx-size", "131072"]
             /*thread_name*/ None,
         );
         exit_info.exit_reason = ExitReason::Fatal("boom".to_string());
-        let lines = format_exit_messages(exit_info, /*color_enabled*/ false);
+        let lines = format_exit_messages(exit_info, /*color_enabled*/ false, "codex");
         assert_eq!(
             lines,
             vec![
@@ -4218,6 +4677,120 @@ args = ["--ctx-size", "131072"]
         let app_server =
             app_server_from_args(["codex", "app-server", "--analytics-default-enabled"].as_ref());
         assert!(app_server.analytics_default_enabled);
+    }
+
+    #[test]
+    fn strict_config_parses_for_supported_commands() {
+        let cli = MultitoolCli::try_parse_from(["codex", "--strict-config"]).expect("parse");
+        assert!(cli.interactive.strict_config);
+
+        let cli = MultitoolCli::try_parse_from(["codex", "--strict-config", "mcp-server"])
+            .expect("parse");
+        assert_matches!(cli.subcommand, Some(Subcommand::McpServer));
+
+        let cli =
+            MultitoolCli::try_parse_from(["codex", "--strict-config", "review", "--uncommitted"])
+                .expect("parse");
+        assert!(cli.interactive.strict_config);
+        assert_matches!(
+            cli.subcommand,
+            Some(Subcommand::Review(ReviewArgs {
+                uncommitted: true,
+                ..
+            }))
+        );
+
+        let cli = MultitoolCli::try_parse_from(["codex", "exec-server", "--strict-config"])
+            .expect("parse");
+        assert_matches!(
+            cli.subcommand,
+            Some(Subcommand::ExecServer(ExecServerCommand {
+                strict_config: true,
+                ..
+            }))
+        );
+    }
+
+    #[test]
+    fn root_strict_config_is_supported_for_exec_server() {
+        let cli = MultitoolCli::try_parse_from(["codex", "--strict-config", "exec-server"])
+            .expect("parse");
+
+        reject_root_strict_config_for_subcommand(cli.interactive.strict_config, &cli.subcommand)
+            .expect("exec-server should support root --strict-config");
+    }
+
+    #[test]
+    fn root_strict_config_is_rejected_for_unsupported_subcommands() {
+        let cli = MultitoolCli::try_parse_from(["codex", "--strict-config", "mcp", "list"])
+            .expect("parse");
+        let err = reject_root_strict_config_for_subcommand(
+            cli.interactive.strict_config,
+            &cli.subcommand,
+        )
+        .expect_err("mcp should not support root --strict-config");
+
+        assert_eq!(
+            err.to_string(),
+            "`--strict-config` is not supported for `codex mcp`"
+        );
+
+        let cli = MultitoolCli::try_parse_from(["codex", "--strict-config", "remote-control"])
+            .expect("parse");
+        let err = reject_root_strict_config_for_subcommand(
+            cli.interactive.strict_config,
+            &cli.subcommand,
+        )
+        .expect_err("remote-control should not support root --strict-config");
+
+        assert_eq!(
+            err.to_string(),
+            "`--strict-config` is not supported for `codex remote-control`"
+        );
+    }
+
+    #[test]
+    fn app_server_subcommands_reject_strict_config() {
+        let app_server =
+            app_server_from_args(["codex", "app-server", "--strict-config", "proxy"].as_ref());
+        let err = reject_strict_config_for_app_server_subcommand(
+            app_server.strict_config,
+            app_server.subcommand.as_ref(),
+        )
+        .expect_err("app-server proxy should not support --strict-config");
+
+        assert_eq!(
+            err.to_string(),
+            "`--strict-config` is not supported for `codex app-server proxy`"
+        );
+    }
+
+    #[test]
+    fn reject_remote_flag_for_remote_control() {
+        let cli = MultitoolCli::try_parse_from(["codex", "--remote", "unix://", "remote-control"])
+            .expect("parse");
+        let Some(Subcommand::RemoteControl(remote_control)) = &cli.subcommand else {
+            panic!("expected remote-control subcommand");
+        };
+        assert_eq!(remote_control.subcommand_name(), "remote-control");
+
+        let err = reject_remote_mode_for_subcommand(
+            cli.remote.remote.as_deref(),
+            cli.remote.remote_auth_token_env.as_deref(),
+            "remote-control",
+        )
+        .expect_err("remote-control should reject root --remote");
+
+        assert!(err.to_string().contains("remote-control"));
+    }
+
+    #[test]
+    fn remote_control_pair_parses() {
+        let cli = MultitoolCli::try_parse_from(["codex", "remote-control", "pair"]).expect("parse");
+        let Some(Subcommand::RemoteControl(remote_control)) = &cli.subcommand else {
+            panic!("expected remote-control subcommand");
+        };
+        assert_eq!(remote_control.subcommand_name(), "remote-control pair");
     }
 
     #[test]

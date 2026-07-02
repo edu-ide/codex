@@ -19,7 +19,6 @@
         {
           "enum": [
             "untrusted",
-            "on-failure",
             "on-request",
             "never"
           ],
@@ -74,6 +73,7 @@
               "type": "string"
             },
             "path": {
+              "description": "Absolute path for the root in the selected environment.",
               "type": "string"
             },
             "type": {
@@ -94,31 +94,114 @@
         }
       ]
     },
-    "DynamicToolSpec": {
-      "properties": {
-        "deferLoading": {
-          "type": "boolean"
-        },
-        "description": {
-          "type": "string"
-        },
-        "inputSchema": true,
-        "name": {
-          "type": "string"
-        },
-        "namespace": {
-          "type": [
-            "string",
-            "null"
-          ]
+    "DynamicToolNamespaceTool": {
+      "oneOf": [
+        {
+          "properties": {
+            "deferLoading": {
+              "type": "boolean"
+            },
+            "description": {
+              "type": "string"
+            },
+            "inputSchema": true,
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "function"
+              ],
+              "title": "FunctionDynamicToolNamespaceToolType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "inputSchema",
+            "name",
+            "type"
+          ],
+          "title": "FunctionDynamicToolNamespaceTool",
+          "type": "object"
         }
-      },
-      "required": [
-        "description",
-        "inputSchema",
-        "name"
+      ]
+    },
+    "DynamicToolSpec": {
+      "oneOf": [
+        {
+          "properties": {
+            "deferLoading": {
+              "type": "boolean"
+            },
+            "description": {
+              "type": "string"
+            },
+            "inputSchema": true,
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "function"
+              ],
+              "title": "FunctionDynamicToolSpecType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "inputSchema",
+            "name",
+            "type"
+          ],
+          "title": "FunctionDynamicToolSpec",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "tools": {
+              "items": {
+                "$ref": "#/definitions/DynamicToolNamespaceTool"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "namespace"
+              ],
+              "title": "NamespaceDynamicToolSpecType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "name",
+            "tools",
+            "type"
+          ],
+          "title": "NamespaceDynamicToolSpec",
+          "type": "object"
+        }
+      ]
+    },
+    "LegacyAppPathString": {
+      "type": "string"
+    },
+    "MultiAgentMode": {
+      "description": "Controls whether the model receives multi-agent delegation instructions and, when it does, whether it should only spawn sub-agents after an explicit user request or may delegate proactively when doing so would help. `none` leaves the multi-agent tools available without injecting delegation instructions.",
+      "enum": [
+        "none",
+        "explicitRequestOnly",
+        "proactive"
       ],
-      "type": "object"
+      "type": "string"
     },
     "Personality": {
       "enum": [
@@ -158,6 +241,13 @@
       ],
       "type": "object"
     },
+    "ThreadHistoryMode": {
+      "enum": [
+        "legacy",
+        "paginated"
+      ],
+      "type": "string"
+    },
     "ThreadSource": {
       "type": "string"
     },
@@ -171,7 +261,7 @@
     "TurnEnvironmentParams": {
       "properties": {
         "cwd": {
-          "$ref": "#/definitions/AbsolutePathBuf"
+          "$ref": "#/definitions/LegacyAppPathString"
         },
         "environmentId": {
           "type": "string"
@@ -185,6 +275,10 @@
     }
   },
   "properties": {
+    "allowProviderModelFallback": {
+      "description": "Allow a provider with an authoritative static model catalog to replace an unavailable requested model with its default.",
+      "type": "boolean"
+    },
     "approvalPolicy": {
       "anyOf": [
         {
@@ -231,9 +325,51 @@
         "null"
       ]
     },
+    "dynamicTools": {
+      "default": null,
+      "items": {
+        "$ref": "#/definitions/DynamicToolSpec"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "environments": {
+      "description": "Optional sticky environments for this thread.\n\nOmitted selects the default environment when environment access is enabled. Empty disables environment access for turns that do not provide a turn override. Non-empty selects the first environment as the current turn environment.",
+      "items": {
+        "$ref": "#/definitions/TurnEnvironmentParams"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "ephemeral": {
       "type": [
         "boolean",
+        "null"
+      ]
+    },
+    "experimentalRawEvents": {
+      "description": "If true, opt into emitting raw Responses API items on the event stream. This is for internal use only (e.g. Codex Cloud).",
+      "type": "boolean"
+    },
+    "historyMode": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadHistoryMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Persisted thread history contract to use for this new thread."
+    },
+    "mockExperimentalField": {
+      "description": "Test-only experimental field used to validate experimental gating and schema filtering behavior in a stable way.",
+      "type": [
+        "string",
         "null"
       ]
     },
@@ -249,6 +385,24 @@
         "null"
       ]
     },
+    "multiAgentMode": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/MultiAgentMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "@deprecated Ignored. Use Ultra reasoning effort for proactive multi-agent behavior."
+    },
+    "permissions": {
+      "description": "Named profile id for this thread. Cannot be combined with `sandbox`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "personality": {
       "anyOf": [
         {
@@ -259,6 +413,16 @@
         }
       ]
     },
+    "runtimeWorkspaceRoots": {
+      "description": "Replace the thread's runtime workspace roots. Paths must be absolute.",
+      "items": {
+        "$ref": "#/definitions/AbsolutePathBuf"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "sandbox": {
       "anyOf": [
         {
@@ -267,6 +431,16 @@
         {
           "type": "null"
         }
+      ]
+    },
+    "selectedCapabilityRoots": {
+      "description": "Capability roots selected for this thread by the hosting platform.",
+      "items": {
+        "$ref": "#/definitions/SelectedCapabilityRoot"
+      },
+      "type": [
+        "array",
+        "null"
       ]
     },
     "serviceName": {

@@ -31,18 +31,22 @@ tui-with-exec-server *args:
 file-search *args:
     cargo run --bin codex-file-search -- {args}
 
+# Run the standalone code-mode host from source.
+code-mode-host *args:
+    cargo run --bin codex-code-mode-host -- {args}
+
 # Build the CLI and run the app-server test client
 app-server-test-client *args:
     cargo build -p codex-cli
     cargo run -p codex-app-server-test-client -- --codex-bin ./target/debug/codex {args}
 
-# Format the justfile, Rust, Python SDK code, and Python scripts.
+# Format the justfile, Rust, Bazel/Starlark, Python SDK code, and Python scripts.
 fmt:
-    {{ python }} ../scripts/format.py
+    @{{ python }} ../scripts/format.py
 
 # Check formatting without modifying files.
 fmt-check:
-    {{ python }} ../scripts/format.py --check
+    @{{ python }} ../scripts/format.py --check
 
 fix *args:
     cargo clippy --fix --tests --allow-dirty {args}
@@ -106,6 +110,16 @@ bazel-codex *args:
 [windows]
 bazel-codex *args:
     bazel run //codex-rs/cli:codex --run_under='cd /d "{{ invocation_directory_native() }}" &&' -- @($args | Select-Object -Skip 1)
+
+# Build and run the standalone code-mode host from source using Bazel.
+[no-cd]
+[unix]
+bazel-code-mode-host *args:
+    bazel run //codex-rs/code-mode-host:codex-code-mode-host --run_under="cd $PWD &&" -- "$@"
+
+[windows]
+bazel-code-mode-host *args:
+    bazel run //codex-rs/code-mode-host:codex-code-mode-host --run_under='cd /d "{{ invocation_directory_native() }}" &&' -- @($args | Select-Object -Skip 1)
 
 [no-cd]
 bazel-lock-update:

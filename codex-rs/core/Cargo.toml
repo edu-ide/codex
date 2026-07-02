@@ -26,6 +26,7 @@ brain-rs = { path = "../../../brain-rs", default-features = false }
 chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
 codex-analytics = { workspace = true }
+codex-agent-graph-store = { workspace = true }
 codex-api = { workspace = true }
 codex-app-server-protocol = { workspace = true }
 codex-apply-patch = { workspace = true }
@@ -40,6 +41,7 @@ codex-exec-server = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
 codex-feedback = { workspace = true }
+codex-file-system = { workspace = true }
 codex-login = { workspace = true }
 codex-memories-read = { workspace = true }
 codex-mcp = { workspace = true }
@@ -166,3 +168,4 @@ zstd = { workspace = true }
 
 [package.metadata.cargo-shear]
 ignored = ["openssl-sys"]
+ignored-paths = ["tests/remote_env_windows/*.rs"]

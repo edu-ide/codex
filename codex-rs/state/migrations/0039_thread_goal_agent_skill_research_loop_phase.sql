@@ -7,7 +7,7 @@ CREATE TABLE thread_goals_new (
     thread_id TEXT PRIMARY KEY NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
     goal_id TEXT NOT NULL,
     objective TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'budget_limited', 'complete')),
+    status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'blocked', 'usage_limited', 'budget_limited', 'complete')),
     token_budget INTEGER,
     superloop_enabled INTEGER NOT NULL DEFAULT 0,
     tokens_used INTEGER NOT NULL DEFAULT 0,

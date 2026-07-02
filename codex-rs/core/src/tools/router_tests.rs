@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
 use crate::tools::context::ToolPayload;
 use crate::turn_diff_tracker::TurnDiffTracker;
@@ -10,6 +11,9 @@ use codex_extension_api::ExtensionRegistryBuilder;
 use codex_extension_api::ResponsesApiTool;
 use codex_extension_api::ToolCall as ExtensionToolCall;
 use codex_extension_api::ToolExecutor;
+use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
+use codex_protocol::dynamic_tools::DynamicToolNamespaceSpec;
+use codex_protocol::dynamic_tools::DynamicToolNamespaceTool;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputBody;
@@ -112,6 +116,7 @@ fn build_tool_call_accepts_tool_search_as_function_call() -> anyhow::Result<()> 
         })
         .to_string(),
         call_id: "search-1".to_string(),
+        internal_chat_message_metadata_passthrough: None,
     })?
     .expect("tool_search function call should produce a tool call");
 
@@ -129,21 +134,24 @@ fn build_tool_call_accepts_tool_search_as_function_call() -> anyhow::Result<()> 
 #[tokio::test]
 async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow::Result<()> {
     let (session, turn) = make_session_and_context().await;
+    let turn = Arc::new(turn);
+    let step_context = StepContext::for_test(Arc::clone(&turn));
     let mcp_tools = session
         .services
-        .mcp_connection_manager
-        .load_full()
+        .latest_mcp_runtime()
+        .manager()
         .list_all_tools()
         .await;
-    let router = ToolRouter::from_turn_context(
-        &turn,
+    let router = ToolRouter::from_context(
+        step_context.as_ref(),
         ToolRouterParams {
+            tool_suggest_candidates: None,
             deferred_mcp_tools: None,
             mcp_tools: Some(mcp_tools),
-            discoverable_tools: None,
             extension_tool_executors: Vec::new(),
             dynamic_tools: turn.dynamic_tools.as_slice(),
         },
+        &Default::default(),
     );
 
     let parallel_tool_name = ["exec_command", "shell_command"]
@@ -180,6 +188,7 @@ async fn build_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()
         namespace: Some("mcp__codex_apps__calendar".to_string()),
         arguments: "{}".to_string(),
         call_id: "call-namespace".to_string(),
+        internal_chat_message_metadata_passthrough: None,
     })?
     .expect("function_call should produce a tool call");
 
@@ -199,11 +208,43 @@ async fn build_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()
 }
 
 #[tokio::test]
+async fn build_custom_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()> {
+    let tool_name = "exec".to_string();
+
+    let call = ToolRouter::build_tool_call(ResponseItem::CustomToolCall {
+        id: None,
+        status: None,
+        call_id: "call-namespace".to_string(),
+        name: tool_name.clone(),
+        namespace: Some("mcp__python".to_string()),
+        input: "print('hello')".to_string(),
+        internal_chat_message_metadata_passthrough: None,
+    })?
+    .expect("custom_tool_call should produce a tool call");
+
+    assert_eq!(
+        call,
+        ToolCall {
+            tool_name: ToolName::namespaced("mcp__python", tool_name),
+            call_id: "call-namespace".to_string(),
+            payload: ToolPayload::Custom {
+                input: "print('hello')".to_string(),
+            },
+        }
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn mcp_parallel_support_uses_handler_data() -> anyhow::Result<()> {
     let (_, turn) = make_session_and_context().await;
-    let router = ToolRouter::from_turn_context(
-        &turn,
+    let turn = Arc::new(turn);
+    let step_context = StepContext::for_test(Arc::clone(&turn));
+    let router = ToolRouter::from_context(
+        step_context.as_ref(),
         ToolRouterParams {
+            tool_suggest_candidates: None,
             deferred_mcp_tools: None,
             mcp_tools: Some(vec![
                 mcp_tool_info(
@@ -219,10 +260,10 @@ async fn mcp_parallel_support_uses_handler_data() -> anyhow::Result<()> {
                     "query_with_delay",
                 ),
             ]),
-            discoverable_tools: None,
             extension_tool_executors: Vec::new(),
             dynamic_tools: turn.dynamic_tools.as_slice(),
         },
+        &Default::default(),
     );
 
     let call = ToolCall {
@@ -249,15 +290,18 @@ async fn mcp_parallel_support_uses_handler_data() -> anyhow::Result<()> {
 #[tokio::test]
 async fn tools_without_handlers_do_not_support_parallel() -> anyhow::Result<()> {
     let (_, turn) = make_session_and_context().await;
-    let router = ToolRouter::from_turn_context(
-        &turn,
+    let turn = Arc::new(turn);
+    let step_context = StepContext::for_test(Arc::clone(&turn));
+    let router = ToolRouter::from_context(
+        step_context.as_ref(),
         ToolRouterParams {
+            tool_suggest_candidates: None,
             deferred_mcp_tools: None,
             mcp_tools: None,
-            discoverable_tools: None,
             extension_tool_executors: Vec::new(),
             dynamic_tools: turn.dynamic_tools.as_slice(),
         },
+        &Default::default(),
     );
 
     assert!(!router.tool_supports_parallel(&ToolCall {
@@ -274,42 +318,47 @@ async fn tools_without_handlers_do_not_support_parallel() -> anyhow::Result<()> 
 #[tokio::test]
 async fn specs_filter_deferred_dynamic_tools() -> anyhow::Result<()> {
     let (_, turn) = make_session_and_context().await;
+    let turn = Arc::new(turn);
+    let step_context = StepContext::for_test(Arc::clone(&turn));
     let hidden_tool = "hidden_dynamic_tool";
     let visible_tool = "visible_dynamic_tool";
-    let dynamic_tools = vec![
-        DynamicToolSpec {
-            namespace: Some("codex_app".to_string()),
-            name: hidden_tool.to_string(),
-            description: "Hidden until discovered.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": false,
+    let dynamic_tools = vec![DynamicToolSpec::Namespace(DynamicToolNamespaceSpec {
+        name: "codex_app".to_string(),
+        description: "Codex app tools.".to_string(),
+        tools: vec![
+            DynamicToolNamespaceTool::Function(DynamicToolFunctionSpec {
+                name: hidden_tool.to_string(),
+                description: "Hidden until discovered.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false,
+                }),
+                defer_loading: true,
             }),
-            defer_loading: true,
-        },
-        DynamicToolSpec {
-            namespace: Some("codex_app".to_string()),
-            name: visible_tool.to_string(),
-            description: "Visible immediately.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": false,
+            DynamicToolNamespaceTool::Function(DynamicToolFunctionSpec {
+                name: visible_tool.to_string(),
+                description: "Visible immediately.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false,
+                }),
+                defer_loading: false,
             }),
-            defer_loading: false,
-        },
-    ];
+        ],
+    })];
 
-    let router = ToolRouter::from_turn_context(
-        &turn,
+    let router = ToolRouter::from_context(
+        step_context.as_ref(),
         ToolRouterParams {
+            tool_suggest_candidates: None,
             deferred_mcp_tools: None,
             mcp_tools: None,
-            discoverable_tools: None,
             extension_tool_executors: Vec::new(),
             dynamic_tools: &dynamic_tools,
         },
+        &Default::default(),
     );
 
     assert_eq!(
@@ -350,6 +399,8 @@ fn mcp_tool_info(
 async fn extension_tool_executors_are_model_visible_and_dispatchable() -> anyhow::Result<()> {
     let (mut session, turn) = make_session_and_context().await;
     session.services.extensions = extension_tool_test_registry();
+    let turn = Arc::new(turn);
+    let step_context = StepContext::for_test(Arc::clone(&turn));
     let history_item = ResponseItem::Message {
         id: None,
         role: "user".to_string(),
@@ -357,20 +408,24 @@ async fn extension_tool_executors_are_model_visible_and_dispatchable() -> anyhow
             text: "extension history".to_string(),
         }],
         phase: None,
+        internal_chat_message_metadata_passthrough: None,
     };
     session
         .record_conversation_items(&turn, std::slice::from_ref(&history_item))
         .await;
+    let mut expected_history_item = history_item.clone();
+    expected_history_item.set_turn_id_if_missing(&turn.sub_id);
 
-    let router = ToolRouter::from_turn_context(
-        &turn,
+    let router = ToolRouter::from_context(
+        step_context.as_ref(),
         ToolRouterParams {
+            tool_suggest_candidates: None,
             deferred_mcp_tools: None,
             mcp_tools: None,
-            discoverable_tools: None,
             extension_tool_executors: extension_tool_executors(&session),
             dynamic_tools: turn.dynamic_tools.as_slice(),
         },
+        &Default::default(),
     );
 
     assert!(
@@ -391,12 +446,13 @@ async fn extension_tool_executors_are_model_visible_and_dispatchable() -> anyhow
         namespace: Some("extension/".to_string()),
         arguments: json!({ "message": "hello" }).to_string(),
         call_id: "call-extension".to_string(),
+        internal_chat_message_metadata_passthrough: None,
     })?
     .expect("function_call should produce a tool call");
     let result = router
         .dispatch_tool_call_with_code_mode_result(
             Arc::new(session),
-            Arc::new(turn),
+            step_context,
             CancellationToken::new(),
             Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
             call,
@@ -418,7 +474,7 @@ async fn extension_tool_executors_are_model_visible_and_dispatchable() -> anyhow
                 json!({
                     "arguments": { "message": "hello" },
                     "callId": "call-extension",
-                    "conversationHistory": [history_item],
+                    "conversationHistory": [expected_history_item],
                     "ok": true,
                 })
             );

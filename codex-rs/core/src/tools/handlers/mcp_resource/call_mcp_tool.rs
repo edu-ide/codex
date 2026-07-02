@@ -44,6 +44,7 @@ impl CallMcpToolHandler {
         let ToolInvocation {
             session,
             turn,
+            step_context,
             call_id,
             payload,
             ..
@@ -70,7 +71,7 @@ impl CallMcpToolHandler {
         let started = Instant::now();
         let result = handle_mcp_tool_call(
             Arc::clone(&session),
-            &turn,
+            &step_context,
             call_id,
             server.clone(),
             tool.clone(),
@@ -84,7 +85,7 @@ impl CallMcpToolHandler {
             tool_input: result.tool_input,
             wall_time: started.elapsed(),
             original_image_detail_supported: can_request_original_image_detail(&turn.model_info),
-            truncation_policy: turn.truncation_policy,
+            truncation_policy: turn.model_info.truncation_policy.into(),
         }))
     }
 }

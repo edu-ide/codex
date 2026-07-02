@@ -63,7 +63,6 @@
         {
           "enum": [
             "untrusted",
-            "on-failure",
             "on-request",
             "never"
           ],
@@ -279,6 +278,18 @@
       ],
       "type": "string"
     },
+    "InternalChatMessageMetadataPassthrough": {
+      "description": "Internal Responses API passthrough metadata copied into underlying chat messages.\n\nResponses API strongly types this payload. Do not modify it without first getting API approval and making the corresponding Responses API change.",
+      "properties": {
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "LocalShellAction": {
       "oneOf": [
         {
@@ -452,8 +463,17 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "phase": {
               "anyOf": [
@@ -495,6 +515,22 @@
               },
               "type": "array"
             },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "recipient": {
               "type": "string"
             },
@@ -531,6 +567,22 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "summary": {
@@ -571,8 +623,17 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "status": {
               "$ref": "#/definitions/LocalShellStatus"
@@ -605,8 +666,17 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "name": {
               "type": "string"
@@ -650,8 +720,17 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "status": {
               "type": [
@@ -679,6 +758,22 @@
           "properties": {
             "call_id": {
               "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "output": {
               "$ref": "#/definitions/FunctionCallOutputBody"
@@ -708,14 +803,29 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
             },
             "input": {
               "type": "string"
             },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "name": {
               "type": "string"
+            },
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "status": {
               "type": [
@@ -744,6 +854,22 @@
           "properties": {
             "call_id": {
               "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "name": {
               "type": [
@@ -780,6 +906,22 @@
             },
             "execution": {
               "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "status": {
               "type": "string"
@@ -821,8 +963,17 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "status": {
               "type": [
@@ -847,7 +998,20 @@
         {
           "properties": {
             "id": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "result": {
               "type": "string"
@@ -870,7 +1034,6 @@
             }
           },
           "required": [
-            "id",
             "result",
             "status",
             "type"
@@ -882,6 +1045,22 @@
           "properties": {
             "encrypted_content": {
               "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "type": {
               "enum": [
@@ -920,6 +1099,22 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "type": {
@@ -1180,6 +1375,31 @@
         "null"
       ]
     },
+    "excludeTurns": {
+      "description": "When true, return only thread metadata and live-resume state without populating `thread.turns`. This is useful when the client plans to call `thread/turns/list` immediately after resuming.",
+      "type": "boolean"
+    },
+    "history": {
+      "description": "[UNSTABLE] FOR CODEX CLOUD - DO NOT USE. If specified, the thread will be resumed with the provided history instead of loaded from disk.",
+      "items": {
+        "$ref": "#/definitions/ResponseItem"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "initialTurnsPage": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadResumeInitialTurnsPageParams"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "When present, include a `thread/turns/list` page in the resume response so clients can bootstrap recent turns without a second request."
+    },
     "model": {
       "description": "Configuration overrides for the resumed thread, if any.",
       "type": [
@@ -1193,6 +1413,21 @@
         "null"
       ]
     },
+    "path": {
+      "default": null,
+      "description": "[UNSTABLE] Specify the rollout path to resume from. If specified for a non-running thread, the thread_id param will be ignored. If thread_id identifies a running thread, the path must match the active rollout path.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "permissions": {
+      "description": "Named profile id for the resumed thread. Cannot be combined with `sandbox`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "personality": {
       "anyOf": [
         {
@@ -1201,6 +1436,16 @@
         {
           "type": "null"
         }
+      ]
+    },
+    "runtimeWorkspaceRoots": {
+      "description": "Replace the thread's runtime workspace roots. Paths must be absolute.",
+      "items": {
+        "$ref": "#/definitions/AbsolutePathBuf"
+      },
+      "type": [
+        "array",
+        "null"
       ]
     },
     "sandbox": {

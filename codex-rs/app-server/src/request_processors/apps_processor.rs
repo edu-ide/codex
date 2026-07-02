@@ -1,4 +1,5 @@
 use super::*;
+use crate::app_info::app_info_to_api;
 
 pub(crate) struct AppsRequestProcessor {
     auth_manager: Arc<AuthManager>,
@@ -89,6 +90,7 @@ impl AppsRequestProcessor {
         let outgoing = Arc::clone(&self.outgoing);
         let environment_manager = self.thread_manager.environment_manager();
         let mcp_manager = self.thread_manager.mcp_manager();
+        let plugins_manager = self.thread_manager.plugins_manager();
         let shutdown_token = self.shutdown_token.child_token();
         tokio::spawn(async move {
             tokio::select! {
@@ -100,6 +102,7 @@ impl AppsRequestProcessor {
                     config,
                     environment_manager,
                     mcp_manager,
+                    plugins_manager,
                 ) => {}
             }
         });
@@ -117,14 +120,22 @@ impl AppsRequestProcessor {
         config: Config,
         environment_manager: Arc<EnvironmentManager>,
         mcp_manager: Arc<McpManager>,
+        plugins_manager: Arc<PluginsManager>,
     ) {
         let retry_params = params.clone();
         let retry_config = config.clone();
         let retry_environment_manager = Arc::clone(&environment_manager);
         let retry_mcp_manager = Arc::clone(&mcp_manager);
-        let result =
-            Self::apps_list_response(&outgoing, params, config, environment_manager, mcp_manager)
-                .await;
+        let retry_plugins_manager = Arc::clone(&plugins_manager);
+        let result = Self::apps_list_response(
+            &outgoing,
+            params,
+            config,
+            environment_manager,
+            mcp_manager,
+            plugins_manager,
+        )
+        .await;
         let should_retry = result
             .as_ref()
             .is_ok_and(|(_, codex_apps_ready)| !codex_apps_ready);
@@ -141,6 +152,7 @@ impl AppsRequestProcessor {
                 retry_config,
                 retry_environment_manager,
                 retry_mcp_manager,
+                retry_plugins_manager,
             )
             .await
             {
@@ -155,6 +167,7 @@ impl AppsRequestProcessor {
         config: Config,
         environment_manager: Arc<EnvironmentManager>,
         mcp_manager: Arc<McpManager>,
+        plugins_manager: Arc<PluginsManager>,
     ) -> Result<(AppsListResponse, bool), JSONRPCErrorError> {
         let AppsListParams {
             cursor,
@@ -170,9 +183,17 @@ impl AppsRequestProcessor {
             None => 0,
         };
 
+        let loaded_plugins = plugins_manager
+            .plugins_for_config(&config.plugins_config_input())
+            .await;
+        let connector_snapshot =
+            codex_connectors::ConnectorSnapshot::from_plugin_capability_summaries(
+                loaded_plugins.capability_summaries(),
+            );
+        let plugin_apps = connector_snapshot.connector_ids().to_vec();
         let (mut accessible_connectors, mut all_connectors) = tokio::join!(
             connectors::list_cached_accessible_connectors_from_mcp_tools(&config),
-            connectors::list_cached_all_connectors(&config)
+            connectors::list_cached_all_connectors(&config, &plugin_apps)
         );
         let cached_all_connectors = all_connectors.clone();
 
@@ -193,10 +214,15 @@ impl AppsRequestProcessor {
         });
 
         let all_config = config.clone();
+        let all_plugin_apps = plugin_apps.clone();
         tokio::spawn(async move {
-            let result = connectors::list_all_connectors_with_options(&all_config, force_refetch)
-                .await
-                .map_err(|err| format!("failed to list apps: {err}"));
+            let result = connectors::list_all_connectors_with_options(
+                &all_config,
+                force_refetch,
+                &all_plugin_apps,
+            )
+            .await
+            .map_err(|err| format!("failed to list apps: {err}"));
             let _ = tx.send(AppListLoadResult::Directory(result));
         });
 
@@ -375,7 +401,11 @@ fn paginate_apps(
 
     let effective_limit = limit.unwrap_or(total as u32).max(1) as usize;
     let end = start.saturating_add(effective_limit).min(total);
-    let data = connectors[start..end].to_vec();
+    let data = connectors[start..end]
+        .iter()
+        .cloned()
+        .map(app_info_to_api)
+        .collect();
     let next_cursor = if end < total {
         Some(end.to_string())
     } else {
@@ -389,6 +419,7 @@ async fn send_app_list_updated_notification(
     outgoing: &Arc<OutgoingMessageSender>,
     data: Vec<AppInfo>,
 ) {
+    let data = data.into_iter().map(app_info_to_api).collect();
     outgoing
         .send_server_notification(ServerNotification::AppListUpdated(
             AppListUpdatedNotification { data },
