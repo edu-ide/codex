@@ -194,8 +194,13 @@ async fn prepare_startup_tooltip_override_persists_model_availability_nux_count(
         message: "gpt-5.4 is available".to_string(),
     });
 
-    let tooltip =
-        prepare_startup_tooltip_override(&mut config, &presets, /*is_first_run*/ false).await;
+    let tooltip = prepare_startup_tooltip_override(
+        &mut config,
+        &presets,
+        /*is_first_run*/ false,
+        /*is_ilhae_cli*/ false,
+    )
+    .await;
 
     assert_eq!(tooltip.as_deref(), Some("gpt-5.4 is available"));
     assert_eq!(

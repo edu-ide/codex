@@ -891,8 +891,13 @@ impl App {
                 spawn_startup_thread_start(&app_server, config.clone(), app_event_tx.clone());
                 // Count a startup tooltip once the initial chat widget can render it.
                 let startup_tooltip_override =
-                    prepare_startup_tooltip_override(&mut config, &available_models, is_first_run)
-                        .await;
+                    prepare_startup_tooltip_override(
+                        &mut config,
+                        &available_models,
+                        is_first_run,
+                        crate::is_invoked_as_ilhae_cli(),
+                    )
+                    .await;
                 let init = crate::chatwidget::ChatWidgetInit {
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),

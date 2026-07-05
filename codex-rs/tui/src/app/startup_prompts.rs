@@ -233,8 +233,9 @@ pub(super) async fn prepare_startup_tooltip_override(
     config: &mut Config,
     available_models: &[ModelPreset],
     is_first_run: bool,
+    is_ilhae_cli: bool,
 ) -> Option<String> {
-    if is_first_run || !config.show_tooltips {
+    if is_first_run || !config.show_tooltips || is_ilhae_cli {
         return None;
     }
 

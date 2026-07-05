@@ -2071,7 +2071,17 @@ pub(crate) fn is_invoked_as_ilhae_cli() -> bool {
                 .and_then(|name| name.to_str())
                 .map(str::to_owned)
         })
-        .is_some_and(|name| matches!(name.as_str(), "ilhae" | "codex-ilhae" | "codex-ilhae-cli"))
+        .is_some_and(|name| is_ilhae_cli_binary_name(&name))
+}
+
+fn is_ilhae_cli_binary_name(name: &str) -> bool {
+    let name = name
+        .strip_suffix(".exe")
+        .or_else(|| name.strip_suffix(".EXE"))
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    matches!(name.as_str(), "ilhae" | "codex-ilhae" | "codex-ilhae-cli")
+        || name.starts_with("ilhae-")
 }
 
 pub(crate) fn product_title() -> &'static str {
@@ -2290,6 +2300,20 @@ mod tests {
             product_title_for_invocation(/*is_ilhae_cli*/ false),
             "OpenAI Codex"
         );
+    }
+
+    #[test]
+    fn ilhae_binary_name_detection_accepts_windows_and_packaged_names() {
+        for name in [
+            "ilhae",
+            "Ilhae.exe",
+            "codex-ilhae",
+            "codex-ilhae-cli.exe",
+            "ilhae-windows-x64.exe",
+        ] {
+            assert!(is_ilhae_cli_binary_name(name), "{name}");
+        }
+        assert!(!is_ilhae_cli_binary_name("codex.exe"));
     }
 
     #[test]

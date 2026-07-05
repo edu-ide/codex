@@ -1042,8 +1042,13 @@ fn is_invoked_as_ilhae_cli() -> bool {
 
 #[cfg(feature = "ilhae")]
 fn is_ilhae_cli_binary_name(name: &str) -> bool {
-    let name = name.strip_suffix(".exe").unwrap_or(name);
-    matches!(name, "ilhae" | "codex-ilhae" | "codex-ilhae-cli")
+    let name = name
+        .strip_suffix(".exe")
+        .or_else(|| name.strip_suffix(".EXE"))
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    matches!(name.as_str(), "ilhae" | "codex-ilhae" | "codex-ilhae-cli")
+        || name.starts_with("ilhae-")
 }
 
 #[cfg(feature = "ilhae")]
