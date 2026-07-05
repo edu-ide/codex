@@ -1037,7 +1037,13 @@ fn is_invoked_as_ilhae_cli() -> bool {
                 .and_then(|name| name.to_str())
                 .map(str::to_owned)
         })
-        .is_some_and(|name| matches!(name.as_str(), "ilhae" | "codex-ilhae" | "codex-ilhae-cli"))
+        .is_some_and(|name| is_ilhae_cli_binary_name(&name))
+}
+
+#[cfg(feature = "ilhae")]
+fn is_ilhae_cli_binary_name(name: &str) -> bool {
+    let name = name.strip_suffix(".exe").unwrap_or(name);
+    matches!(name, "ilhae" | "codex-ilhae" | "codex-ilhae-cli")
 }
 
 #[cfg(feature = "ilhae")]
@@ -1195,10 +1201,12 @@ fn prepare_ilhae_cli_environment_if_needed() -> anyhow::Result<Option<std::path:
 
 #[cfg(feature = "ilhae")]
 fn apply_ilhae_codex_home_loader_overrides(
-    loader_overrides: &mut codex_config::LoaderOverrides,
-    codex_home: &std::path::Path,
+    _loader_overrides: &mut codex_config::LoaderOverrides,
+    _codex_home: &std::path::Path,
 ) {
-    loader_overrides.managed_config_path = Some(codex_home.join("managed_config.toml"));
+    // Ilhae prepares an isolated CODEX_HOME and writes its generated runtime
+    // config directly to config.toml there. Avoid a managed_config.toml layer
+    // so stale generated state cannot override the active ~/.ilhae profile.
 }
 
 #[cfg(feature = "ilhae")]
@@ -3827,17 +3835,24 @@ args = ["--ctx-size", "131072"]
             std::env::var_os("CODEX_HOME"),
             Some(codex_home.clone().into())
         );
-        let managed = std::fs::read_to_string(codex_home.join("managed_config.toml"))
-            .expect("managed config written");
-        assert!(managed.contains(r#"profile = "qwen-local""#));
+        let managed = std::fs::read_to_string(codex_home.join("config.toml"))
+            .expect("generated config written");
+        assert!(!managed.contains(r#"profile = "qwen-local""#));
         assert!(managed.contains(r#"model = "Qwen3.6-27B-UD-Q4_K_XL""#));
 
         let mut loader_overrides = codex_config::LoaderOverrides::default();
         apply_ilhae_codex_home_loader_overrides(&mut loader_overrides, &codex_home);
-        assert_eq!(
-            loader_overrides.managed_config_path,
-            Some(codex_home.join("managed_config.toml"))
-        );
+        assert_eq!(loader_overrides.managed_config_path, None);
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn ilhae_cli_binary_name_accepts_windows_exe_suffix() {
+        assert!(is_ilhae_cli_binary_name("ilhae"));
+        assert!(is_ilhae_cli_binary_name("ilhae.exe"));
+        assert!(is_ilhae_cli_binary_name("codex-ilhae.exe"));
+        assert!(is_ilhae_cli_binary_name("codex-ilhae-cli.exe"));
+        assert!(!is_ilhae_cli_binary_name("codex.exe"));
     }
 
     #[cfg(feature = "ilhae")]

@@ -1342,6 +1342,10 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
         .and_then(|id| config.profiles.get(id))
         .cloned()
         .unwrap_or_default();
+    let active_profile_provider_id = active_profile_name
+        .as_deref()
+        .unwrap_or("ilhae-active")
+        .to_string();
 
     let mut root = toml::value::Table::new();
 
@@ -1350,17 +1354,16 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
         toml::Value::String("never".to_string()),
     );
     root.insert(
-        "profile".to_string(),
-        toml::Value::String(
-            active_profile_name
-                .clone()
-                .unwrap_or_else(|| "ilhae-active".to_string()),
-        ),
-    );
-    root.insert(
         "sandbox_mode".to_string(),
         toml::Value::String("danger-full-access".to_string()),
     );
+    let active_codex_profile =
+        codex_profile_table_for_ilhae_profile(&active_profile_provider_id, &active_profile);
+    for key in ["model", "model_provider", "model_context_window"] {
+        if let Some(value) = active_codex_profile.get(key).cloned() {
+            root.insert(key.to_string(), value);
+        }
+    }
     if let Some(web_search) = user_web_search_for_managed_config() {
         root.insert("web_search".to_string(), web_search);
     }
@@ -1539,10 +1542,6 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
     for (profile_id, profile) in &config.profiles {
         insert_native_model_provider(&mut model_providers, profile_id, profile);
     }
-    let active_profile_provider_id = active_profile_name
-        .as_deref()
-        .unwrap_or("ilhae-active")
-        .to_string();
     insert_native_model_provider(
         &mut model_providers,
         &active_profile_provider_id,
@@ -1564,10 +1563,7 @@ fn default_ilhae_codex_home_table() -> toml::value::Table {
     }
     profiles.insert(
         "ilhae-active".to_string(),
-        toml::Value::Table(codex_profile_table_for_ilhae_profile(
-            &active_profile_provider_id,
-            &active_profile,
-        )),
+        toml::Value::Table(active_codex_profile),
     );
     root.insert("profiles".to_string(), toml::Value::Table(profiles));
 
@@ -1601,55 +1597,6 @@ fn sanitize_ilhae_codex_home_user_config(codex_home: &Path) -> Result<(), String
     let sanitized = strip_ilhae_codex_home_managed_overrides(&content);
     if sanitized != content {
         std::fs::write(path, sanitized).map_err(|err| err.to_string())?;
-    }
-
-    Ok(())
-}
-
-fn sync_ilhae_codex_home_mcp_servers(
-    codex_home: &Path,
-    managed_root: &toml::value::Table,
-) -> Result<(), String> {
-    let Some(managed_mcp_servers) = managed_root
-        .get("mcp_servers")
-        .and_then(toml::Value::as_table)
-        .filter(|servers| !servers.is_empty())
-    else {
-        return Ok(());
-    };
-
-    let path = codex_home.join("config.toml");
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut root = if content.trim().is_empty() {
-        toml::value::Table::new()
-    } else {
-        content
-            .parse::<toml::Value>()
-            .map_err(|err| err.to_string())?
-            .as_table()
-            .cloned()
-            .ok_or_else(|| "Ilhae codex home config must be a TOML table".to_string())?
-    };
-
-    let mcp_servers = root
-        .entry("mcp_servers".to_string())
-        .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
-    let Some(mcp_servers) = mcp_servers.as_table_mut() else {
-        return Err("Ilhae codex home config mcp_servers must be a TOML table".to_string());
-    };
-
-    let mut changed = false;
-    for (name, server) in managed_mcp_servers {
-        if mcp_servers.get(name) != Some(server) {
-            mcp_servers.insert(name.clone(), server.clone());
-            changed = true;
-        }
-    }
-
-    if changed || content.trim().is_empty() {
-        let rendered =
-            toml::to_string_pretty(&toml::Value::Table(root)).map_err(|err| err.to_string())?;
-        std::fs::write(path, rendered).map_err(|err| err.to_string())?;
     }
 
     Ok(())
@@ -1733,11 +1680,10 @@ pub fn prepare_ilhae_codex_home() -> Result<PathBuf, String> {
     }
 
     let root = default_ilhae_codex_home_table();
-    sync_ilhae_codex_home_mcp_servers(&codex_home, &root)?;
     let rendered =
         toml::to_string_pretty(&toml::Value::Table(root)).map_err(|err| err.to_string())?;
-    std::fs::write(codex_home.join("managed_config.toml"), rendered)
-        .map_err(|err| err.to_string())?;
+    std::fs::write(codex_home.join("config.toml"), rendered).map_err(|err| err.to_string())?;
+    let _ = std::fs::remove_file(codex_home.join("managed_config.toml"));
 
     // SAFETY: ilhae sets CODEX_HOME once during single-threaded CLI startup,
     // before any worker threads or async tasks that could concurrently depend
@@ -1916,19 +1862,24 @@ requires_openai_auth = false
         prepare_ilhae_codex_home().expect("prepare codex home");
 
         let codex_home = tmp.path().join("codex-home");
-        let managed = std::fs::read_to_string(codex_home.join("managed_config.toml"))
-            .expect("read managed config");
-        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let managed =
+            std::fs::read_to_string(codex_home.join("config.toml")).expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
         let root = parsed.as_table().expect("root table");
 
-        assert_eq!(
-            root.get("profile").and_then(toml::Value::as_str),
-            Some("nemotron-local")
-        );
+        assert!(root.get("profile").is_none());
         assert_eq!(
             root.get("mcp_oauth_credentials_store")
                 .and_then(toml::Value::as_str),
             Some("file")
+        );
+        assert_eq!(
+            root.get("model").and_then(toml::Value::as_str),
+            Some("gemma-4-26b")
+        );
+        assert_eq!(
+            root.get("model_provider").and_then(toml::Value::as_str),
+            Some("ilhae-native-nemotron-local")
         );
         let agent = root
             .get("agent")
@@ -2074,9 +2025,9 @@ requires_openai_auth = false
         save_ilhae_toml_config(&config).expect("save config");
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
-            .expect("read managed config");
-        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
         let instructions = parsed
             .get("developer_instructions")
             .and_then(toml::Value::as_str)
@@ -2097,9 +2048,9 @@ requires_openai_auth = false
         save_ilhae_toml_config(&IlhaeTomlConfig::default()).expect("save default config");
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
-            .expect("read managed config");
-        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
         let agent = parsed
             .get("agent")
             .and_then(toml::Value::as_table)
@@ -2184,9 +2135,9 @@ requires_openai_auth = false
         save_ilhae_toml_config(&config).expect("save config");
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
-            .expect("read managed config");
-        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
         let profiles = parsed
             .get("profiles")
             .and_then(toml::Value::as_table)
@@ -2226,6 +2177,41 @@ requires_openai_auth = false
     }
 
     #[test]
+    fn prepare_ilhae_codex_home_projects_external_runtime_into_root_model_config() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let mut config = IlhaeTomlConfig::default();
+        config.profile.active = Some("remote-llama".to_string());
+
+        let mut remote = IlhaeProfileConfig::default();
+        remote.agent.engine_id = Some("ilhae".to_string());
+        remote.agent.command = Some("ilhae".to_string());
+        remote.native_runtime.enabled = false;
+        remote.native_runtime.provider = Some("llama-server".to_string());
+        remote.native_runtime.base_url = "http://tripleyoung.synology.me:8082/v1".to_string();
+        remote.native_runtime.health_url = "http://tripleyoung.synology.me:8082/health".to_string();
+        config.profiles.insert("remote-llama".to_string(), remote);
+
+        save_ilhae_toml_config(&config).expect("save config");
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
+
+        assert_eq!(
+            parsed.get("model").and_then(toml::Value::as_str),
+            Some("ilhae")
+        );
+        assert_eq!(
+            parsed.get("model_provider").and_then(toml::Value::as_str),
+            Some("ilhae-native-remote-llama")
+        );
+    }
+
+    #[test]
     fn prepare_ilhae_codex_home_preserves_sglang_directory_model_names() {
         let tmp = tempdir().expect("tempdir");
         let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
@@ -2247,9 +2233,9 @@ requires_openai_auth = false
         save_ilhae_toml_config(&config).expect("save config");
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
-            .expect("read managed config");
-        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
         let profile = parsed
             .get("profiles")
             .and_then(toml::Value::as_table)
@@ -2397,9 +2383,9 @@ oauth_resource = "https://fortune.ugot.uk/mcp"
 
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
-            .expect("read managed config");
-        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
         let mcp_servers = parsed
             .get("mcp_servers")
             .and_then(toml::Value::as_table)
@@ -2536,9 +2522,9 @@ trust_level = "untrusted"
 
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
-            .expect("read managed config");
-        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
         let projects = parsed
             .get("projects")
             .and_then(toml::Value::as_table)
@@ -2587,9 +2573,9 @@ command = "ilhae"
 
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
-            .expect("read managed config");
-        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
         assert_eq!(
             parsed.get("web_search").and_then(toml::Value::as_str),
             Some("live")
@@ -2635,9 +2621,9 @@ command = "ilhae"
 
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed = std::fs::read_to_string(tmp.path().join("codex-home/managed_config.toml"))
-            .expect("read managed config");
-        let parsed: toml::Value = toml::from_str(&managed).expect("parse managed config");
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
         let features = parsed
             .get("features")
             .and_then(toml::Value::as_table)
