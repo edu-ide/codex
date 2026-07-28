@@ -627,4 +627,106 @@ mod tests {
 
         assert_eq!(serialized.get("intake"), input.get("intake"));
     }
+
+    #[test]
+    fn workflow_spec_preserves_version_revision_during_json_roundtrip() {
+        let input = serde_json::json!({
+            "artifact_type": "WORKFLOW",
+            "id": "WF_invoice.json",
+            "title": "월 청구서",
+            "version": 2,
+            "activated_at": 2000,
+            "coverage": {
+                "total_steps": 1,
+                "automatable": 1,
+                "tools_ready": 1,
+                "tools_to_build": 0
+            },
+            "nodes": [{
+                "id": "total",
+                "label": "부가세 포함 합계",
+                "mcp": "office/formula",
+                "kind": "auto",
+                "status": "ready",
+                "x": 0,
+                "y": 0
+            }],
+            "edges": [],
+            "version_history": [{
+                "version": 1,
+                "activated_at": 0,
+                "reason": "최초 절차",
+                "nodes": [{
+                    "id": "total",
+                    "label": "합계 계산",
+                    "mcp": "office/formula",
+                    "kind": "auto",
+                    "status": "ready",
+                    "x": 0,
+                    "y": 0
+                }],
+                "edges": [],
+                "coverage": {
+                    "total_steps": 1,
+                    "automatable": 1,
+                    "tools_ready": 1,
+                    "tools_to_build": 0
+                }
+            }],
+            "pending_revision": {
+                "revision_id": "revision-2",
+                "workflow_id": "WF_invoice.json",
+                "kind": "rollback",
+                "base_version": 2,
+                "target_version": 3,
+                "reason": "v1 내용으로 되돌리기",
+                "review_quotes": [],
+                "proposed_nodes": [{
+                    "id": "total",
+                    "label": "합계 계산",
+                    "mcp": "office/formula",
+                    "kind": "auto",
+                    "status": "ready",
+                    "x": 0,
+                    "y": 0
+                }],
+                "proposed_edges": [],
+                "proposed_coverage": {
+                    "total_steps": 1,
+                    "automatable": 1,
+                    "tools_ready": 1,
+                    "tools_to_build": 0
+                },
+                "created_at": 3000,
+                "approval_item_id": "approval-2",
+                "approval_content_sha256": "abc123"
+            }
+        });
+
+        let spec: WorkflowSpec =
+            serde_json::from_value(input.clone()).expect("버전이 포함된 spec을 읽어야 한다");
+        let serialized = serde_json::to_value(spec).expect("버전 spec을 다시 직렬화해야 한다");
+
+        assert_eq!(serialized.get("version"), input.get("version"));
+        assert_eq!(serialized.get("activated_at"), input.get("activated_at"));
+        assert_eq!(serialized["version_history"][0]["version"], 1);
+        assert_eq!(
+            serialized["version_history"][0]["nodes"][0]["label"],
+            "합계 계산"
+        );
+        assert_eq!(serialized["pending_revision"]["revision_id"], "revision-2");
+        assert_eq!(
+            serialized["pending_revision"]["workflow_id"],
+            "WF_invoice.json"
+        );
+        assert_eq!(serialized["pending_revision"]["kind"], "rollback");
+        assert_eq!(
+            serialized["pending_revision"]["approval_item_id"],
+            "approval-2"
+        );
+        assert_eq!(
+            serialized["pending_revision"]["approval_content_sha256"],
+            "abc123"
+        );
+    }
 }

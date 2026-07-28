@@ -1555,6 +1555,53 @@ pub struct WorkflowIntake {
     pub variable_candidates: Vec<WorkIntakeVariableCandidate>,
 }
 
+fn default_workflow_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowSpecVersionSnapshot {
+    pub version: u32,
+    #[serde(default)]
+    pub activated_at: i64,
+    pub reason: String,
+    pub nodes: Vec<WorkflowNode>,
+    #[serde(default)]
+    pub edges: Vec<WorkflowEdge>,
+    pub coverage: WorkflowCoverage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowRevisionKind {
+    StepRevision,
+    Rollback,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRevisionProposal {
+    pub revision_id: String,
+    #[serde(default)]
+    pub workflow_id: String,
+    pub kind: WorkflowRevisionKind,
+    pub base_version: u32,
+    pub target_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    pub reason: String,
+    #[serde(default)]
+    pub review_quotes: Vec<String>,
+    pub proposed_nodes: Vec<WorkflowNode>,
+    #[serde(default)]
+    pub proposed_edges: Vec<WorkflowEdge>,
+    pub proposed_coverage: WorkflowCoverage,
+    pub created_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_content_sha256: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowSpec {
     pub artifact_type: String, // "WORKFLOW"
@@ -1562,6 +1609,14 @@ pub struct WorkflowSpec {
     pub title: String,
     #[serde(default)]
     pub industry: Option<String>,
+    #[serde(default = "default_workflow_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub activated_at: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub version_history: Vec<WorkflowSpecVersionSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_revision: Option<WorkflowRevisionProposal>,
     pub coverage: WorkflowCoverage,
     pub nodes: Vec<WorkflowNode>,
     #[serde(default)]
