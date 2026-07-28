@@ -1510,6 +1510,51 @@ pub struct WorkflowEdge {
     pub kind: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkIntakeOrigin {
+    Example,
+    CapturedTurn,
+    FileBrief,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkIntakeVariableKind {
+    Path,
+    Period,
+    Counterparty,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkIntakeVariableCandidate {
+    pub kind: WorkIntakeVariableKind,
+    pub value: String,
+    #[serde(default)]
+    pub confirmed: bool,
+    #[serde(default)]
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowIntake {
+    pub origin: WorkIntakeOrigin,
+    #[serde(default)]
+    pub materials: Vec<String>,
+    #[serde(default)]
+    pub deliverable: String,
+    #[serde(default)]
+    pub deadline: Option<String>,
+    #[serde(default)]
+    pub approvers: Vec<String>,
+    #[serde(default)]
+    pub amount_unit: Option<String>,
+    #[serde(default)]
+    pub completion_criteria: Vec<String>,
+    #[serde(default)]
+    pub variable_candidates: Vec<WorkIntakeVariableCandidate>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowSpec {
     pub artifact_type: String, // "WORKFLOW"
@@ -1521,6 +1566,8 @@ pub struct WorkflowSpec {
     pub nodes: Vec<WorkflowNode>,
     #[serde(default)]
     pub edges: Vec<WorkflowEdge>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intake: Option<WorkflowIntake>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

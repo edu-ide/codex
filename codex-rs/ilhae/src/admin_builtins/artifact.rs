@@ -581,4 +581,50 @@ mod tests {
         assert_eq!(back.nodes.len(), 6);
         assert_eq!(back.edges.len(), 5);
     }
+
+    #[test]
+    fn workflow_spec_preserves_intake_during_json_roundtrip() {
+        let input = serde_json::json!({
+            "artifact_type": "WORKFLOW",
+            "id": "WF_captured_invoice.json",
+            "title": "거래처 청구서 작성",
+            "coverage": {
+                "total_steps": 1,
+                "automatable": 1,
+                "tools_ready": 1,
+                "tools_to_build": 0
+            },
+            "nodes": [{
+                "id": "n1",
+                "label": "청구서 작성",
+                "mcp": "doc-mcp/create_invoice",
+                "kind": "auto",
+                "status": "ready",
+                "x": 300,
+                "y": 128
+            }],
+            "edges": [],
+            "intake": {
+                "origin": "captured_turn",
+                "materials": ["/work/orders.xlsx"],
+                "deliverable": "7월 청구서.docx",
+                "deadline": "2026-07-31",
+                "approvers": ["김회계"],
+                "amount_unit": "원",
+                "completion_criteria": ["합계가 원장과 일치한다"],
+                "variable_candidates": [{
+                    "kind": "counterparty",
+                    "value": "한빛상사",
+                    "confirmed": true,
+                    "source": "대화"
+                }]
+            }
+        });
+
+        let spec: WorkflowSpec =
+            serde_json::from_value(input.clone()).expect("intake가 포함된 spec을 읽어야 한다");
+        let serialized = serde_json::to_value(spec).expect("workflow spec을 다시 직렬화해야 한다");
+
+        assert_eq!(serialized.get("intake"), input.get("intake"));
+    }
 }
