@@ -42,7 +42,7 @@ impl EventHandler for Handler {
                     .await;
             }
             "!help" | "!start" => {
-                let help = "👋 **일해.ai 디스코드 봇**\n\n\
+                let help = "👋 **일해라.ai 디스코드 봇**\n\n\
                     `!yolo` — YOLO 모드 토글\n\
                     `!browser` — 브라우저 사용 토글\n\
                     `!headless` — Headless 모드 토글\n\

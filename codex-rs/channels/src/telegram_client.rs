@@ -246,7 +246,7 @@ async fn handle_command(
 
     match cmd {
         "/start" => {
-            bot.send_message(chat_id, "👋 일해.ai 텔레그램 봇입니다!\n\n메시지를 보내면 에이전트가 답변합니다.\n\n/sessions — 세션 목록\n/schedules — 할일 목록\n/new — 새 세션\n/yolo — YOLO 모드 토글 (자동 권한 승인)\n/browser — 브라우저 토글\n/headless — Headless 모드 토글")
+            bot.send_message(chat_id, "👋 일해라.ai 텔레그램 봇입니다!\n\n메시지를 보내면 에이전트가 답변합니다.\n\n/sessions — 세션 목록\n/schedules — 할일 목록\n/new — 새 세션\n/yolo — YOLO 모드 토글 (자동 권한 승인)\n/browser — 브라우저 토글\n/headless — Headless 모드 토글")
                 .await?;
         }
         "/sessions" => match state.store.list_sessions() {
