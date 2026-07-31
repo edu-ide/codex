@@ -87,17 +87,12 @@ enum_dispatch = "0.3"
 inventory = "0.3"
 async-trait = "0.1"
 
-# Semantic search
-fastembed = "4"
-sqlite-vec = "0.1"
-zerocopy = { version = "0.8", features = ["derive"] }
-
 # Internal
 ilhae-common = { path = "../../../ilhae-common" }
 brain-session-rs = { path = "../../../brain-session-rs" }
-brain-knowledge-rs = { path = "../../../brain-knowledge-rs" }
+brain-knowledge-rs = { path = "../../../brain-knowledge-rs", default-features = false }
 brain-artifact-rs = { path = "../../../brain-artifact-rs" }
-brain-rs = { path = "../../../brain-rs" }
+brain-rs = { path = "../../../brain-rs", default-features = false, features = ["mcp-handler", "api-server"] }
 a2a-rs = { path = "../../../a2a-rs", default-features = false, features = ["client", "server"] }
 a2a-acp-adapter = { path = "../../../a2a-acp-adapter" }
 dsrs = { package = "dspy-rs", path = "../../../DSRs/crates/dspy-rs" }

@@ -21,8 +21,14 @@ pub(crate) fn is_corruption(detail: &str) -> bool {
     codex_state::sqlite_error_detail_is_corruption(detail)
 }
 
+fn is_modified_migration(detail: &str) -> bool {
+    detail.contains("previously applied but has been modified")
+}
+
 pub(crate) fn is_auto_backup_recoverable(startup_error: &LocalStateDbStartupError) -> bool {
-    is_corruption(startup_error.detail()) || sqlite_home_is_blocking_file(startup_error)
+    is_corruption(startup_error.detail())
+        || is_modified_migration(startup_error.detail())
+        || sqlite_home_is_blocking_file(startup_error)
 }
 
 fn sqlite_home_is_blocking_file(startup_error: &LocalStateDbStartupError) -> bool {
@@ -60,7 +66,9 @@ pub(crate) fn confirm_fresh_start_rebuild(
         eprintln!("Backup folder: unavailable");
     }
 
-    if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+    if is_ilhae_managed_codex_home(startup_error.database_path()) {
+        eprintln!("Continuing Ilhae startup with a fresh local database...");
+    } else if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
         eprintln!("Press Enter to continue.");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
@@ -91,6 +99,18 @@ fn print_technical_details(startup_error: &LocalStateDbStartupError) {
 
 fn backup_folder(backups: &[RuntimeDbBackup]) -> Option<&Path> {
     backups.first()?.backup_path.parent()
+}
+
+fn is_ilhae_managed_codex_home(database_path: &Path) -> bool {
+    let Some(codex_home) = database_path.parent() else {
+        return false;
+    };
+    codex_home.file_name().and_then(|name| name.to_str()) == Some("codex-home")
+        && codex_home
+            .parent()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            == Some(".ilhae")
 }
 
 #[cfg(test)]
@@ -142,6 +162,26 @@ mod tests {
         assert!(tokio::fs::metadata(sqlite_home.as_path()).await?.is_dir());
         assert!(tokio::fs::try_exists(backups[0].backup_path.as_path()).await?);
         Ok(())
+    }
+
+    #[test]
+    fn modified_migration_is_auto_backup_recoverable() {
+        let startup_error = LocalStateDbStartupError::new(
+            PathBuf::from("/tmp/logs_2.sqlite"),
+            "failed to migrate log DB at /tmp/logs_2.sqlite: migration 1 was previously applied but has been modified".to_string(),
+        );
+
+        assert!(is_auto_backup_recoverable(&startup_error));
+    }
+
+    #[test]
+    fn detects_ilhae_managed_codex_home() {
+        assert!(is_ilhae_managed_codex_home(Path::new(
+            "/tmp/.ilhae/codex-home/logs_2.sqlite"
+        )));
+        assert!(!is_ilhae_managed_codex_home(Path::new(
+            "/tmp/.codex/logs_2.sqlite"
+        )));
     }
 
     #[test]
