@@ -2101,6 +2101,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs 5.0.1",
+ "encoding_rs",
  "fastembed",
  "ilhae-common",
  "ndarray",
