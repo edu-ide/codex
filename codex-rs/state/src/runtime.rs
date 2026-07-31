@@ -18,6 +18,7 @@ use crate::ThreadMetadataBuilder;
 use crate::ThreadsPage;
 use crate::apply_rollout_item;
 use crate::migrations::repair_legacy_recency_migration_version;
+use crate::migrations::repair_runtime_migration_checksum_drift;
 use crate::migrations::runtime_goals_migrator;
 use crate::migrations::runtime_logs_migrator;
 use crate::migrations::runtime_memories_migrator;
@@ -430,6 +431,7 @@ async fn open_sqlite(
     let migrate_result = async {
         if matches!(spec.kind, DbKind::State) {
             repair_legacy_recency_migration_version(&pool, migrator).await?;
+            repair_runtime_migration_checksum_drift(&pool, migrator).await?;
         }
         migrator.run(&pool).await.map_err(anyhow::Error::from)
     }

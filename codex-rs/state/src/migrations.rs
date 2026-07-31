@@ -83,6 +83,43 @@ WHERE version = ?
     Ok(())
 }
 
+pub(crate) async fn repair_runtime_migration_checksum_drift(
+    pool: &SqlitePool,
+    migrator: &Migrator,
+) -> anyhow::Result<()> {
+    let migrations_table_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_optional(pool)
+    .await?
+    .is_some();
+    if !migrations_table_exists {
+        return Ok(());
+    }
+
+    for migration in migrator.migrations.iter() {
+        sqlx::query(
+            r#"
+UPDATE _sqlx_migrations
+SET description = ?, checksum = ?
+WHERE version = ?
+  AND success = TRUE
+  AND description = ?
+  AND checksum != ?
+            "#,
+        )
+        .bind(migration.description.as_ref())
+        .bind(migration.checksum.as_ref())
+        .bind(migration.version)
+        .bind(migration.description.as_ref())
+        .bind(migration.checksum.as_ref())
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "migrations_tests.rs"]
 mod tests;
