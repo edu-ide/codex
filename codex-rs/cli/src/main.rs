@@ -1240,6 +1240,7 @@ fn ilhae_profile_provider_id(profile: &codex_ilhae::config::IlhaeProfileConfig) 
 #[cfg(feature = "ilhae")]
 fn native_runtime_oss_provider(profile_id: Option<&str>) -> Option<String> {
     codex_ilhae::config::get_native_runtime_config(profile_id)
+        .filter(|(_, runtime)| runtime.enabled || !runtime.base_url.trim().is_empty())
         .map(|(_, runtime)| native_runtime_provider_name(&runtime))
 }
 
@@ -3788,6 +3789,72 @@ mod tests {
     fn native_runtime_provider_name_defaults_to_llama_server() {
         let runtime = codex_ilhae::config::IlhaeProfileNativeRuntimeConfig::default();
         assert_eq!(native_runtime_provider_name(&runtime), "llama-server");
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn native_runtime_oss_provider_ignores_disabled_empty_profile_but_accepts_remote_base_url() {
+        {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let config_dir = tmp.path().join(".ilhae");
+            std::fs::create_dir_all(&config_dir).expect("create config dir");
+            std::fs::write(
+                config_dir.join("config.toml"),
+                r#"
+[profile]
+active = "chatgpt"
+
+[profiles.chatgpt.agent]
+engine = "openai"
+command = "codex"
+
+[profiles.chatgpt.native_runtime]
+enabled = false
+"#,
+            )
+            .expect("write ilhae config");
+
+            let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", &config_dir);
+            let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data"));
+
+            assert_eq!(native_runtime_oss_provider(None), None);
+            assert_eq!(native_runtime_oss_provider(Some("chatgpt")), None);
+        }
+
+        {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let config_dir = tmp.path().join(".ilhae");
+            std::fs::create_dir_all(&config_dir).expect("create config dir");
+            std::fs::write(
+                config_dir.join("config.toml"),
+                r#"
+[profile]
+active = "remote-qwen"
+
+[profiles.remote-qwen.agent]
+engine = "qwen"
+command = "ilhae"
+
+[profiles.remote-qwen.native_runtime]
+enabled = false
+provider = "sglang"
+base_url = "http://127.0.0.1:8081/v1"
+"#,
+            )
+            .expect("write ilhae config");
+
+            let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", &config_dir);
+            let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data"));
+
+            assert_eq!(
+                native_runtime_oss_provider(None),
+                Some("sglang".to_string())
+            );
+            assert_eq!(
+                native_runtime_oss_provider(Some("remote-qwen")),
+                Some("sglang".to_string())
+            );
+        }
     }
 
     #[cfg(feature = "ilhae")]
