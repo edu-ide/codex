@@ -322,6 +322,7 @@ async fn start_in_process_client(
             capabilities: None,
         },
         channel_capacity: in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        runtime_hooks: codex_app_server::AppServerRuntimeHooks::default(),
     })
     .await
 }
