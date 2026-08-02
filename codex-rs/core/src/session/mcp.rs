@@ -396,37 +396,35 @@ impl Session {
             return;
         };
 
+        if let Err(err) = self
+            .apply_mcp_server_refresh(turn_context, refresh_config, elicitation_reviewer)
+            .await
+        {
+            warn!("failed to apply MCP server refresh: {err}");
+        }
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "MCP runtime refresh and publication must remain serialized"
+    )]
+    pub(crate) async fn apply_mcp_server_refresh(
+        &self,
+        turn_context: &TurnContext,
+        refresh_config: McpServerRefreshConfig,
+        elicitation_reviewer: Option<ElicitationReviewerHandle>,
+    ) -> anyhow::Result<()> {
         let McpServerRefreshConfig {
             mcp_servers,
             mcp_oauth_credentials_store_mode,
             auth_keyring_backend_kind,
         } = refresh_config;
 
-        let mcp_servers =
-            match serde_json::from_value::<HashMap<String, McpServerConfig>>(mcp_servers) {
-                Ok(servers) => servers,
-                Err(err) => {
-                    warn!("failed to parse MCP server refresh config: {err}");
-                    return;
-                }
-            };
-        let store_mode = match serde_json::from_value::<OAuthCredentialsStoreMode>(
-            mcp_oauth_credentials_store_mode,
-        ) {
-            Ok(mode) => mode,
-            Err(err) => {
-                warn!("failed to parse MCP OAuth refresh config: {err}");
-                return;
-            }
-        };
+        let mcp_servers = serde_json::from_value::<HashMap<String, McpServerConfig>>(mcp_servers)?;
+        let store_mode =
+            serde_json::from_value::<OAuthCredentialsStoreMode>(mcp_oauth_credentials_store_mode)?;
         let keyring_backend_kind =
-            match serde_json::from_value::<AuthKeyringBackendKind>(auth_keyring_backend_kind) {
-                Ok(kind) => kind,
-                Err(err) => {
-                    warn!("failed to parse MCP auth keyring backend refresh config: {err}");
-                    return;
-                }
-            };
+            serde_json::from_value::<AuthKeyringBackendKind>(auth_keyring_backend_kind)?;
 
         let mut refresh_config = self.get_config().await.as_ref().clone();
         refresh_config.mcp_oauth_credentials_store_mode = store_mode;
@@ -434,13 +432,10 @@ impl Session {
             AuthKeyringBackendKind::Direct => false,
             AuthKeyringBackendKind::Secrets => true,
         };
-        if let Err(err) = refresh_config
+        refresh_config
             .features
             .set_enabled(Feature::SecretAuthStorage, secret_auth_storage_enabled)
-        {
-            warn!("failed to apply MCP auth keyring backend refresh config: {err}");
-            return;
-        }
+            .map_err(anyhow::Error::msg)?;
 
         let _guard = self.services.mcp_projection_lock.lock().await;
         let available_environment_ids = self
@@ -469,6 +464,7 @@ impl Session {
             elicitation_reviewer,
         )
         .await;
+        Ok(())
     }
 
     pub(crate) async fn set_openai_form_elicitation_support(

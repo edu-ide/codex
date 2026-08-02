@@ -3,12 +3,11 @@ use codex_core::CodexThread;
 use codex_core::ThreadManager;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::McpServerRefreshConfig;
-use codex_protocol::protocol::Op;
 use std::io;
 use std::sync::Arc;
 use tracing::warn;
 
-pub(crate) async fn queue_strict_refresh(
+pub(crate) async fn refresh_all_strict(
     thread_manager: &Arc<ThreadManager>,
     config_manager: &ConfigManager,
 ) -> io::Result<()> {
@@ -25,12 +24,12 @@ pub(crate) async fn queue_strict_refresh(
         refreshes.push((thread_id, thread, config));
     }
     for (thread_id, thread, config) in refreshes {
-        queue_refresh(thread_id, thread, config).await?;
+        refresh_thread(thread_id, thread, config).await?;
     }
     Ok(())
 }
 
-pub(crate) async fn queue_best_effort_refresh(
+pub(crate) async fn refresh_all_best_effort(
     thread_manager: &Arc<ThreadManager>,
     config_manager: &ConfigManager,
 ) {
@@ -49,7 +48,7 @@ pub(crate) async fn queue_best_effort_refresh(
                 continue;
             }
         };
-        if let Err(err) = queue_refresh(thread_id, thread, config).await {
+        if let Err(err) = refresh_thread(thread_id, thread, config).await {
             warn!("{err}");
         }
     }
@@ -76,20 +75,16 @@ async fn build_refresh_config(
     })
 }
 
-async fn queue_refresh(
+async fn refresh_thread(
     thread_id: ThreadId,
     thread: Arc<CodexThread>,
     config: McpServerRefreshConfig,
 ) -> io::Result<()> {
-    thread
-        .submit(Op::RefreshMcpServers { config })
-        .await
-        .map(|_| ())
-        .map_err(|err| {
-            io::Error::other(format!(
-                "failed to queue MCP refresh for thread {thread_id}: {err}"
-            ))
-        })
+    thread.refresh_mcp_servers(config).await.map_err(|err| {
+        io::Error::other(format!(
+            "failed to refresh MCP runtime for thread {thread_id}: {err}"
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -126,7 +121,7 @@ mod tests {
     async fn strict_refresh_reports_thread_planning_failures() -> anyhow::Result<()> {
         let (_temp_dir, thread_manager, config_manager, _loader) = refresh_test_state().await?;
 
-        let err = queue_strict_refresh(&thread_manager, &config_manager)
+        let err = refresh_all_strict(&thread_manager, &config_manager)
             .await
             .expect_err("strict refresh should fail");
 
@@ -136,12 +131,39 @@ mod tests {
 
     #[tokio::test]
     async fn best_effort_refresh_attempts_every_loaded_thread() -> anyhow::Result<()> {
-        let (_temp_dir, thread_manager, config_manager, loader) = refresh_test_state().await?;
+        let (temp_dir, thread_manager, config_manager, loader) = refresh_test_state().await?;
+        std::fs::write(
+            temp_dir.path().join(codex_config::CONFIG_TOML_FILE),
+            r#"
+[features]
+secret_auth_storage = false
 
-        queue_best_effort_refresh(&thread_manager, &config_manager).await;
+[mcp_servers.refreshed]
+url = "https://refreshed.example/mcp"
+enabled = false
+"#,
+        )?;
+
+        refresh_all_best_effort(&thread_manager, &config_manager).await;
 
         assert_eq!(loader.good_loads.load(Ordering::Relaxed), 1);
         assert_eq!(loader.bad_loads.load(Ordering::Relaxed), 1);
+        let mut good_thread = None;
+        for thread_id in thread_manager.list_thread_ids().await {
+            let thread = thread_manager.get_thread(thread_id).await?;
+            if thread.config().await.cwd.ends_with("good") {
+                good_thread = Some(thread);
+                break;
+            }
+        }
+        let runtime = good_thread
+            .expect("good test thread should exist")
+            .current_mcp_runtime()
+            .await;
+        assert!(
+            codex_mcp::configured_mcp_servers(runtime.config()).contains_key("refreshed"),
+            "refresh response must publish the new runtime instead of deferring it to a turn"
+        );
         Ok(())
     }
 

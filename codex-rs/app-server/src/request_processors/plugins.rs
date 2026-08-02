@@ -493,7 +493,7 @@ impl PluginRequestProcessor {
             if thread_manager.list_thread_ids().await.is_empty() {
                 return;
             }
-            crate::mcp_refresh::queue_best_effort_refresh(&thread_manager, &config_manager).await;
+            crate::mcp_refresh::refresh_all_best_effort(&thread_manager, &config_manager).await;
         });
     }
 

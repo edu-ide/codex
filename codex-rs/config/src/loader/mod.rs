@@ -1203,6 +1203,7 @@ async fn load_project_layers(
     let codex_home_abs = AbsolutePathBuf::from_absolute_path(codex_home)?;
     let codex_home_normalized =
         normalize_path(codex_home_abs.as_path()).unwrap_or_else(|_| codex_home_abs.to_path_buf());
+    let platform_home = dirs::home_dir();
     let mut dirs = cwd
         .ancestors()
         .scan(false, |done, a| {
@@ -1237,7 +1238,13 @@ async fn load_project_layers(
         let hooks_config_folder_override = trust_context.root_checkout_hooks_folder_for_dir(&dir);
         let dot_codex_normalized =
             normalize_path(dot_codex_abs.as_path()).unwrap_or_else(|_| dot_codex_abs.to_path_buf());
-        if dot_codex_abs == codex_home_abs || dot_codex_normalized == codex_home_normalized {
+        if is_user_config_directory(
+            dot_codex_abs.as_path(),
+            &dot_codex_normalized,
+            codex_home_abs.as_path(),
+            &codex_home_normalized,
+            platform_home.as_deref(),
+        ) {
             continue;
         }
         let config_file = dot_codex_abs.join(CONFIG_TOML_FILE);
@@ -1331,6 +1338,30 @@ async fn load_project_layers(
         layers,
         startup_warnings,
     })
+}
+
+/// A global user config directory must never be reinterpreted as a
+/// project-local config layer merely because a thread starts in the user's
+/// home directory. This matters especially when an application uses an
+/// isolated `CODEX_HOME`: loading `~/.codex/config.toml` as project config
+/// would otherwise combine two unrelated user profiles.
+fn is_user_config_directory(
+    candidate: &Path,
+    candidate_normalized: &Path,
+    active_codex_home: &Path,
+    active_codex_home_normalized: &Path,
+    platform_home: Option<&Path>,
+) -> bool {
+    if candidate == active_codex_home || candidate_normalized == active_codex_home_normalized {
+        return true;
+    }
+
+    let Some(default_codex_home) = platform_home.map(|home| home.join(".codex")) else {
+        return false;
+    };
+    let default_codex_home_normalized =
+        normalize_path(&default_codex_home).unwrap_or_else(|_| default_codex_home.clone());
+    candidate == default_codex_home || candidate_normalized == default_codex_home_normalized
 }
 
 /// For linked worktrees, preserve ordinary worktree-local project config while

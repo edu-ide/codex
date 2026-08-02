@@ -3375,6 +3375,7 @@ dependencies = [
  "codex-utils-path",
  "codex-utils-path-uri",
  "core-foundation 0.9.4",
+ "dirs 6.0.0",
  "dns-lookup",
  "dunce",
  "futures",

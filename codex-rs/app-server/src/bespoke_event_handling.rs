@@ -3559,6 +3559,7 @@ mod tests {
         .build("mock_provider");
         state_db.upsert_thread(&thread_metadata).await?;
         let goal = state_db
+            .thread_goals()
             .replace_thread_goal(
                 conversation_id,
                 "keep polishing",
@@ -3567,6 +3568,7 @@ mod tests {
             )
             .await?;
         state_db
+            .thread_goals()
             .record_thread_goal_loop_event(
                 conversation_id,
                 codex_state::ThreadGoalLoopEvent {

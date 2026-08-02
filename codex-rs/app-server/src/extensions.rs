@@ -242,6 +242,7 @@ mod tests {
                     objective: "wire extension events".to_string(),
                     status: ThreadGoalStatus::Active,
                     token_budget: Some(123),
+                    superloop_enabled: false,
                     tokens_used: 45,
                     time_used_seconds: 6,
                     created_at: 7,

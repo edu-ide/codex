@@ -254,3 +254,26 @@ model = "gpt-dev"
     .await
     .expect("profile-v2 should allow unrelated legacy profiles in base user config");
 }
+
+#[test]
+fn isolated_codex_home_does_not_reinterpret_default_user_config_as_project_config() {
+    let tmp = tempdir().expect("tempdir");
+    let platform_home = tmp.path().join("user");
+    let default_codex_home = platform_home.join(".codex");
+    let isolated_codex_home = platform_home.join(".ilhae/codex-home");
+
+    assert!(is_user_config_directory(
+        &default_codex_home,
+        &default_codex_home,
+        &isolated_codex_home,
+        &isolated_codex_home,
+        Some(&platform_home),
+    ));
+    assert!(!is_user_config_directory(
+        &platform_home.join("project/.codex"),
+        &platform_home.join("project/.codex"),
+        &isolated_codex_home,
+        &isolated_codex_home,
+        Some(&platform_home),
+    ));
+}

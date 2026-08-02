@@ -22,6 +22,7 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AdditionalContextEntry;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
+use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RolloutItem;
@@ -610,6 +611,24 @@ impl CodexThread {
             .await
             .mcp
             .clone()
+    }
+
+    /// Replaces this thread's published MCP runtime and waits for the new
+    /// connection manager to be available. Already captured turn snapshots
+    /// continue using their previous runtime.
+    pub async fn refresh_mcp_servers(
+        &self,
+        refresh_config: McpServerRefreshConfig,
+    ) -> anyhow::Result<()> {
+        let turn_context = self.codex.session.new_default_turn().await;
+        self.codex
+            .session
+            .apply_mcp_server_refresh(
+                turn_context.as_ref(),
+                refresh_config,
+                Some(self.codex.session.mcp_elicitation_reviewer()),
+            )
+            .await
     }
 
     pub fn multi_agent_version(&self) -> Option<MultiAgentVersion> {
