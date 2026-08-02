@@ -614,20 +614,54 @@ impl McpRequestProcessor {
     ) -> Result<(), JSONRPCErrorError> {
         let outgoing = Arc::clone(&self.outgoing);
         let thread_id = params.thread_id.clone();
-        let (_, thread) = self.load_thread(&thread_id).await?;
+        let (parsed_thread_id, thread) = self.load_thread(&thread_id).await?;
+        let config_manager = self.config_manager.clone();
         let meta = with_mcp_tool_call_thread_id_meta(params.meta, &thread_id);
         let request_id = request_id.clone();
 
         tokio::spawn(async move {
-            let result = thread
-                .call_mcp_tool(&params.server, &params.tool, params.arguments, meta)
-                .await
-                .map(McpServerToolCallResponse::from)
-                .map_err(|error| internal_error(format!("{error:#}")));
+            let server = params.server;
+            let tool = params.tool;
+            let arguments = params.arguments;
+            let first_result = thread
+                .call_mcp_tool(&server, &tool, arguments.clone(), meta.clone())
+                .await;
+            let result = match first_result {
+                Err(error) if is_recoverable_mcp_client_acquisition_error(&error) => {
+                    tracing::warn!(
+                        %parsed_thread_id,
+                        %server,
+                        %tool,
+                        error = %format_args!("{error:#}"),
+                        "refreshing the thread MCP runtime after a pre-call client failure"
+                    );
+                    match crate::mcp_refresh::refresh_one_strict(
+                        parsed_thread_id,
+                        Arc::clone(&thread),
+                        &config_manager,
+                    )
+                    .await
+                    {
+                        Ok(()) => thread.call_mcp_tool(&server, &tool, arguments, meta).await,
+                        Err(refresh_error) => Err(error.context(format!(
+                            "failed to refresh MCP runtime before retry: {refresh_error}"
+                        ))),
+                    }
+                }
+                result => result,
+            }
+            .map(McpServerToolCallResponse::from)
+            .map_err(|error| internal_error(format!("{error:#}")));
             outgoing.send_result(request_id, result).await;
         });
         Ok(())
     }
+}
+
+fn is_recoverable_mcp_client_acquisition_error(error: &anyhow::Error) -> bool {
+    let chain = format!("{error:#}");
+    chain.contains("failed to get client")
+        && (chain.contains("unknown MCP server") || chain.contains("MCP startup failed"))
 }
 
 fn now_unix_timestamp_ms() -> i64 {
@@ -692,5 +726,24 @@ fn with_mcp_tool_call_thread_id_meta(
             Some(serde_json::Value::Object(map))
         }
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_recoverable_mcp_client_acquisition_error;
+    use anyhow::anyhow;
+
+    #[test]
+    fn retries_only_failures_that_happen_before_a_tool_is_sent() {
+        let unknown = anyhow!("unknown MCP server 'office'").context("failed to get client");
+        let startup =
+            anyhow!("MCP startup failed: connection refused").context("failed to get client");
+        let tool_failure = anyhow!("connection closed after request")
+            .context("tool call failed for `office/excel_upload_office_file`");
+
+        assert!(is_recoverable_mcp_client_acquisition_error(&unknown));
+        assert!(is_recoverable_mcp_client_acquisition_error(&startup));
+        assert!(!is_recoverable_mcp_client_acquisition_error(&tool_failure));
     }
 }

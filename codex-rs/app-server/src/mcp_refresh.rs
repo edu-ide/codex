@@ -54,6 +54,15 @@ pub(crate) async fn refresh_all_best_effort(
     }
 }
 
+pub(crate) async fn refresh_one_strict(
+    thread_id: ThreadId,
+    thread: Arc<CodexThread>,
+    config_manager: &ConfigManager,
+) -> io::Result<()> {
+    let config = build_refresh_config(thread.as_ref(), config_manager).await?;
+    refresh_thread(thread_id, thread, config).await
+}
+
 async fn build_refresh_config(
     thread: &CodexThread,
     config_manager: &ConfigManager,
