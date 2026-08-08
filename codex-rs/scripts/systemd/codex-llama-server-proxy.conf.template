@@ -50,17 +50,14 @@ http {
             proxy_set_header X-Real-IP $remote_addr;
             set $llama_proxy_default_query_args "${LLAMA_PROXY_DEFAULT_QUERY_ARGS}";
             set $llama_proxy_merged_query "$args";
-
             if ($llama_proxy_default_query_args = "") {
                 set $llama_proxy_merged_query "$args";
             }
             if ($llama_proxy_default_query_args != "") {
-                if ($args = "") {
-                    set $llama_proxy_merged_query $llama_proxy_default_query_args;
-                }
-                if ($args != "") {
-                    set $llama_proxy_merged_query "$args&$llama_proxy_default_query_args";
-                }
+                set $llama_proxy_merged_query "$args&$llama_proxy_default_query_args";
+            }
+            if ($args = "") {
+                set $llama_proxy_merged_query "$llama_proxy_default_query_args";
             }
 
             set $llama_proxy_uri "$uri";
