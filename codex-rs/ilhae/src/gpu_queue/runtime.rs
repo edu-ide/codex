@@ -26,10 +26,7 @@ impl NativeLlmRuntime {
             return LlmRuntimeState::Stopped;
         }
 
-        let health_url = crate::config::native_runtime_effective_health_url(&config);
-        if crate::startup_main::native_runtime_healthcheck(&health_url).await
-            || !crate::startup_main::find_native_runtime_pids(&config).is_empty()
-        {
+        if crate::startup_main::native_runtime_readiness(&config).await {
             LlmRuntimeState::Running
         } else {
             LlmRuntimeState::Stopped

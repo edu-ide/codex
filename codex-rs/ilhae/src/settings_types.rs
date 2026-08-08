@@ -654,7 +654,7 @@ impl Default for BrowserSettings {
             persistent: true,
             server_url: String::new(),
             browser_type: "auto".to_string(),
-            cdp_port: 19222,
+            cdp_port: 19223,
         }
     }
 }

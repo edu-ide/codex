@@ -1686,7 +1686,39 @@ enum LocalServerCommand {
     /// Stop the local model server.
     Stop,
     /// Get the status of the local model server.
-    Status,
+    Status {
+        /// Print the strict machine-readable status contract.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[cfg(feature = "ilhae")]
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalServerStatusOutput {
+    schema_version: u8,
+    profile_id: String,
+    model_id: String,
+    health_url: String,
+    base_url: String,
+    enabled: bool,
+    ready: bool,
+}
+
+#[cfg(feature = "ilhae")]
+fn local_server_status_output(
+    snapshot: codex_ilhae::startup_main::NativeRuntimeStatusSnapshot,
+) -> LocalServerStatusOutput {
+    LocalServerStatusOutput {
+        schema_version: 1,
+        profile_id: snapshot.profile,
+        model_id: snapshot.model_path,
+        health_url: snapshot.health_url,
+        base_url: snapshot.base_url,
+        enabled: snapshot.enabled,
+        ready: snapshot.healthy,
+    }
 }
 
 #[cfg(feature = "ilhae")]
@@ -2435,23 +2467,22 @@ async fn cli_main(
                 codex_ilhae::stop_native_runtime_for_cli(interactive.config_profile_v2.as_deref())
                     .await?;
             }
-            LocalServerCommand::Status => {
-                if let Some((profile_id, config)) = codex_ilhae::config::get_native_runtime_config(
+            LocalServerCommand::Status { json } => {
+                let snapshot = codex_ilhae::startup_main::native_runtime_status_snapshot(
                     interactive.config_profile_v2.as_deref(),
-                ) {
-                    let health_url =
-                        codex_ilhae::config::native_runtime_effective_health_url(&config);
-                    let healthy =
-                        codex_ilhae::startup_main::native_runtime_healthcheck(&health_url).await;
-                    let base_url = codex_ilhae::config::native_runtime_effective_base_url(&config);
-                    println!("Profile: {profile_id}");
-                    println!("Enabled: {}", config.enabled);
-                    println!("Health URL: {}", health_url);
-                    println!("Base URL: {}", base_url);
-                    println!("Configured URL: {:?}", config.url);
-                    println!("Status: {}", if healthy { "HEALTHY" } else { "DOWN" });
+                )
+                .await
+                .ok_or_else(|| anyhow::anyhow!("No active native runtime profile found."))?;
+                let status = local_server_status_output(snapshot);
+                if json {
+                    println!("{}", serde_json::to_string(&status)?);
                 } else {
-                    println!("No active native runtime profile found.");
+                    println!("Profile: {}", status.profile_id);
+                    println!("Model: {}", status.model_id);
+                    println!("Enabled: {}", status.enabled);
+                    println!("Health URL: {}", status.health_url);
+                    println!("Base URL: {}", status.base_url);
+                    println!("Status: {}", if status.ready { "READY" } else { "DOWN" });
                 }
             }
         },
@@ -4011,6 +4042,42 @@ mod tests {
         let auth = CodexAuth::from_api_key("sk-test");
 
         assert!(is_supported_exec_server_remote_auth(&auth));
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn local_server_status_json_flag_parses() {
+        let cli = MultitoolCli::try_parse_from(["codex", "local-server", "status", "--json"])
+            .expect("local-server status --json should parse");
+        let Some(Subcommand::LocalServer(LocalServerCommand::Status { json })) = cli.subcommand
+        else {
+            panic!("expected local-server status subcommand");
+        };
+        assert!(json);
+    }
+
+    #[cfg(feature = "ilhae")]
+    #[test]
+    fn local_server_status_json_contract_is_strict_and_camel_case() {
+        let value = serde_json::to_value(LocalServerStatusOutput {
+            schema_version: 1,
+            profile_id: "qwen3.6-27b-fable711".to_string(),
+            model_id: "/models/Fable-Fusion.gguf".to_string(),
+            health_url: "http://127.0.0.1:8081/health".to_string(),
+            base_url: "http://127.0.0.1:8081/v1".to_string(),
+            enabled: true,
+            ready: true,
+        })
+        .expect("serialize local-server status");
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["profileId"], "qwen3.6-27b-fable711");
+        assert_eq!(value["modelId"], "/models/Fable-Fusion.gguf");
+        assert_eq!(value["healthUrl"], "http://127.0.0.1:8081/health");
+        assert_eq!(value["baseUrl"], "http://127.0.0.1:8081/v1");
+        assert_eq!(value["enabled"], true);
+        assert_eq!(value["ready"], true);
+        assert!(value.get("schema_version").is_none());
+        assert!(value.get("profile_id").is_none());
     }
 
     struct EnvVarGuard {

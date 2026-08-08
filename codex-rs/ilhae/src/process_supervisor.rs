@@ -1209,8 +1209,7 @@ impl ProcessSupervisor {
 
             let is_alive = if key == "local-server" {
                 if let Some((_, config)) = crate::config::get_native_runtime_config(None) {
-                    let health_url = crate::config::native_runtime_effective_health_url(&config);
-                    crate::startup_main::native_runtime_healthcheck(&health_url).await
+                    crate::startup_main::native_runtime_readiness(&config).await
                 } else {
                     false
                 }
@@ -1311,7 +1310,9 @@ impl ProcessSupervisor {
             }
 
             // Check if process is still running but just hasn't opened port yet
-            if let Some(pid) = proc.pid {
+            if key != "local-server"
+                && let Some(pid) = proc.pid
+            {
                 let is_running = std::process::Command::new("kill")
                     .args(["-0", &pid.to_string()])
                     .stdout(std::process::Stdio::null())
@@ -1359,18 +1360,20 @@ impl ProcessSupervisor {
             );
 
             if key == "local-server" {
-                if let Some((_, config)) = crate::config::get_native_runtime_config(None) {
-                    match crate::startup_main::spawn_native_runtime_server(&config) {
-                        Ok(_) => {
-                            info!("[Supervisor] local-server spawned successfully");
+                if let Some((profile_id, _)) = crate::config::get_native_runtime_config(None) {
+                    match crate::startup_main::ensure_native_runtime_for_cli(Some(&profile_id))
+                        .await
+                    {
+                        Ok(()) => {
+                            info!("[Supervisor] local-server reached exact-model readiness");
                             proc.restart_count += 1;
-                            let pids = crate::startup_main::find_native_runtime_pids(&config);
-                            if let Some(&pid) = pids.first() {
-                                proc.pid = Some(pid);
-                            }
+                            proc.pid = None;
                         }
                         Err(e) => {
-                            warn!("[Supervisor] Failed to restart local-server: {}", e);
+                            warn!(
+                                "[Supervisor] Failed to ensure exact local-server readiness: {}",
+                                e
+                            );
                             proc.restart_count += 1;
                         }
                     }

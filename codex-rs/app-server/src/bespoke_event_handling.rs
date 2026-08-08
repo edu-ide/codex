@@ -2570,7 +2570,9 @@ mod tests {
             thread_id: conversation_id,
             thread: conversation,
             ..
-        } = thread_manager.start_thread(config).await?;
+        } = thread_manager
+            .start_thread(codex_core::StartThreadOptions::new(config))
+            .await?;
         let thread_state = new_thread_state();
         let thread_watch_manager = ThreadWatchManager::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -2596,6 +2598,7 @@ mod tests {
                     query: Some("사과".to_string()),
                     queries: None,
                 },
+                results: None,
             }),
         ] {
             apply_bespoke_event_handling(
@@ -2617,18 +2620,23 @@ mod tests {
 
         let first = recv_broadcast_message(&mut rx).await?;
         match first {
-            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
+            OutgoingMessage::AppServerNotification(envelope) => {
+                let payload = match envelope.notification {
+                    ServerNotification::ItemStarted(payload) => payload,
+                    other => bail!("unexpected notification: {other:?}"),
+                };
                 assert_eq!(
                     payload,
                     ItemStartedNotification {
                         thread_id: conversation_id.to_string(),
                         turn_id: turn_id.to_string(),
                         started_at_ms: 0,
-                        item: ThreadItem::WebSearch {
+                        item: ThreadItem::WebSearch(codex_app_server_protocol::WebSearchItem {
                             id: "search-1".to_string(),
-                            query: "사과".to_string(),
+                            query: String::new(),
                             action: None,
-                        },
+                            results: None,
+                        }),
                     }
                 );
             }
@@ -2637,21 +2645,26 @@ mod tests {
 
         let second = recv_broadcast_message(&mut rx).await?;
         match second {
-            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
+            OutgoingMessage::AppServerNotification(envelope) => {
+                let payload = match envelope.notification {
+                    ServerNotification::ItemCompleted(payload) => payload,
+                    other => bail!("unexpected notification: {other:?}"),
+                };
                 assert_eq!(
                     payload,
                     ItemCompletedNotification {
                         thread_id: conversation_id.to_string(),
                         turn_id: turn_id.to_string(),
                         completed_at_ms: 0,
-                        item: ThreadItem::WebSearch {
+                        item: ThreadItem::WebSearch(codex_app_server_protocol::WebSearchItem {
                             id: "search-1".to_string(),
                             query: "사과".to_string(),
                             action: Some(codex_app_server_protocol::WebSearchAction::Search {
                                 query: Some("사과".to_string()),
                                 queries: None,
                             }),
-                        },
+                            results: None,
+                        }),
                     }
                 );
             }
@@ -3541,7 +3554,9 @@ mod tests {
             thread_id: conversation_id,
             thread: conversation,
             ..
-        } = thread_manager.start_thread(config).await?;
+        } = thread_manager
+            .start_thread(codex_core::StartThreadOptions::new(config))
+            .await?;
         let thread_metadata = codex_state::ThreadMetadataBuilder::new(
             conversation_id,
             codex_home.path().join("rollout.jsonl"),
@@ -3621,11 +3636,13 @@ mod tests {
         .await;
 
         let msg = recv_broadcast_message(&mut rx).await?;
-        let OutgoingMessage::AppServerNotification(ServerNotification::ThreadGoalUpdated(
-            notification,
-        )) = msg
-        else {
-            bail!("unexpected message: {msg:?}");
+        let envelope = match msg {
+            OutgoingMessage::AppServerNotification(envelope) => envelope,
+            other => bail!("unexpected message: {other:?}"),
+        };
+        let notification = match envelope.notification {
+            ServerNotification::ThreadGoalUpdated(notification) => notification,
+            other => bail!("unexpected notification: {other:?}"),
         };
         let loop_state = notification
             .goal

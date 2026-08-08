@@ -306,6 +306,187 @@ async fn batch_write_rejects_legacy_profile_selector() -> Result<()> {
 }
 
 #[tokio::test]
+async fn write_value_rejects_direct_runtime_projection_edits() -> Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    let path = tmp.path().join(CONFIG_TOML_FILE);
+    let original = r#"model = "fable-fusion"
+
+[desktop.ilhae_runtime_system2_projection]
+schema_version = 1
+source_sha256 = "base"
+"#;
+    std::fs::write(&path, original)?;
+
+    let service = ConfigManager::without_managed_config_for_tests(tmp.path().to_path_buf());
+    let error = service
+        .write_value(ConfigValueWriteParams {
+            file_path: Some(path.display().to_string()),
+            key_path: "desktop.ilhae_runtime_system2_projection.source_sha256".to_string(),
+            value: serde_json::json!("forged"),
+            merge_strategy: MergeStrategy::Replace,
+            expected_version: None,
+        })
+        .await
+        .expect_err("runtime projection is not a general config/write surface");
+
+    assert_eq!(
+        error.write_error_code(),
+        Some(ConfigWriteErrorCode::ConfigLayerReadonly)
+    );
+    assert_eq!(std::fs::read_to_string(&path)?, original);
+    Ok(())
+}
+
+#[tokio::test]
+async fn batch_write_cannot_remove_runtime_projection_through_parent_replace() -> Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    let path = tmp.path().join(CONFIG_TOML_FILE);
+    let original = r#"model = "fable-fusion"
+
+[desktop]
+theme = "system"
+
+[desktop.ilhae_runtime_system2_projection]
+schema_version = 1
+source_sha256 = "base"
+"#;
+    std::fs::write(&path, original)?;
+
+    let service = ConfigManager::without_managed_config_for_tests(tmp.path().to_path_buf());
+    let error = service
+        .batch_write(ConfigBatchWriteParams {
+            edits: vec![codex_app_server_protocol::ConfigEdit {
+                key_path: "desktop".to_string(),
+                value: serde_json::json!({"theme": "dark"}),
+                merge_strategy: MergeStrategy::Replace,
+            }],
+            file_path: Some(path.display().to_string()),
+            expected_version: None,
+            reload_user_config: false,
+        })
+        .await
+        .expect_err("parent replacement must not erase the runtime projection");
+
+    assert_eq!(
+        error.write_error_code(),
+        Some(ConfigWriteErrorCode::ConfigLayerReadonly)
+    );
+    assert_eq!(std::fs::read_to_string(&path)?, original);
+    Ok(())
+}
+
+#[test]
+fn runtime_mcp_ownership_candidates_require_an_actual_value_change() {
+    let original: TomlValue = toml::from_str(
+        r#"model = "fable-fusion"
+
+[mcp_servers.office]
+url = "http://127.0.0.1:9123/mcp"
+
+[mcp_servers.human]
+command = "human-server"
+"#,
+    )
+    .expect("parse original runtime config");
+
+    assert!(
+        changed_runtime_mcp_servers(&original, &original).is_empty(),
+        "rewriting an identical Office value must not mint ownership"
+    );
+
+    let changed: TomlValue = toml::from_str(
+        r#"model = "fable-fusion"
+
+[mcp_servers.office]
+url = "http://127.0.0.1:9456/mcp"
+
+[mcp_servers.human]
+command = "different-human-server"
+"#,
+    )
+    .expect("parse changed runtime config");
+    assert_eq!(
+        changed_runtime_mcp_servers(&original, &changed),
+        BTreeSet::from(["office".to_string()]),
+        "human-owned changes are never runtime ownership candidates"
+    );
+}
+
+#[test]
+fn runtime_mcp_ownership_requires_exact_active_server_and_lkg_base_hashes() {
+    let lkg: TomlValue = toml::from_str(
+        r#"model = "fable-fusion"
+
+[mcp_servers.human]
+command = "human-server"
+"#,
+    )
+    .expect("parse LKG");
+    let active: TomlValue = toml::from_str(
+        r#"model = "fable-fusion"
+
+[mcp_servers.human]
+command = "human-server"
+
+[mcp_servers.office]
+url = "http://127.0.0.1:9123/mcp"
+"#,
+    )
+    .expect("parse active config");
+    let owned_names = BTreeSet::from(["office".to_string()]);
+    let office = active
+        .get("mcp_servers")
+        .and_then(TomlValue::as_table)
+        .and_then(|servers| servers.get("office"))
+        .expect("Office server");
+    let mut ownership = RuntimeMcpOwnership {
+        schema_version: ILHAE_RUNTIME_MCP_OWNERSHIP_SCHEMA_VERSION,
+        generation: 1,
+        active_sha256: canonical_toml_sha256(&active),
+        base_sha256: canonical_toml_sha256(&runtime_mcp_base_projection(&active, &owned_names)),
+        servers: BTreeMap::from([("office".to_string(), canonical_toml_sha256(office))]),
+    };
+
+    assert!(runtime_mcp_ownership_matches(&ownership, &active, &lkg));
+
+    ownership
+        .servers
+        .insert("office".to_string(), "0".repeat(64));
+    assert!(
+        !runtime_mcp_ownership_matches(&ownership, &active, &lkg),
+        "a forged per-server hash must invalidate ownership"
+    );
+
+    ownership
+        .servers
+        .insert("office".to_string(), canonical_toml_sha256(office));
+    ownership.base_sha256 = "0".repeat(64);
+    assert!(
+        !runtime_mcp_ownership_matches(&ownership, &active, &lkg),
+        "a forged base hash must invalidate ownership"
+    );
+}
+
+#[test]
+fn runtime_mcp_canonical_hash_matches_the_desktop_contract() {
+    let fixture: TomlValue = toml::from_str(
+        r#"model = "fable-fusion"
+
+[mcp_servers.office]
+args = ["serve", "--port", "9123"]
+enabled = true
+url = "http://127.0.0.1:9123/mcp"
+"#,
+    )
+    .expect("parse canonical hash fixture");
+
+    assert_eq!(
+        canonical_toml_sha256(&fixture),
+        "c2bbe8008600a3ddf65f9988877b129feac296cf77841588736b140342b92884"
+    );
+}
+
+#[tokio::test]
 async fn write_value_supports_nested_app_paths() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     std::fs::write(tmp.path().join(CONFIG_TOML_FILE), "")?;
