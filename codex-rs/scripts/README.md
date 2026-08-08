@@ -30,8 +30,15 @@ sudo sed -i 's/LLAMA_PROXY_LISTEN_PORT=.*/LLAMA_PROXY_LISTEN_PORT=8083/' /etc/de
 sudo sed -i 's/LLAMA_UPSTREAM_HOST=.*/LLAMA_UPSTREAM_HOST=127.0.0.1/' /etc/default/codex-llama-server-proxy
 sudo sed -i 's/LLAMA_UPSTREAM_PORT=.*/LLAMA_UPSTREAM_PORT=8082/' /etc/default/codex-llama-server-proxy
 sudo sed -i 's|LLAMA_PROXY_CORS_ORIGINS=.*|LLAMA_PROXY_CORS_ORIGINS="*"|' /etc/default/codex-llama-server-proxy
+sudo sed -i 's|LLAMA_PROXY_DEFAULT_QUERY_ARGS=.*|LLAMA_PROXY_DEFAULT_QUERY_ARGS="draft=mtp&ngram-mode=1&cache-type-k=turbo4_0&cache-type-v=turbo4_0"|' /etc/default/codex-llama-server-proxy
 sudo systemctl restart codex-llama-server-proxy
 ```
+
+`LLAMA_PROXY_DEFAULT_QUERY_ARGS` is the default query fragment appended to every `/v1` request through the proxy:
+
+- Set empty (`LLAMA_PROXY_DEFAULT_QUERY_ARGS=""`) to disable.
+- Set query keys like `draft=mtp`, `ngram-mode=1`, `cache-type-k=turbo4_0`, `cache-type-v=turbo4_0` to expose tunings externally.
+- `cache-type-*` must remain actual runtime keys; these are examples currently used for turbo-quant tuning.
 
 Check both services:
 

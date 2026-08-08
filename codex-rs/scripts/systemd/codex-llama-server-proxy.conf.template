@@ -48,7 +48,26 @@ http {
             proxy_set_header Connection "";
             proxy_set_header X-Forwarded-For $remote_addr;
             proxy_set_header X-Real-IP $remote_addr;
-            proxy_pass http://${LLAMA_UPSTREAM_HOST}:${LLAMA_UPSTREAM_PORT};
+            set $llama_proxy_default_query_args "${LLAMA_PROXY_DEFAULT_QUERY_ARGS}";
+            set $llama_proxy_merged_query "$args";
+
+            if ($llama_proxy_default_query_args = "") {
+                set $llama_proxy_merged_query "$args";
+            }
+            if ($llama_proxy_default_query_args != "") {
+                if ($args = "") {
+                    set $llama_proxy_merged_query $llama_proxy_default_query_args;
+                }
+                if ($args != "") {
+                    set $llama_proxy_merged_query "$args&$llama_proxy_default_query_args";
+                }
+            }
+
+            set $llama_proxy_uri "$uri";
+            if ($llama_proxy_merged_query != "") {
+                set $llama_proxy_uri "$uri?$llama_proxy_merged_query";
+            }
+            proxy_pass http://${LLAMA_UPSTREAM_HOST}:${LLAMA_UPSTREAM_PORT}$llama_proxy_uri;
             proxy_read_timeout ${LLAMA_PROXY_READ_TIMEOUT}s;
         }
 

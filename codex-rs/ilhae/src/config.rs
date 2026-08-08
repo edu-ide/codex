@@ -1106,6 +1106,71 @@ fn parse_context_window_from_native_args(args: &[String]) -> u64 {
     32_768
 }
 
+fn parse_context_window_from_native_query_params(
+    query_params: Option<&std::collections::BTreeMap<String, String>>,
+) -> Option<u64> {
+    let query_params = query_params?;
+    let mut normalized_lookup = |key: &str| -> Option<u64> {
+        query_params.get(key).and_then(|value| value.parse().ok())
+    };
+
+    if let Some(value) = normalized_lookup("context-size") {
+        return Some(value);
+    }
+    if let Some(value) = normalized_lookup("context_size") {
+        return Some(value);
+    }
+    if let Some(value) = normalized_lookup("ctx-size") {
+        return Some(value);
+    }
+    if let Some(value) = normalized_lookup("ctx_size") {
+        return Some(value);
+    }
+    if let Some(value) = normalized_lookup("context-length") {
+        return Some(value);
+    }
+    if let Some(value) = normalized_lookup("context_length") {
+        return Some(value);
+    }
+    if let Some(value) = normalized_lookup("num-ctx") {
+        return Some(value);
+    }
+    if let Some(value) = normalized_lookup("num_ctx") {
+        return Some(value);
+    }
+    if let Some(value) = normalized_lookup("n-ctx") {
+        return Some(value);
+    }
+    if let Some(value) = normalized_lookup("n_ctx") {
+        return Some(value);
+    }
+
+    for (raw_key, value) in query_params {
+        match raw_key.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "context-size" | "ctx-size" | "context-length" | "num-ctx" | "n-ctx" => {
+                if let Ok(value) = value.parse() {
+                    return Some(value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn native_runtime_model_context_window(
+    runtime: &IlhaeProfileNativeRuntimeConfig,
+) -> u64 {
+    if let Some(context_window) =
+        parse_context_window_from_native_query_params(runtime.query_params.as_ref())
+    {
+        return context_window;
+    }
+
+    parse_context_window_from_native_args(&runtime.args)
+}
+
 fn profile_engine_id_for_display(profile: &IlhaeProfileConfig) -> Option<String> {
     profile
         .agent
@@ -1494,7 +1559,7 @@ fn codex_profile_table_for_ilhae_profile(
     let mut table = toml::value::Table::new();
     let model_name = resolve_ilhae_profile_model_name(profile_id, profile);
     let model_context_window = native
-        .map(|runtime| parse_context_window_from_native_args(&runtime.args))
+        .map(native_runtime_model_context_window)
         .unwrap_or(32_768);
     let model_provider = native
         .filter(|runtime| !native_runtime_effective_base_url(runtime).is_empty())
@@ -2625,6 +2690,154 @@ requires_openai_auth = false
                 .and_then(|query| query.get("ngram-mode"))
                 .and_then(toml::Value::as_str),
             Some("1")
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_remote_runtime_context_size_from_query_params() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let mut config = IlhaeTomlConfig::default();
+        config.profile.active = Some("remote-ctx".to_string());
+
+        let mut query_params = BTreeMap::new();
+        query_params.insert("context_size".to_string(), "131072".to_string());
+
+        let mut remote = IlhaeProfileConfig::default();
+        remote.agent.engine_id = Some("ilhae".to_string());
+        remote.agent.command = Some("ilahe".to_string());
+        remote.native_runtime.enabled = false;
+        remote.native_runtime.provider = Some("llama-server".to_string());
+        remote.native_runtime.base_url = "http://127.0.0.1:8082/v1".to_string();
+        remote.native_runtime.health_url = "http://127.0.0.1:8082/health".to_string();
+        remote.native_runtime.query_params = Some(query_params);
+        config.profiles.insert("remote-ctx".to_string(), remote);
+
+        save_ilhae_toml_config(&config).expect("save config");
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
+
+        let profile = parsed
+            .get("profiles")
+            .and_then(toml::Value::as_table)
+            .and_then(|profiles| profiles.get("remote-ctx"))
+            .and_then(toml::Value::as_table)
+            .expect("remote profile");
+        assert_eq!(
+            profile
+                .get("model_context_window")
+                .and_then(toml::Value::as_integer),
+            Some(131_072)
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .expect("model providers");
+        let remote_provider = model_providers
+            .get("ilhae-native-remote-ctx")
+            .and_then(toml::Value::as_table)
+            .expect("remote provider");
+        assert_eq!(
+            remote_provider
+                .get("query_params")
+                .and_then(toml::Value::as_table)
+                .and_then(|query| query.get("context_size"))
+                .and_then(toml::Value::as_str),
+            Some("131072")
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_remote_turboquant_query_params() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let mut config = IlhaeTomlConfig::default();
+        config.profile.active = Some("remote-turboquant".to_string());
+
+        let mut query_params = BTreeMap::new();
+        query_params.insert("draft".to_string(), "mtp".to_string());
+        query_params.insert("ngram-mode".to_string(), "1".to_string());
+        query_params.insert("cache-type-k".to_string(), "turbo4_0".to_string());
+        query_params.insert("cache-type-v".to_string(), "turbo4_0".to_string());
+
+        let mut remote = IlhaeProfileConfig::default();
+        remote.agent.engine_id = Some("minimax-turboquant".to_string());
+        remote.agent.command = Some("minimax-turboquant".to_string());
+        remote.native_runtime.enabled = false;
+        remote.native_runtime.provider = Some("minimax-turboquant".to_string());
+        remote.native_runtime.base_url = "http://127.0.0.1:8082/v1".to_string();
+        remote.native_runtime.health_url = "http://127.0.0.1:8082/health".to_string();
+        remote.native_runtime.query_params = Some(query_params);
+        config
+            .profiles
+            .insert("remote-turboquant".to_string(), remote);
+
+        save_ilhae_toml_config(&config).expect("save config");
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed =
+            std::fs::read_to_string(tmp.path().join("codex-home/config.toml")).expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .expect("model providers");
+        let provider = model_providers
+            .get("ilhae-native-remote-turboquant")
+            .and_then(toml::Value::as_table)
+            .expect("turboquant provider");
+        let provider_query_params = provider
+            .get("query_params")
+            .and_then(toml::Value::as_table)
+            .expect("turboquant query params");
+
+        assert_eq!(
+            provider_query_params
+                .get("draft")
+                .and_then(toml::Value::as_str),
+            Some("mtp")
+        );
+        assert_eq!(
+            provider_query_params
+                .get("ngram-mode")
+                .and_then(toml::Value::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            provider_query_params
+                .get("cache-type-k")
+                .and_then(toml::Value::as_str),
+            Some("turbo4_0")
+        );
+        assert_eq!(
+            provider_query_params
+                .get("cache-type-v")
+                .and_then(toml::Value::as_str),
+            Some("turbo4_0")
+        );
+
+        let profiles = parsed
+            .get("profiles")
+            .and_then(toml::Value::as_table)
+            .expect("profiles table");
+        let profile = profiles
+            .get("remote-turboquant")
+            .and_then(toml::Value::as_table)
+            .expect("remote profile");
+        assert_eq!(
+            profile
+                .get("model_provider")
+                .and_then(toml::Value::as_str),
+            Some("ilhae-native-remote-turboquant")
         );
     }
 
