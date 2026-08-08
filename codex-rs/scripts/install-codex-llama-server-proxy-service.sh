@@ -18,6 +18,71 @@ OVERWRITE=0
 DRY_RUN=0
 DEFAULT_LLAMA_PROXY_ENV_VARS='${LLAMA_UPSTREAM_HOST} ${LLAMA_UPSTREAM_PORT} ${LLAMA_PROXY_LISTEN_ADDR} ${LLAMA_PROXY_LISTEN_PORT} ${LLAMA_PROXY_KEEPALIVE_TIMEOUT} ${LLAMA_PROXY_KEEPALIVE_REQUESTS} ${LLAMA_PROXY_READ_TIMEOUT} ${LLAMA_PROXY_CLIENT_MAX_BODY_SIZE} ${LLAMA_PROXY_CORS_ORIGINS} ${LLAMA_PROXY_RUNTIME_USER} ${LLAMA_PROXY_DEFAULT_QUERY_ARGS}'
 
+require_env_token() {
+  local list="$1"
+  local token="$2"
+  if [[ " $list " == *" $token "* ]]; then
+    echo "$list"
+    return
+  fi
+  if [[ -n "$list" ]]; then
+    echo "$list $token"
+  else
+    echo "$token"
+  fi
+}
+
+ensure_llama_proxy_env_vars() {
+  local vars="$1"
+  local token
+  local required_tokens=(
+    '${LLAMA_UPSTREAM_HOST}'
+    '${LLAMA_UPSTREAM_PORT}'
+    '${LLAMA_PROXY_LISTEN_ADDR}'
+    '${LLAMA_PROXY_LISTEN_PORT}'
+    '${LLAMA_PROXY_KEEPALIVE_TIMEOUT}'
+    '${LLAMA_PROXY_KEEPALIVE_REQUESTS}'
+    '${LLAMA_PROXY_READ_TIMEOUT}'
+    '${LLAMA_PROXY_CLIENT_MAX_BODY_SIZE}'
+    '${LLAMA_PROXY_CORS_ORIGINS}'
+    '${LLAMA_PROXY_RUNTIME_USER}'
+    '${LLAMA_PROXY_DEFAULT_QUERY_ARGS}'
+  )
+  for token in "${required_tokens[@]}"; do
+    vars="$(require_env_token "$vars" "$token")"
+  done
+  echo "$vars"
+}
+
+parse_host_port_from_url() {
+  local input="$1"
+  local host_ref="$2"
+  local port_ref="$3"
+  local host=""
+  local port="80"
+  local no_path
+
+  local no_scheme="${input#*://}"
+  no_path="${no_scheme%%/*}"
+
+  if [[ "$no_path" == \[* ]]; then
+    host="${no_path#\[}"
+    host="${host%]*}"
+    local rest="${no_path##*\]}"
+    if [[ "$rest" == :* ]]; then
+      port="${rest#:}"
+    fi
+  elif [[ "$no_path" == *:* ]]; then
+    host="${no_path%:*}"
+    port="${no_path##*:}"
+  else
+    host="$no_path"
+  fi
+
+  printf -v "$host_ref" '%s' "$host"
+  printf -v "$port_ref" '%s' "$port"
+}
+
 usage() {
   cat <<'USAGE'
 Usage: install-codex-llama-server-proxy-service.sh [options]
@@ -157,9 +222,19 @@ if [[ -r "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 fi
 
+if [[ -n "${LLAMA_UPSTREAM_URL:-}" ]]; then
+  parse_host_port_from_url "$LLAMA_UPSTREAM_URL" LLAMA_UPSTREAM_HOST LLAMA_UPSTREAM_PORT
+fi
+
+if [[ -n "${LLAMA_PROXY_LISTEN_URL:-}" ]]; then
+  parse_host_port_from_url "$LLAMA_PROXY_LISTEN_URL" LLAMA_PROXY_LISTEN_ADDR LLAMA_PROXY_LISTEN_PORT
+  LLAMA_PROXY_LISTEN_ADDR="${LLAMA_PROXY_LISTEN_ADDR#[}"
+  LLAMA_PROXY_LISTEN_ADDR="${LLAMA_PROXY_LISTEN_ADDR%\]}"
+fi
+
 LLAMA_PROXY_CONF_TEMPLATE="${LLAMA_PROXY_CONF_TEMPLATE:-${CONF_FILE}.template}"
 LLAMA_PROXY_CONF_FILE="${LLAMA_PROXY_CONF_FILE:-${CONF_FILE}}"
-LLAMA_PROXY_ENV_VARS="${LLAMA_PROXY_ENV_VARS:-$DEFAULT_LLAMA_PROXY_ENV_VARS}"
+LLAMA_PROXY_ENV_VARS="$(ensure_llama_proxy_env_vars "${LLAMA_PROXY_ENV_VARS:-$DEFAULT_LLAMA_PROXY_ENV_VARS}")"
 
 if [[ ! -f "$LLAMA_PROXY_CONF_TEMPLATE" ]]; then
   echo "Missing rendered nginx conf template: $LLAMA_PROXY_CONF_TEMPLATE" >&2

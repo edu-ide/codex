@@ -22,13 +22,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sudo "${SCRIPT_DIR}/install-codex-llama-server-proxy-service.sh" --overwrite --enable --start
 ```
 
-Optional (change listen port, upstream host/port, CORS, or timeouts):
+Optional (change listen/upstream with one URL, or legacy host/port, CORS, or timeouts):
 
 ```bash
 sudo cp /home/yth/codex/codex-rs/scripts/systemd/codex-llama-server-proxy.env /etc/default/codex-llama-server-proxy
-sudo sed -i 's/LLAMA_PROXY_LISTEN_PORT=.*/LLAMA_PROXY_LISTEN_PORT=8083/' /etc/default/codex-llama-server-proxy
-sudo sed -i 's/LLAMA_UPSTREAM_HOST=.*/LLAMA_UPSTREAM_HOST=127.0.0.1/' /etc/default/codex-llama-server-proxy
-sudo sed -i 's/LLAMA_UPSTREAM_PORT=.*/LLAMA_UPSTREAM_PORT=8082/' /etc/default/codex-llama-server-proxy
+sudo sed -i 's|LLAMA_UPSTREAM_URL=.*|LLAMA_UPSTREAM_URL="http://127.0.0.1:8082"|' /etc/default/codex-llama-server-proxy
+sudo sed -i 's|LLAMA_PROXY_LISTEN_URL=.*|LLAMA_PROXY_LISTEN_URL="http://0.0.0.0:8083"|' /etc/default/codex-llama-server-proxy
+# Legacy host/port mode (optional, still supported):
+# sudo sed -i 's/LLAMA_UPSTREAM_HOST=.*/LLAMA_UPSTREAM_HOST=127.0.0.1/' /etc/default/codex-llama-server-proxy
+# sudo sed -i 's/LLAMA_UPSTREAM_PORT=.*/LLAMA_UPSTREAM_PORT=8082/' /etc/default/codex-llama-server-proxy
+# sudo sed -i 's/LLAMA_PROXY_LISTEN_ADDR=.*/LLAMA_PROXY_LISTEN_ADDR=0.0.0.0/' /etc/default/codex-llama-server-proxy
+# sudo sed -i 's/LLAMA_PROXY_LISTEN_PORT=.*/LLAMA_PROXY_LISTEN_PORT=8083/' /etc/default/codex-llama-server-proxy
 sudo sed -i 's|LLAMA_PROXY_CORS_ORIGINS=.*|LLAMA_PROXY_CORS_ORIGINS="*"|' /etc/default/codex-llama-server-proxy
 sudo sed -i 's|LLAMA_PROXY_DEFAULT_QUERY_ARGS=.*|LLAMA_PROXY_DEFAULT_QUERY_ARGS="draft=mtp&ngram-mode=1&cache-type-k=turbo4_0&cache-type-v=turbo4_0"|' /etc/default/codex-llama-server-proxy
 sudo systemctl restart codex-llama-server-proxy
