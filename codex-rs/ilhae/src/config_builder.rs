@@ -340,16 +340,7 @@ fn ilhae_profile_model_name(
     profile_id: &str,
     profile: &crate::config::IlhaeProfileConfig,
 ) -> String {
-    let native_model = if profile.native_runtime.enabled {
-        crate::config::native_runtime_model_name_from_path(&profile.native_runtime.model_path)
-    } else {
-        None
-    };
-
-    native_model
-        .or_else(|| profile.agent.engine_id.clone())
-        .or_else(|| profile.agent.command.clone())
-        .unwrap_or_else(|| profile_id.to_string())
+    crate::config::resolve_ilhae_profile_model_name(profile_id, profile)
 }
 
 /// Build configOptions for Gemini CLI by reading `~/.gemini/settings.json`

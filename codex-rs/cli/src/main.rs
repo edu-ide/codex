@@ -1248,7 +1248,10 @@ fn ilhae_profile_provider_id(profile: &codex_ilhae::config::IlhaeProfileConfig) 
 #[cfg(feature = "ilhae")]
 fn native_runtime_oss_provider(profile_id: Option<&str>) -> Option<String> {
     codex_ilhae::config::get_native_runtime_config(profile_id)
-        .filter(|(_, runtime)| runtime.enabled || !runtime.base_url.trim().is_empty())
+        .filter(|(_, runtime)| {
+            runtime.enabled
+                || !codex_ilhae::config::native_runtime_effective_base_url(runtime).is_empty()
+        })
         .map(|(_, runtime)| native_runtime_provider_name(&runtime))
 }
 
@@ -1393,8 +1396,14 @@ async fn run_ilhae_profile_command(cmd: ProfileCommand) -> anyhow::Result<()> {
                             "name": ilhae_profile_display_name(id, profile),
                             "provider": ilhae_profile_provider_id(profile),
                             "nativeRuntime": profile.native_runtime.enabled,
-                            "baseUrl": profile.native_runtime.base_url,
-                            "healthUrl": profile.native_runtime.health_url,
+                            "baseUrl": codex_ilhae::config::native_runtime_effective_base_url(
+                                &profile.native_runtime
+                            ),
+                            "healthUrl": codex_ilhae::config::native_runtime_effective_health_url(
+                                &profile.native_runtime
+                            ),
+                            "url": profile.native_runtime.url,
+                            "proxyBaseUrl": profile.native_runtime.proxy_base_url,
                         })
                     })
                     .collect::<Vec<_>>();
@@ -2262,12 +2271,16 @@ async fn cli_main(
                 if let Some((profile_id, config)) = codex_ilhae::config::get_native_runtime_config(
                     interactive.config_profile_v2.as_deref(),
                 ) {
+                    let health_url =
+                        codex_ilhae::config::native_runtime_effective_health_url(&config);
                     let healthy =
-                        codex_ilhae::startup_main::native_runtime_healthcheck(&config.health_url)
-                            .await;
+                        codex_ilhae::startup_main::native_runtime_healthcheck(&health_url).await;
+                    let base_url = codex_ilhae::config::native_runtime_effective_base_url(&config);
                     println!("Profile: {profile_id}");
                     println!("Enabled: {}", config.enabled);
-                    println!("Health URL: {}", config.health_url);
+                    println!("Health URL: {}", health_url);
+                    println!("Base URL: {}", base_url);
+                    println!("Configured URL: {:?}", config.url);
                     println!("Status: {}", if healthy { "HEALTHY" } else { "DOWN" });
                 } else {
                     println!("No active native runtime profile found.");
@@ -3861,6 +3874,41 @@ base_url = "http://127.0.0.1:8081/v1"
             assert_eq!(
                 native_runtime_oss_provider(Some("remote-qwen")),
                 Some("sglang".to_string())
+            );
+        }
+
+        {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let config_dir = tmp.path().join(".ilhae");
+            std::fs::create_dir_all(&config_dir).expect("create config dir");
+            std::fs::write(
+                config_dir.join("config.toml"),
+                r#"
+[profile]
+active = "remote-by-url"
+
+[profiles.remote-by-url.agent]
+engine = "qwen"
+command = "ilhae"
+
+[profiles.remote-by-url.native_runtime]
+enabled = false
+provider = "llama-server"
+url = "http://127.0.0.1:8083/v1"
+"#,
+            )
+            .expect("write ilhae config");
+
+            let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", &config_dir);
+            let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data"));
+
+            assert_eq!(
+                native_runtime_oss_provider(None),
+                Some("llama-server".to_string())
+            );
+            assert_eq!(
+                native_runtime_oss_provider(Some("remote-by-url")),
+                Some("llama-server".to_string())
             );
         }
     }

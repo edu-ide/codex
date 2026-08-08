@@ -1,5 +1,4 @@
 use serde_json::json;
-use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
 use tracing::warn;
@@ -21,21 +20,9 @@ use crate::infer_agent_id_from_command;
 fn ilhae_profile_model_name(profile_id: &str) -> Option<String> {
     let config = crate::config::load_ilhae_toml_config();
     let profile = config.profiles.get(profile_id)?;
-    if profile.native_runtime.enabled {
-        if let Some(model) = Path::new(&profile.native_runtime.model_path)
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().to_string())
-            .filter(|stem| !stem.trim().is_empty())
-        {
-            return Some(model);
-        }
-    }
-    profile
-        .agent
-        .engine_id
-        .clone()
-        .or_else(|| profile.agent.command.clone())
-        .or_else(|| Some(profile_id.to_string()))
+    Some(crate::config::resolve_ilhae_profile_model_name(
+        profile_id, profile,
+    ))
 }
 
 pub async fn handle_set_session_config_option(

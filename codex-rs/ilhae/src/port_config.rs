@@ -3,6 +3,14 @@
 //! All default port numbers live here. Each can be overridden via an
 //! environment variable so users can customize without rebuilding.
 
+/// Read an IP address from an environment variable, falling back to a default.
+fn env_ip(var: &str, default: std::net::Ipv4Addr) -> std::net::IpAddr {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(std::net::IpAddr::V4(default))
+}
+
 /// Read a port from an environment variable, falling back to a default.
 fn env_port(var: &str, default: u16) -> u16 {
     std::env::var(var)
@@ -38,6 +46,11 @@ pub fn sacp_port() -> u16 {
 /// Health/push-notification HTTP server port (default: 18791).
 pub fn health_port() -> u16 {
     env_port("ILHAE_HEALTH_PORT", 18791)
+}
+
+/// Health/push-notification HTTP server bind host (default: 127.0.0.1).
+pub fn health_host() -> std::net::IpAddr {
+    env_ip("ILHAE_HEALTH_HOST", std::net::Ipv4Addr::LOCALHOST)
 }
 
 // ── Team agent port range ───────────────────────────────────────────────

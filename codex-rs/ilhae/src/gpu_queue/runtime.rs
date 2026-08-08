@@ -26,7 +26,8 @@ impl NativeLlmRuntime {
             return LlmRuntimeState::Stopped;
         }
 
-        if crate::startup_main::native_runtime_healthcheck(&config.health_url).await
+        let health_url = crate::config::native_runtime_effective_health_url(&config);
+        if crate::startup_main::native_runtime_healthcheck(&health_url).await
             || !crate::startup_main::find_native_runtime_pids(&config).is_empty()
         {
             LlmRuntimeState::Running
@@ -50,7 +51,8 @@ impl NativeLlmRuntime {
             return Ok(true);
         }
 
-        let Some(slots_url) = slots_url_from_base_url(&config.base_url) else {
+        let base_url = crate::config::native_runtime_effective_base_url(&config);
+        let Some(slots_url) = slots_url_from_base_url(&base_url) else {
             return Ok(true);
         };
 

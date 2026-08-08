@@ -437,10 +437,15 @@ fn native_runtime_configs_equivalent(
     left: &crate::config::IlhaeProfileNativeRuntimeConfig,
     right: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> bool {
+    let left_base = crate::config::native_runtime_effective_base_url(left);
+    let right_base = crate::config::native_runtime_effective_base_url(right);
+    let left_health = crate::config::native_runtime_effective_health_url(left);
+    let right_health = crate::config::native_runtime_effective_health_url(right);
+
     left.server_bin.trim() == right.server_bin.trim()
         && left.provider.as_deref().map(str::trim) == right.provider.as_deref().map(str::trim)
-        && left.health_url.trim() == right.health_url.trim()
-        && left.base_url.trim() == right.base_url.trim()
+        && left_health == right_health
+        && left_base == right_base
         && left.model_path.trim() == right.model_path.trim()
         && left.env == right.env
         && left.args == right.args
@@ -473,8 +478,10 @@ fn extract_port_from_config(
         }
     }
 
-    // 2. Try to extract from health_url or base_url using regex or simple parsing
-    for url_str in &[&config.health_url, &config.base_url] {
+    // 2. Try to extract from health_url or effective base_url using regex or simple parsing
+    let health_url = crate::config::native_runtime_effective_health_url(config);
+    let base_url = crate::config::native_runtime_effective_base_url(config);
+    for url_str in &[health_url.as_str(), base_url.as_str()] {
         // Look for :PORT/ or :PORT at the end
         if let Some(pos) = url_str.find("://") {
             let after_scheme = &url_str[pos + 3..];
@@ -710,20 +717,22 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
 
     crate::gpu_queue::start_gate::wait_for_native_runtime_start_gate().await?;
 
-    if native_runtime_healthcheck(&config.health_url).await {
-        if !config.base_url.trim().is_empty() {
+    let base_url = crate::config::native_runtime_effective_base_url(&config);
+    let health_url = crate::config::native_runtime_effective_health_url(&config);
+    if native_runtime_healthcheck(&health_url).await {
+        if !base_url.trim().is_empty() {
             unsafe {
-                std::env::set_var("CODEX_OSS_BASE_URL", &config.base_url);
+                std::env::set_var("CODEX_OSS_BASE_URL", &base_url);
             }
         }
         return Ok(());
     }
 
     let _start_lock = acquire_native_runtime_start_lock(&profile_id, &config)?;
-    if native_runtime_healthcheck(&config.health_url).await {
-        if !config.base_url.trim().is_empty() {
+    if native_runtime_healthcheck(&health_url).await {
+        if !base_url.trim().is_empty() {
             unsafe {
-                std::env::set_var("CODEX_OSS_BASE_URL", &config.base_url);
+                std::env::set_var("CODEX_OSS_BASE_URL", &base_url);
             }
         }
         return Ok(());
@@ -738,7 +747,12 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
     let timeout_secs = config.startup_timeout_secs.max(1);
     let started = tokio::time::Instant::now();
     loop {
-        if native_runtime_healthcheck(&config.health_url).await {
+        if native_runtime_healthcheck(&health_url).await {
+            if !base_url.trim().is_empty() {
+                unsafe {
+                    std::env::set_var("CODEX_OSS_BASE_URL", &base_url);
+                }
+            }
             break;
         }
         if !std::path::Path::new(&format!("/proc/{runtime_pid}")).exists() {
@@ -760,15 +774,15 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    if !config.base_url.trim().is_empty() {
+    if !base_url.trim().is_empty() {
         unsafe {
-            std::env::set_var("CODEX_OSS_BASE_URL", &config.base_url);
+            std::env::set_var("CODEX_OSS_BASE_URL", &base_url);
         }
     }
 
     info!(
         profile = %profile_id,
-        base_url = %config.base_url,
+        base_url = %base_url,
         "[NativeRuntime] local model runtime ready"
     );
     Ok(())

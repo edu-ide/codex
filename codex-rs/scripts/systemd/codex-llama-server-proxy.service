@@ -1,0 +1,22 @@
+[Unit]
+Description=Codex llama-server edge proxy
+After=network.target
+Wants=network.target
+
+[Service]
+Type=forking
+EnvironmentFile=-/etc/default/codex-llama-server-proxy
+ExecStartPre=/bin/sh -ec 'envsubst "$LLAMA_PROXY_ENV_VARS" < "$LLAMA_PROXY_CONF_TEMPLATE" > "$LLAMA_PROXY_CONF_FILE"'
+ExecStart=/usr/sbin/nginx -c "$LLAMA_PROXY_CONF_FILE"
+ExecReload=/usr/bin/nginx -s reload -c "$LLAMA_PROXY_CONF_FILE"
+ExecStop=/usr/bin/nginx -s quit -c "$LLAMA_PROXY_CONF_FILE"
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+PIDFile=/run/nginx-codex-llama-server-proxy.pid
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

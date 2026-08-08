@@ -218,12 +218,19 @@ pub struct IlhaeProfileNativeRuntimeConfig {
     pub enabled: bool,
     pub provider: Option<String>,
     pub health_url: String,
+    pub url: Option<String>,
     pub base_url: String,
+    pub proxy_base_url: Option<String>,
     pub server_bin: String,
     pub model_path: String,
     pub chat_template_file: String,
     pub log_file: String,
     pub env: std::collections::BTreeMap<String, String>,
+    pub query_params: Option<BTreeMap<String, String>>,
+    pub http_headers: Option<BTreeMap<String, String>>,
+    pub env_http_headers: Option<BTreeMap<String, String>>,
+    pub request_max_retries: Option<u64>,
+    pub stream_max_retries: Option<u64>,
     #[serde(default = "default_native_runtime_startup_timeout_secs")]
     pub startup_timeout_secs: u64,
     pub args: Vec<String>,
@@ -328,12 +335,19 @@ impl Default for IlhaeProfileNativeRuntimeConfig {
             enabled: false,
             provider: None,
             health_url: String::new(),
+            url: None,
             base_url: String::new(),
+            proxy_base_url: None,
             server_bin: String::new(),
             model_path: String::new(),
             chat_template_file: String::new(),
             log_file: String::new(),
             env: std::collections::BTreeMap::new(),
+            query_params: None,
+            http_headers: None,
+            env_http_headers: None,
+            request_max_retries: None,
+            stream_max_retries: None,
             startup_timeout_secs: default_native_runtime_startup_timeout_secs(),
             args: Vec::new(),
         }
@@ -411,7 +425,7 @@ pub fn profile_runtime_display_parts(profile: &IlhaeProfileConfig) -> Vec<String
     if let Some(model_name) = profile_runtime_model_name(profile) {
         parts.push(model_name);
     } else if !profile.native_runtime.enabled
-        && !profile.native_runtime.base_url.trim().is_empty()
+        && !native_runtime_effective_base_url(&profile.native_runtime).is_empty()
         && profile
             .native_runtime
             .model_path
@@ -421,7 +435,9 @@ pub fn profile_runtime_display_parts(profile: &IlhaeProfileConfig) -> Vec<String
         parts.push("server-default".to_string());
     }
 
-    if !profile.native_runtime.enabled && !profile.native_runtime.base_url.trim().is_empty() {
+    if !profile.native_runtime.enabled
+        && !native_runtime_effective_base_url(&profile.native_runtime).is_empty()
+    {
         parts.push("remote".to_string());
     }
 
@@ -782,7 +798,7 @@ pub fn get_active_system2_target_config() -> Option<ResolvedSystem2TargetConfig>
     }
 
     let target_profile = config.profiles.get(&target_profile_id)?;
-    let base_url = target_profile.native_runtime.base_url.trim().to_string();
+    let base_url = native_runtime_effective_base_url(&target_profile.native_runtime);
     if base_url.is_empty() {
         return None;
     }
@@ -1122,6 +1138,99 @@ fn profile_runtime_model_name(profile: &IlhaeProfileConfig) -> Option<String> {
     native_runtime_model_name_from_path(raw_model_path)
 }
 
+fn codex_model_from_root_config(profile_id: &str) -> Option<String> {
+    let config_path = dirs::home_dir().map(|h| h.join(".codex/config.toml"))?;
+    if !config_path.exists() {
+        return None;
+    }
+
+    let config = std::fs::read_to_string(config_path).ok()?;
+    let config = config.parse::<toml::Value>().ok()?;
+
+    config
+        .get("profiles")
+        .and_then(|profiles| profiles.get(profile_id))
+        .and_then(|profile| profile.get("model"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .map(str::to_string)
+        .filter(|model| !model.is_empty() && !model.eq_ignore_ascii_case("default"))
+        .or_else(|| {
+            config
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .map(str::to_string)
+                .filter(|model| !model.is_empty() && !model.eq_ignore_ascii_case("default"))
+        })
+}
+
+fn fallback_profile_name(profile_id: &str) -> String {
+    let trimmed = profile_id.trim();
+    if trimmed.is_empty() {
+        "ilhae".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub(crate) fn resolve_ilhae_profile_model_name(
+    profile_id: &str,
+    profile: &IlhaeProfileConfig,
+) -> String {
+    if let Some(model_name) =
+        native_runtime_model_name_from_path(&profile.native_runtime.model_path)
+    {
+        return model_name;
+    }
+
+    if let Some(model_name) = codex_model_from_root_config(profile_id) {
+        return model_name;
+    }
+
+    if profile
+        .agent
+        .engine_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|engine_id| engine_id.eq_ignore_ascii_case("openai"))
+    {
+        return "gpt-5.5".to_string();
+    }
+
+    if let Some(engine_id) = profile
+        .agent
+        .engine_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|engine_id| {
+            !engine_id.is_empty()
+                && !engine_id.eq_ignore_ascii_case("default")
+                && !engine_id.eq_ignore_ascii_case("codex")
+                && !engine_id.eq_ignore_ascii_case("openai")
+        })
+    {
+        return engine_id.to_string();
+    }
+
+    if let Some(command) = profile
+        .agent
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|command| {
+            !command.is_empty()
+                && !command.eq_ignore_ascii_case("default")
+                && !command.eq_ignore_ascii_case("codex")
+                && !command.eq_ignore_ascii_case("openai")
+        })
+    {
+        return command.to_string();
+    }
+
+    fallback_profile_name(profile_id)
+}
+
 pub fn native_runtime_model_name_from_path(raw_model_path: &str) -> Option<String> {
     let path = Path::new(raw_model_path.trim());
     let extension = path
@@ -1145,6 +1254,144 @@ pub fn native_runtime_model_name_from_path(raw_model_path: &str) -> Option<Strin
     }
 }
 
+fn string_map_as_toml_value(values: &BTreeMap<String, String>) -> toml::Value {
+    let mut table = toml::value::Table::new();
+    for (key, value) in values {
+        table.insert(key.trim().to_string(), toml::Value::String(value.clone()));
+    }
+    toml::Value::Table(table)
+}
+
+fn parse_native_runtime_args_as_query_params(args: &[String]) -> BTreeMap<String, String> {
+    let mut query_params = BTreeMap::new();
+    let mut idx = 0;
+    while idx < args.len() {
+        let raw_arg = args[idx].trim();
+        if raw_arg.is_empty() {
+            idx += 1;
+            continue;
+        }
+
+        if let Some((raw_key, raw_value)) = raw_arg.split_once('=') {
+            let key = raw_key.trim_start_matches('-').trim().to_string();
+            if !key.is_empty() {
+                query_params.insert(key, raw_value.to_string());
+            }
+            idx += 1;
+            continue;
+        }
+
+        let key_with_prefix = raw_arg.trim_start_matches('-').trim().to_string();
+        if key_with_prefix.is_empty() {
+            idx += 1;
+            continue;
+        }
+
+        if raw_arg.starts_with('-') {
+            let has_value = idx + 1 < args.len() && !args[idx + 1].trim().starts_with('-');
+            if has_value {
+                query_params.insert(key_with_prefix, args[idx + 1].trim().to_string());
+                idx += 2;
+                continue;
+            }
+
+            query_params.insert(key_with_prefix, "true".to_string());
+            idx += 1;
+            continue;
+        }
+
+        if idx + 1 < args.len() && !args[idx + 1].trim().starts_with('-') {
+            query_params.insert(key_with_prefix, args[idx + 1].trim().to_string());
+            idx += 2;
+        } else {
+            query_params.insert(key_with_prefix, "true".to_string());
+            idx += 1;
+        }
+    }
+    query_params
+}
+
+fn native_runtime_effective_query_params(
+    runtime: &IlhaeProfileNativeRuntimeConfig,
+) -> BTreeMap<String, String> {
+    let mut query_params = parse_native_runtime_args_as_query_params(&runtime.args);
+    if let Some(overrides) = runtime.query_params.as_ref() {
+        for (key, value) in overrides {
+            let key = key.trim();
+            if !key.is_empty() {
+                query_params.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    query_params
+}
+
+pub fn native_runtime_effective_base_url(runtime: &IlhaeProfileNativeRuntimeConfig) -> String {
+    runtime
+        .proxy_base_url
+        .as_ref()
+        .map(str::trim)
+        .filter(|base_url| !base_url.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            let base_url = runtime.base_url.trim();
+            if base_url.is_empty() {
+                None
+            } else {
+                Some(base_url.to_string())
+            }
+        })
+        .or_else(|| {
+            let base_url = runtime.url.as_ref().map(str::trim)?;
+            if base_url.is_empty() {
+                None
+            } else {
+                Some(base_url.to_string())
+            }
+        })
+        .unwrap_or_else(|| runtime.base_url.trim().to_string())
+}
+
+pub fn native_runtime_effective_health_url(runtime: &IlhaeProfileNativeRuntimeConfig) -> String {
+    let explicit = runtime.health_url.trim();
+    if !explicit.is_empty() {
+        return explicit.to_string();
+    }
+
+    let base_url = native_runtime_effective_base_url(runtime);
+    if base_url.is_empty() {
+        return String::new();
+    }
+
+    if let Ok(mut parsed) = url::Url::parse(&base_url) {
+        let mut path = parsed.path().trim_end_matches('/').to_string();
+        if path.ends_with("/v1") {
+            path = path.strip_suffix("/v1").unwrap_or("").to_string();
+        }
+        if path.is_empty() {
+            path = "/health".to_string();
+        } else {
+            path.push_str("/health");
+        }
+        parsed.set_path(&path);
+        parsed.set_query(None);
+        parsed.set_fragment(None);
+        return parsed.to_string();
+    }
+
+    let fallback_base = base_url.trim_end_matches('/');
+    if fallback_base.ends_with("/v1") {
+        return format!(
+            "{}/health",
+            fallback_base
+                .trim_end_matches('/')
+                .trim_end_matches("v1")
+                .trim_end_matches('/')
+        );
+    }
+    format!("{}/health", fallback_base)
+}
+
 fn native_runtime_for_profile(
     profile: &IlhaeProfileConfig,
 ) -> Option<&IlhaeProfileNativeRuntimeConfig> {
@@ -1157,6 +1404,7 @@ fn native_model_provider_id_for_profile(profile_id: &str) -> String {
 
 fn native_model_provider_table(runtime: &IlhaeProfileNativeRuntimeConfig) -> toml::value::Table {
     let mut table = toml::value::Table::new();
+    let base_url = native_runtime_effective_base_url(runtime);
     table.insert(
         "name".to_string(),
         toml::Value::String(
@@ -1169,10 +1417,7 @@ fn native_model_provider_table(runtime: &IlhaeProfileNativeRuntimeConfig) -> tom
                 .to_string(),
         ),
     );
-    table.insert(
-        "base_url".to_string(),
-        toml::Value::String(runtime.base_url.trim().to_string()),
-    );
+    table.insert("base_url".to_string(), toml::Value::String(base_url));
     table.insert(
         "wire_api".to_string(),
         toml::Value::String("responses".to_string()),
@@ -1181,6 +1426,45 @@ fn native_model_provider_table(runtime: &IlhaeProfileNativeRuntimeConfig) -> tom
         "requires_openai_auth".to_string(),
         toml::Value::Boolean(false),
     );
+    let query_params = native_runtime_effective_query_params(runtime);
+    if !query_params.is_empty() {
+        table.insert(
+            "query_params".to_string(),
+            string_map_as_toml_value(query_params),
+        );
+    }
+    if let Some(http_headers) = runtime.http_headers.as_ref()
+        && !http_headers.is_empty()
+    {
+        table.insert(
+            "http_headers".to_string(),
+            string_map_as_toml_value(http_headers),
+        );
+    }
+    if let Some(env_http_headers) = runtime.env_http_headers.as_ref()
+        && !env_http_headers.is_empty()
+    {
+        table.insert(
+            "env_http_headers".to_string(),
+            string_map_as_toml_value(env_http_headers),
+        );
+    }
+    if let Some(request_max_retries) = runtime.request_max_retries {
+        if let Ok(request_max_retries) = i64::try_from(request_max_retries) {
+            table.insert(
+                "request_max_retries".to_string(),
+                toml::Value::Integer(request_max_retries),
+            );
+        }
+    }
+    if let Some(stream_max_retries) = runtime.stream_max_retries {
+        if let Ok(stream_max_retries) = i64::try_from(stream_max_retries) {
+            table.insert(
+                "stream_max_retries".to_string(),
+                toml::Value::Integer(stream_max_retries),
+            );
+        }
+    }
     table
 }
 
@@ -1192,7 +1476,7 @@ fn insert_native_model_provider(
     let Some(runtime) = native_runtime_for_profile(profile) else {
         return;
     };
-    if runtime.base_url.trim().is_empty() {
+    if native_runtime_effective_base_url(runtime).is_empty() {
         return;
     }
     model_providers.insert(
@@ -1208,31 +1492,12 @@ fn codex_profile_table_for_ilhae_profile(
     let native = native_runtime_for_profile(profile);
     let engine = profile_engine_id(profile);
     let mut table = toml::value::Table::new();
-    // An openai profile's `command` is the CLI to spawn ("codex"), never a model
-    // name — taking it as the model made the managed config ask for a model
-    // called "codex". Prefer what the user actually configured.
-    let model_name = native
-        .and_then(|runtime| native_runtime_model_name_from_path(&runtime.model_path))
-        .or_else(|| {
-            (engine == "openai")
-                .then(user_model_for_managed_config)
-                .flatten()
-        })
-        .or_else(|| (engine == "openai").then(|| "gpt-5.5".to_string()))
-        .or_else(|| {
-            profile
-                .agent
-                .command
-                .clone()
-                .filter(|command| !command.trim().is_empty())
-        })
-        .or_else(|| profile.agent.engine_id.clone())
-        .unwrap_or_else(|| "ilhae".to_string());
+    let model_name = resolve_ilhae_profile_model_name(profile_id, profile);
     let model_context_window = native
         .map(|runtime| parse_context_window_from_native_args(&runtime.args))
         .unwrap_or(32_768);
     let model_provider = native
-        .filter(|runtime| !runtime.base_url.trim().is_empty())
+        .filter(|runtime| !native_runtime_effective_base_url(runtime).is_empty())
         .map(|_| native_model_provider_id_for_profile(profile_id))
         .or_else(|| {
             native
@@ -2142,6 +2407,23 @@ requires_openai_auth = false
     }
 
     #[test]
+    fn native_runtime_effective_urls_fall_back_to_url_alias() {
+        let mut config = IlhaeProfileNativeRuntimeConfig::default();
+        config.url = Some("http://127.0.0.1:8085/v1".to_string());
+        config.health_url = String::new();
+        config.base_url = String::new();
+
+        assert_eq!(
+            native_runtime_effective_base_url(&config),
+            "http://127.0.0.1:8085/v1"
+        );
+        assert_eq!(
+            native_runtime_effective_health_url(&config),
+            "http://127.0.0.1:8085/health"
+        );
+    }
+
+    #[test]
     fn prepare_ilhae_codex_home_projects_non_ilhae_native_profiles_into_managed_config() {
         let tmp = tempdir().expect("tempdir");
         let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
@@ -2208,6 +2490,13 @@ requires_openai_auth = false
         let tmp = tempdir().expect("tempdir");
         let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
         let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+        let mut query_params = BTreeMap::new();
+        query_params.insert("draft".to_string(), "mtp".to_string());
+        query_params.insert("ngram-mode".to_string(), "1".to_string());
+        let mut http_headers = BTreeMap::new();
+        http_headers.insert("X-Test-Header".to_string(), "test-value".to_string());
+        let mut env_http_headers = BTreeMap::new();
+        env_http_headers.insert("X-Test-Env".to_string(), "TEST_ENV_HEADER".to_string());
 
         let mut config = IlhaeTomlConfig::default();
         config.profile.active = Some("remote-llama".to_string());
@@ -2219,6 +2508,9 @@ requires_openai_auth = false
         remote.native_runtime.provider = Some("llama-server".to_string());
         remote.native_runtime.base_url = "http://tripleyoung.synology.me:8082/v1".to_string();
         remote.native_runtime.health_url = "http://tripleyoung.synology.me:8082/health".to_string();
+        remote.native_runtime.query_params = Some(query_params);
+        remote.native_runtime.http_headers = Some(http_headers);
+        remote.native_runtime.env_http_headers = Some(env_http_headers);
         config.profiles.insert("remote-llama".to_string(), remote);
 
         save_ilhae_toml_config(&config).expect("save config");
@@ -2235,6 +2527,146 @@ requires_openai_auth = false
         assert_eq!(
             parsed.get("model_provider").and_then(toml::Value::as_str),
             Some("ilhae-native-remote-llama")
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .expect("model providers");
+        let remote_provider = model_providers
+            .get("ilhae-native-remote-llama")
+            .and_then(toml::Value::as_table)
+            .expect("remote provider");
+        assert_eq!(
+            remote_provider
+                .get("query_params")
+                .and_then(toml::Value::as_table)
+                .and_then(|query| query.get("draft"))
+                .and_then(toml::Value::as_str),
+            Some("mtp")
+        );
+        assert_eq!(
+            remote_provider
+                .get("query_params")
+                .and_then(toml::Value::as_table)
+                .and_then(|query| query.get("ngram-mode"))
+                .and_then(toml::Value::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            remote_provider
+                .get("http_headers")
+                .and_then(toml::Value::as_table)
+                .and_then(|headers| headers.get("X-Test-Header"))
+                .and_then(toml::Value::as_str),
+            Some("test-value")
+        );
+        assert_eq!(
+            remote_provider
+                .get("env_http_headers")
+                .and_then(toml::Value::as_table)
+                .and_then(|headers| headers.get("X-Test-Env"))
+                .and_then(toml::Value::as_str),
+            Some("TEST_ENV_HEADER")
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_remote_runtime_args_fallback_to_query_params() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let mut config = IlhaeTomlConfig::default();
+        config.profile.active = Some("remote-args".to_string());
+
+        let mut remote = IlhaeProfileConfig::default();
+        remote.agent.engine_id = Some("ilhae".to_string());
+        remote.agent.command = Some("ilhae".to_string());
+        remote.native_runtime.enabled = false;
+        remote.native_runtime.provider = Some("llama-server".to_string());
+        remote.native_runtime.base_url = "http://127.0.0.1:8082/v1".to_string();
+        remote.native_runtime.health_url = "http://127.0.0.1:8082/health".to_string();
+        remote.native_runtime.args = vec![
+            "draft".to_string(),
+            "mtp".to_string(),
+            "ngram-mode".to_string(),
+            "1".to_string(),
+        ];
+        config.profiles.insert("remote-args".to_string(), remote);
+
+        save_ilhae_toml_config(&config).expect("save config");
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .expect("model providers");
+        let remote_provider = model_providers
+            .get("ilhae-native-remote-args")
+            .and_then(toml::Value::as_table)
+            .expect("remote provider");
+        assert_eq!(
+            remote_provider
+                .get("query_params")
+                .and_then(toml::Value::as_table)
+                .and_then(|query| query.get("draft"))
+                .and_then(toml::Value::as_str),
+            Some("mtp")
+        );
+        assert_eq!(
+            remote_provider
+                .get("query_params")
+                .and_then(toml::Value::as_table)
+                .and_then(|query| query.get("ngram-mode"))
+                .and_then(toml::Value::as_str),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_uses_proxy_base_url_for_remote_runtime() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let mut config = IlhaeTomlConfig::default();
+        config.profile.active = Some("remote-proxy".to_string());
+
+        let mut remote = IlhaeProfileConfig::default();
+        remote.agent.engine_id = Some("ilhae".to_string());
+        remote.agent.command = Some("ilhae".to_string());
+        remote.native_runtime.enabled = false;
+        remote.native_runtime.provider = Some("llama-server".to_string());
+        remote.native_runtime.base_url = String::new();
+        remote.native_runtime.proxy_base_url = Some("http://127.0.0.1:8082/v1".to_string());
+        remote.native_runtime.health_url = "http://127.0.0.1:8082/health".to_string();
+        remote.native_runtime.model_path = "/models/Qwen3.6-27B-Fable-Fusion.gguf".to_string();
+        config.profiles.insert("remote-proxy".to_string(), remote);
+
+        save_ilhae_toml_config(&config).expect("save config");
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .expect("model providers");
+        let remote_provider = model_providers
+            .get("ilhae-native-remote-proxy")
+            .and_then(toml::Value::as_table)
+            .expect("remote provider");
+        assert_eq!(
+            remote_provider
+                .get("base_url")
+                .and_then(toml::Value::as_str),
+            Some("http://127.0.0.1:8082/v1")
         );
     }
 

@@ -1209,7 +1209,8 @@ impl ProcessSupervisor {
 
             let is_alive = if key == "local-server" {
                 if let Some((_, config)) = crate::config::get_native_runtime_config(None) {
-                    crate::startup_main::native_runtime_healthcheck(&config.health_url).await
+                    let health_url = crate::config::native_runtime_effective_health_url(&config);
+                    crate::startup_main::native_runtime_healthcheck(&health_url).await
                 } else {
                     false
                 }

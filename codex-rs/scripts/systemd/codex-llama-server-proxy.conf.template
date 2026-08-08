@@ -1,0 +1,59 @@
+# Nginx template for Codex local llama-server edge proxy.
+# Rendered by install-codex-llama-server-proxy-service.sh via envsubst
+# and written to service-side config path.
+
+user  ${LLAMA_PROXY_RUNTIME_USER};
+worker_processes auto;
+error_log /var/log/nginx/codex-llama-server-proxy-error.log warn;
+pid /run/nginx-codex-llama-server-proxy.pid;
+
+worker_rlimit_nofile 10240;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    access_log /var/log/nginx/codex-llama-server-proxy-access.log;
+
+    server_tokens off;
+
+    server {
+        listen ${LLAMA_PROXY_LISTEN_ADDR}:${LLAMA_PROXY_LISTEN_PORT};
+        server_name _;
+
+        # Optional hardening for public exposure.
+        client_max_body_size ${LLAMA_PROXY_CLIENT_MAX_BODY_SIZE};
+        keepalive_timeout ${LLAMA_PROXY_KEEPALIVE_TIMEOUT}s;
+        keepalive_requests ${LLAMA_PROXY_KEEPALIVE_REQUESTS};
+
+        add_header Access-Control-Allow-Origin ${LLAMA_PROXY_CORS_ORIGINS} always;
+        add_header Access-Control-Allow-Methods GET,POST,OPTIONS always;
+        add_header Access-Control-Allow-Headers Content-Type,Authorization always;
+
+        location = /health {
+            proxy_http_version 1.1;
+            proxy_set_header Host ${LLAMA_UPSTREAM_HOST}:${LLAMA_UPSTREAM_PORT};
+            proxy_set_header Connection "";
+            proxy_pass http://${LLAMA_UPSTREAM_HOST}:${LLAMA_UPSTREAM_PORT}/health;
+            proxy_read_timeout ${LLAMA_PROXY_READ_TIMEOUT}s;
+        }
+
+        location /v1 {
+            proxy_http_version 1.1;
+            proxy_set_header Host ${LLAMA_UPSTREAM_HOST}:${LLAMA_UPSTREAM_PORT};
+            proxy_set_header Connection "";
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_pass http://${LLAMA_UPSTREAM_HOST}:${LLAMA_UPSTREAM_PORT};
+            proxy_read_timeout ${LLAMA_PROXY_READ_TIMEOUT}s;
+        }
+
+        location / {
+            return 404;
+        }
+    }
+}

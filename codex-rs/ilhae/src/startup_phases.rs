@@ -400,12 +400,13 @@ pub async fn start_health_server(shared: Arc<SharedState>) -> anyhow::Result<()>
         .with_state(shared.clone());
 
     let listener = tokio::net::TcpListener::bind((
-        std::net::Ipv4Addr::LOCALHOST,
+        crate::port_config::health_host(),
         crate::port_config::health_port(),
     ))
     .await?;
     info!(
-        "[Health] HTTP server listening at http://127.0.0.1:{}",
+        "[Health] HTTP server listening at http://{}:{}",
+        crate::port_config::health_host(),
         crate::port_config::health_port()
     );
     tokio::spawn(async move {

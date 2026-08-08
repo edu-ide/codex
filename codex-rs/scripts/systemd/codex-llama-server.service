@@ -1,0 +1,21 @@
+[Unit]
+Description=Codex remote-control bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/codex-llama-server
+ExecStart=/bin/sh -lc 'cd "${CODEX_WORKING_DIR:-/}" && exec "${CODEX_BIN:-/usr/local/bin/codex}" remote-control'
+ExecStop=/bin/kill -s SIGINT $MAINPID
+ExecReload=/bin/kill -s SIGHUP $MAINPID
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+WorkingDirectory=/
+
+[Install]
+WantedBy=multi-user.target
