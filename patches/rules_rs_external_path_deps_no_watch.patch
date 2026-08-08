@@ -5,35 +5,23 @@
 diff --git a/rs/extensions.bzl b/rs/extensions.bzl
 --- a/rs/extensions.bzl
 +++ b/rs/extensions.bzl
-@@ -421,21 +421,27 @@ def _generate_hub_and_spokes(
+@@ -207,10 +207,17 @@ def _generate_hub_and_spokes(
              # Also watch the file so Bazel re-runs the extension when it changes.
              key = source + "_" + name
              cargo_toml_path = paths.join(package["local_path"], "Cargo.toml")
 -            mctx.watch(mctx.path(cargo_toml_path))
 +            normalized_cargo_toml_path = _normalize_path(paths.normalize(cargo_toml_path))
++            workspace_root_prefix = _normalize_path(cargo_metadata["workspace_root"]) + "/"
 +            if normalized_cargo_toml_path.startswith(workspace_root_prefix):
 +                mctx.watch(mctx.path(normalized_cargo_toml_path))
-             annotation = annotation_for(annotations, name, package["version"])
+             annotation = annotation_for(annotations, name, package["version"], hub_name)
              cargo_toml_json = run_toml2json(mctx, cargo_toml_path)
+-            fact = cargo_toml_fact(cargo_toml_json, {})
 +            path_dep_workspace_cargo_toml_json = workspace_cargo_toml_json
 +            if annotation.workspace_cargo_toml != "Cargo.toml":
 +                path_dep_workspace_cargo_toml_path = paths.join(package["local_path"], annotation.workspace_cargo_toml)
 +                path_dep_workspace_cargo_toml_json = run_toml2json(mctx, path_dep_workspace_cargo_toml_path)
++            fact = cargo_toml_fact(cargo_toml_json, path_dep_workspace_cargo_toml_json)
  
-             dependencies = [
--                _spec_to_dep_dict(dep, spec, annotation, {})
-+                _spec_to_dep_dict(dep, spec, annotation, path_dep_workspace_cargo_toml_json)
-                 for dep, spec in cargo_toml_json.get("dependencies", {}).items()
-             ] + [
--                _spec_to_dep_dict(dep, spec, annotation, {}, is_build = True)
-+                _spec_to_dep_dict(dep, spec, annotation, path_dep_workspace_cargo_toml_json, is_build = True)
-                 for dep, spec in cargo_toml_json.get("build-dependencies", {}).items()
-             ]
- 
-             for target, value in cargo_toml_json.get("target", {}).items():
-                 for dep, spec in value.get("dependencies", {}).items():
--                    converted = _spec_to_dep_dict(dep, spec, annotation, {})
-+                    converted = _spec_to_dep_dict(dep, spec, annotation, path_dep_workspace_cargo_toml_json)
-                     converted["target"] = target
-                     dependencies.append(converted)
- 
+             facts[key] = json.encode(fact)
+             package["strip_prefix"] = fact.get("strip_prefix", "")

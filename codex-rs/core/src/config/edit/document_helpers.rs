@@ -111,6 +111,9 @@ fn serialize_mcp_server_table(config: &McpServerConfig) -> TomlTable {
     if config.supports_parallel_tool_calls {
         entry["supports_parallel_tool_calls"] = value(true);
     }
+    if let Some(omit_tools_from) = &config.omit_tools_from {
+        entry["omit_tools_from"] = array_from_iter(omit_tools_from.iter().map(ToString::to_string));
+    }
     if let Some(timeout) = config.startup_timeout_sec {
         entry["startup_timeout_sec"] = value(timeout.as_secs_f64());
     }
@@ -121,6 +124,7 @@ fn serialize_mcp_server_table(config: &McpServerConfig) -> TomlTable {
         entry["default_tools_approval_mode"] = value(match approval_mode {
             AppToolApproval::Auto => "auto",
             AppToolApproval::Prompt => "prompt",
+            AppToolApproval::Writes => "writes",
             AppToolApproval::Approve => "approve",
         });
     }
@@ -173,6 +177,7 @@ fn serialize_mcp_server_tool(config: &McpServerToolConfig) -> TomlItem {
         entry["approval_mode"] = value(match approval_mode {
             AppToolApproval::Auto => "auto",
             AppToolApproval::Prompt => "prompt",
+            AppToolApproval::Writes => "writes",
             AppToolApproval::Approve => "approve",
         });
     }

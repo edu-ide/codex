@@ -87,6 +87,9 @@ pub(super) fn server_notification_thread_target(
         ServerNotification::RawResponseItemCompleted(notification) => {
             Some(notification.thread_id.as_str())
         }
+        ServerNotification::RawResponseCompleted(notification) => {
+            Some(notification.thread_id.as_str())
+        }
         ServerNotification::AgentMessageDelta(notification) => {
             Some(notification.thread_id.as_str())
         }
@@ -167,6 +170,8 @@ pub(super) fn server_notification_thread_target(
         | ServerNotification::AccountUpdated(_)
         | ServerNotification::AccountRateLimitsUpdated(_)
         | ServerNotification::AppListUpdated(_)
+        | ServerNotification::EnvironmentConnected(_)
+        | ServerNotification::EnvironmentDisconnected(_)
         | ServerNotification::RemoteControlStatusChanged(_)
         | ServerNotification::ExternalAgentConfigImportProgress(_)
         | ServerNotification::ExternalAgentConfigImportCompleted(_)

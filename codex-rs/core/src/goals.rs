@@ -12,6 +12,7 @@ use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
 use crate::state::TurnState;
+use crate::tasks::MailboxParentProvenance;
 use crate::tasks::RegularTask;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::goal_spec::UPDATE_GOAL_TOOL_NAME;
@@ -566,6 +567,10 @@ fn expose_tool_in_non_execution_goal_phase(
                     let tool_name = ToolName::namespaced(namespace_name.clone(), tool.name.clone());
                     !is_blocked_in_non_execution_goal_phase(phase, &tool_name)
                 }
+                ResponsesApiNamespaceTool::Custom(tool) => {
+                    let tool_name = ToolName::namespaced(namespace_name.clone(), tool.name.clone());
+                    !is_blocked_in_non_execution_goal_phase(phase, &tool_name)
+                }
             });
             !namespace.tools.is_empty()
         }
@@ -575,7 +580,6 @@ fn expose_tool_in_non_execution_goal_phase(
         ToolSpec::WebSearch { .. } => {
             !is_blocked_in_non_execution_goal_phase(phase, &ToolName::plain("web_search"))
         }
-        ToolSpec::ImageGeneration { .. } => false,
         ToolSpec::Freeform(tool) => {
             if tool.name == "apply_patch" {
                 return phase_allows_apply_patch_knowledge_writes(phase);
@@ -1311,6 +1315,7 @@ impl GoalTurnAccountingSnapshot {
                 .saturating_sub(last.reasoning_output_tokens),
             total_tokens: current.total_tokens.saturating_sub(last.total_tokens),
             cost_usd: (current.cost_usd - last.cost_usd).max(0.0),
+            ..TokenUsage::default()
         };
         goal_token_delta_for_usage(&delta)
     }
@@ -1869,7 +1874,7 @@ impl Session {
         if !self.enabled(Feature::Goals) {
             return;
         }
-        if should_ignore_goal_for_mode(turn_context.collaboration_mode.mode) {
+        if should_ignore_goal_for_mode(turn_context.collaboration_mode().mode) {
             self.clear_active_goal_accounting(turn_context).await;
             return;
         }
@@ -2201,7 +2206,7 @@ impl Session {
         if !self.enabled(Feature::Goals) {
             return Ok(());
         }
-        if should_ignore_goal_for_mode(turn_context.collaboration_mode.mode) {
+        if should_ignore_goal_for_mode(turn_context.collaboration_mode().mode) {
             return Ok(());
         }
         let Some(state_db) = self.state_db_for_thread_goals().await? else {
@@ -2452,7 +2457,7 @@ impl Session {
         &self,
         turn_context: &TurnContext,
     ) -> anyhow::Result<()> {
-        if should_ignore_goal_for_mode(turn_context.collaboration_mode.mode) {
+        if should_ignore_goal_for_mode(turn_context.collaboration_mode().mode) {
             return Ok(());
         }
 
@@ -2672,8 +2677,14 @@ impl Session {
                 .await;
             }
         }
-        self.start_task(turn_context, Vec::new(), RegularTask::new())
-            .await;
+        self.start_task(
+            turn_context,
+            Vec::new(),
+            RegularTask::new(),
+            /*input_persisted*/ None,
+            MailboxParentProvenance::Attribute,
+        )
+        .await;
     }
 
     async fn goal_continuation_candidate_if_active(
@@ -3420,8 +3431,6 @@ mod tests {
     fn goal_continuation_is_ignored_only_in_plan_mode() {
         assert!(should_ignore_goal_for_mode(ModeKind::Plan));
         assert!(!should_ignore_goal_for_mode(ModeKind::Default));
-        assert!(!should_ignore_goal_for_mode(ModeKind::PairProgramming));
-        assert!(!should_ignore_goal_for_mode(ModeKind::Execute));
     }
 
     #[test]
@@ -3433,6 +3442,7 @@ mod tests {
             reasoning_output_tokens: 20,
             total_tokens: 1_000,
             cost_usd: 0.0,
+            ..TokenUsage::default()
         };
 
         assert_eq!(580, goal_token_delta_for_usage(&usage));

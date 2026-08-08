@@ -8,9 +8,12 @@ use super::rate_limits::SpendControlLimitSnapshotDisplay;
 use super::rate_limits::StatusRateLimitData;
 use super::rate_limits::compose_rate_limit_data_many;
 use crate::history_cell::HistoryCell;
+use crate::history_cell::PlainHistoryCell;
+use crate::keymap::RuntimeKeymap;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::PermissionProfileSnapshot;
+use crate::pager_overlay::TranscriptOverlay;
 use crate::status::StatusAccountDisplay;
 use crate::status::remote_connection::RemoteConnectionStatus;
 use crate::test_support::PathBufExt;
@@ -52,6 +55,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use insta::assert_snapshot;
 use pretty_assertions::assert_eq;
 use ratatui::prelude::*;
+use std::sync::Arc;
 use tempfile::TempDir;
 use unicode_width::UnicodeWidthStr;
 
@@ -97,24 +101,28 @@ fn app_server_workspace_write_profile(network_enabled: bool) -> PermissionProfil
                         value: FileSystemSpecialPath::Root,
                     },
                     access: FileSystemAccessMode::Read,
+                    missing_path_behavior: None,
                 },
                 FileSystemSandboxEntry {
                     path: FileSystemPath::Special {
                         value: FileSystemSpecialPath::ProjectRoots { subpath: None },
                     },
                     access: FileSystemAccessMode::Write,
+                    missing_path_behavior: None,
                 },
                 FileSystemSandboxEntry {
                     path: FileSystemPath::Special {
                         value: FileSystemSpecialPath::SlashTmp,
                     },
                     access: FileSystemAccessMode::Write,
+                    missing_path_behavior: None,
                 },
                 FileSystemSandboxEntry {
                     path: FileSystemPath::Special {
                         value: FileSystemSpecialPath::Tmpdir,
                     },
                     access: FileSystemAccessMode::Write,
+                    missing_path_behavior: None,
                 },
             ],
             glob_scan_max_depth: None,
@@ -206,6 +214,28 @@ fn sanitize_directory(lines: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+fn buffer_to_text(buffer: &Buffer, width: u16) -> String {
+    let lines = buffer
+        .content
+        .chunks(usize::from(width))
+        .map(|row| {
+            row.iter()
+                .map(|cell| {
+                    let symbol = cell.symbol();
+                    symbol
+                        .strip_prefix("\x1b]8;;")
+                        .and_then(|symbol| symbol.split_once('\x07'))
+                        .and_then(|(_, symbol)| symbol.strip_suffix("\x1b]8;;\x07"))
+                        .unwrap_or(symbol)
+                })
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    sanitize_directory(lines).join("\n")
+}
+
 fn reset_at_from(captured_at: &chrono::DateTime<chrono::Local>, seconds: i64) -> i64 {
     (*captured_at + ChronoDuration::seconds(seconds))
         .with_timezone(&Utc)
@@ -289,6 +319,7 @@ async fn status_snapshot_includes_reasoning_details() {
         }),
         credits: None,
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -335,7 +366,7 @@ async fn status_snapshot_shows_chatgpt_plan_without_email() {
 
     write_chatgpt_auth(
         temp_home.path(),
-        ChatGptAuthFixture::new("access-chatgpt").plan_type("enterprise"),
+        ChatGptAuthFixture::new("access-chatgpt").plan_type("enterprise_cbp_automation"),
         AuthCredentialsStoreMode::File,
     )
     .expect("write email-less ChatGPT auth");
@@ -354,7 +385,7 @@ async fn status_snapshot_shows_chatgpt_plan_without_email() {
         account_display,
         StatusAccountDisplay::ChatGpt {
             email: None,
-            plan: Some("Enterprise".to_string()),
+            plan: Some("Enterprise (Automation)".to_string()),
         }
     );
     let usage = TokenUsage::default();
@@ -988,6 +1019,7 @@ async fn status_snapshot_includes_monthly_limit() {
         secondary: None,
         credits: None,
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1053,6 +1085,7 @@ async fn status_snapshot_includes_enterprise_monthly_credit_limit() {
             remaining_percent: 68,
             resets_at: reset_at_from(&captured_at, /*seconds*/ 86_400),
         }),
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1134,6 +1167,7 @@ async fn status_snapshot_uses_generic_limit_labels_for_unsupported_windows() {
         }),
         credits: None,
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1187,6 +1221,7 @@ async fn status_snapshot_shows_unlimited_credits() {
             balance: None,
         }),
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1238,6 +1273,7 @@ async fn status_snapshot_shows_positive_credits() {
             balance: Some("12.5".to_string()),
         }),
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1269,7 +1305,7 @@ async fn status_snapshot_shows_positive_credits() {
 }
 
 #[tokio::test]
-async fn status_snapshot_hides_zero_credits() {
+async fn status_snapshot_shows_available_credits_without_display_balance() {
     let temp_home = TempDir::new().expect("temp home");
     let config = test_config(&temp_home).await;
     let account_display = test_status_account_display();
@@ -1278,47 +1314,58 @@ async fn status_snapshot_hides_zero_credits() {
         .with_ymd_and_hms(2024, 4, 5, 6, 7, 8)
         .single()
         .expect("timestamp");
-    let snapshot = RateLimitSnapshot {
-        limit_id: None,
-        limit_name: None,
-        primary: None,
-        secondary: None,
-        credits: Some(CreditsSnapshot {
-            has_credits: true,
-            unlimited: false,
-            balance: Some("0".to_string()),
-        }),
-        individual_limit: None,
-        plan_type: None,
-        rate_limit_reached_type: None,
-    };
-    let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
     let model_slug = get_model_offline_for_tests(config.model.as_deref());
     let token_info = token_info_for(&model_slug, &config, &usage);
-    let composite = new_status_output(
-        &config,
-        account_display.as_ref(),
-        Some(&token_info),
-        &usage,
-        &None,
-        /*thread_name*/ None,
-        /*forked_from*/ None,
-        Some(&rate_display),
+    for balance in [
         None,
-        captured_at,
-        &model_slug,
-        /*collaboration_mode*/ None,
-        /*reasoning_effort_override*/ None,
-    );
-    let rendered = render_lines(&composite.display_lines(/*width*/ 120));
-    assert!(
-        rendered.iter().all(|line| !line.contains("Credits:")),
-        "expected no Credits line, got {rendered:?}"
-    );
+        Some(String::new()),
+        Some("0".to_string()),
+        Some("not-a-number".to_string()),
+        Some("inf".to_string()),
+    ] {
+        let snapshot = RateLimitSnapshot {
+            limit_id: None,
+            limit_name: None,
+            primary: None,
+            secondary: None,
+            credits: Some(CreditsSnapshot {
+                has_credits: true,
+                unlimited: false,
+                balance,
+            }),
+            individual_limit: None,
+            spend_control_reached: None,
+            plan_type: None,
+            rate_limit_reached_type: None,
+        };
+        let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
+        let composite = new_status_output(
+            &config,
+            account_display.as_ref(),
+            Some(&token_info),
+            &usage,
+            &None,
+            /*thread_name*/ None,
+            /*forked_from*/ None,
+            Some(&rate_display),
+            None,
+            captured_at,
+            &model_slug,
+            /*collaboration_mode*/ None,
+            /*reasoning_effort_override*/ None,
+        );
+        let rendered = render_lines(&composite.display_lines(/*width*/ 120));
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("Credits:") && line.contains("Available")),
+            "expected Credits: Available line, got {rendered:?}"
+        );
+    }
 }
 
 #[tokio::test]
-async fn status_snapshot_hides_when_has_no_credits_flag() {
+async fn status_snapshot_respects_unlimited_without_has_credits_flag() {
     let temp_home = TempDir::new().expect("temp home");
     let config = test_config(&temp_home).await;
     let account_display = test_status_account_display();
@@ -1338,6 +1385,7 @@ async fn status_snapshot_hides_when_has_no_credits_flag() {
             balance: None,
         }),
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1361,8 +1409,10 @@ async fn status_snapshot_hides_when_has_no_credits_flag() {
     );
     let rendered = render_lines(&composite.display_lines(/*width*/ 120));
     assert!(
-        rendered.iter().all(|line| !line.contains("Credits:")),
-        "expected no Credits line when has_credits is false, got {rendered:?}"
+        rendered
+            .iter()
+            .any(|line| line.contains("Credits:") && line.contains("Unlimited")),
+        "expected Credits: Unlimited line, got {rendered:?}"
     );
 }
 
@@ -1447,6 +1497,7 @@ async fn status_snapshot_truncates_in_narrow_terminal() {
         secondary: None,
         credits: None,
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1476,6 +1527,42 @@ async fn status_snapshot_truncates_in_narrow_terminal() {
             *line = line.replace('\\', "/");
         }
     }
+    let sanitized = sanitize_directory(rendered_lines).join("\n");
+
+    assert_snapshot!(sanitized);
+}
+
+#[tokio::test]
+async fn status_snapshot_truncates_halfwidth_kana_in_narrow_terminal() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    set_workspace_cwd(&mut config, test_path_buf("/workspace/tests").abs());
+
+    let account = StatusAccountDisplay::ChatGpt {
+        email: Some("ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ@example.com".to_string()),
+        plan: Some("ｶﾞﾊﾟ plan".to_string()),
+    };
+    let usage = TokenUsage::default();
+    let now = chrono::Local
+        .with_ymd_and_hms(2024, 1, 2, 3, 4, 5)
+        .single()
+        .expect("timestamp");
+    let composite = new_status_output(
+        &config,
+        Some(&account),
+        /*token_info*/ None,
+        &usage,
+        &None,
+        Some("ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ thread".to_string()),
+        /*forked_from*/ None,
+        /*rate_limits*/ None,
+        /*plan_type*/ None,
+        now,
+        "ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ-model",
+        Some("ｶﾞﾊﾟ collaboration mode"),
+        /*reasoning_effort_override*/ None,
+    );
+    let rendered_lines = render_lines(&composite.display_lines(/*width*/ 42));
     let sanitized = sanitize_directory(rendered_lines).join("\n");
 
     assert_snapshot!(sanitized);
@@ -1621,6 +1708,7 @@ async fn status_snapshot_shows_refreshing_limits_notice() {
         }),
         credits: None,
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1652,6 +1740,89 @@ async fn status_snapshot_shows_refreshing_limits_notice() {
     }
     let sanitized = sanitize_directory(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
+}
+
+#[tokio::test]
+async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex-max".to_string());
+    set_workspace_cwd(&mut config, test_path_buf("/workspace/tests").abs());
+    let usage = TokenUsage::default();
+    let now = Local
+        .with_ymd_and_hms(2024, 6, 7, 8, 9, 10)
+        .single()
+        .expect("timestamp");
+    let model_slug = get_model_offline_for_tests(config.model.as_deref());
+
+    let (status, handle) = new_status_output_with_rate_limits_handle(
+        &config,
+        /*runtime_model_provider_base_url*/ None,
+        /*remote_connection*/ None,
+        /*account_display*/ None,
+        /*token_info*/ None,
+        &usage,
+        &None,
+        /*thread_name*/ None,
+        /*forked_from*/ None,
+        /*rate_limits*/ &[],
+        None,
+        now,
+        &model_slug,
+        /*collaboration_mode*/ None,
+        /*reasoning_effort_override*/ None,
+        "<none>".to_string(),
+        /*refreshing_rate_limits*/ true,
+    );
+    let mut overlay =
+        TranscriptOverlay::new(vec![Arc::new(status)], RuntimeKeymap::defaults().pager);
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 80, /*height*/ 30,
+    );
+    let mut buffer = Buffer::empty(area);
+    overlay.render(area, &mut buffer);
+    let before = buffer_to_text(&buffer, area.width);
+
+    handle.finish_rate_limit_refresh(
+        &[RateLimitSnapshotDisplay {
+            limit_name: "spark".to_string(),
+            captured_at: now,
+            primary: Some(RateLimitWindowDisplay {
+                used_percent: 45.0,
+                resets_at: Some("soon".to_string()),
+                window_minutes: Some(300),
+            }),
+            secondary: Some(RateLimitWindowDisplay {
+                used_percent: 30.0,
+                resets_at: Some("later".to_string()),
+                window_minutes: Some(10_080),
+            }),
+            credits: None,
+            individual_limit: None,
+        }],
+        now,
+    );
+    overlay.insert_cell(Arc::new(PlainHistoryCell::new(vec!["next message".into()])));
+    buffer = Buffer::empty(area);
+    overlay.render(area, &mut buffer);
+    let after = buffer_to_text(&buffer, area.width);
+
+    assert!(
+        after.contains("spark limit"),
+        "status output was clipped: {after:?}"
+    );
+    assert!(
+        after.contains("5h limit"),
+        "status output was clipped: {after:?}"
+    );
+    assert!(
+        after.contains("Weekly limit"),
+        "status output was clipped: {after:?}"
+    );
+    insta::assert_snapshot!(
+        "transcript_overlay_status_rate_limit_refresh",
+        format!("before:\n{before}\n\nafter:\n{after}")
+    );
 }
 
 #[tokio::test]
@@ -1691,9 +1862,10 @@ async fn status_snapshot_includes_credits_and_limits() {
         credits: Some(CreditsSnapshot {
             has_credits: true,
             unlimited: false,
-            balance: Some("37.5".to_string()),
+            balance: None,
         }),
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1750,6 +1922,7 @@ async fn status_snapshot_shows_unavailable_limits_message() {
         secondary: None,
         credits: None,
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1809,6 +1982,7 @@ async fn status_snapshot_treats_refreshing_empty_limits_as_unavailable() {
         secondary: None,
         credits: None,
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1882,6 +2056,7 @@ async fn status_snapshot_shows_stale_limits_message() {
         }),
         credits: None,
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };
@@ -1955,6 +2130,7 @@ async fn status_snapshot_cached_limits_hide_credits_without_flag() {
             balance: Some("80".to_string()),
         }),
         individual_limit: None,
+        spend_control_reached: None,
         plan_type: None,
         rate_limit_reached_type: None,
     };

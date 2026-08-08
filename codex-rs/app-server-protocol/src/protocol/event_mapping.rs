@@ -18,7 +18,8 @@ use crate::protocol::v2::ReasoningSummaryTextDeltaNotification;
 use crate::protocol::v2::ReasoningTextDeltaNotification;
 use crate::protocol::v2::TerminalInteractionNotification;
 use crate::protocol::v2::ThreadItem;
-use crate::protocol::v2::WebSearchAction;
+use crate::protocol::v2::WebSearchItem;
+use crate::protocol::v2::web_search_action_from_core;
 use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
 use codex_protocol::protocol::EventMsg;
 use std::collections::HashMap;
@@ -59,6 +60,9 @@ pub fn item_event_to_server_notification(
                             }
                             CoreDynamicToolCallOutputContentItem::InputImage { image_url } => {
                                 DynamicToolCallOutputContentItem::InputImage { image_url }
+                            }
+                            CoreDynamicToolCallOutputContentItem::InputAudio { audio_url } => {
+                                DynamicToolCallOutputContentItem::InputAudio { audio_url }
                             }
                         })
                         .collect(),
@@ -403,11 +407,12 @@ pub fn item_event_to_server_notification(
             ServerNotification::ItemStarted(ItemStartedNotification {
                 thread_id,
                 turn_id,
-                item: ThreadItem::WebSearch {
+                item: ThreadItem::WebSearch(WebSearchItem {
                     id: event.call_id,
                     query: String::new(),
                     action: None,
-                },
+                    results: None,
+                }),
                 started_at_ms: 0,
             })
         }
@@ -415,11 +420,12 @@ pub fn item_event_to_server_notification(
             ServerNotification::ItemCompleted(ItemCompletedNotification {
                 thread_id,
                 turn_id,
-                item: ThreadItem::WebSearch {
+                item: ThreadItem::WebSearch(WebSearchItem {
                     id: event.call_id,
                     query: event.query,
-                    action: Some(WebSearchAction::from(event.action)),
-                },
+                    action: Some(web_search_action_from_core(event.action)),
+                    results: event.results,
+                }),
                 completed_at_ms: 0,
             })
         }
@@ -548,11 +554,12 @@ mod tests {
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn-1".to_string(),
                 started_at_ms: 0,
-                item: ThreadItem::WebSearch {
+                item: ThreadItem::WebSearch(WebSearchItem {
                     id: "search-1".to_string(),
                     query: String::new(),
                     action: None,
-                },
+                    results: None,
+                }),
             },
         );
     }
@@ -567,6 +574,7 @@ mod tests {
                     query: Some("사과".to_string()),
                     queries: None,
                 },
+                results: None,
             }),
             "thread-1",
             "turn-1",
@@ -578,14 +586,15 @@ mod tests {
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn-1".to_string(),
                 completed_at_ms: 0,
-                item: ThreadItem::WebSearch {
+                item: ThreadItem::WebSearch(WebSearchItem {
                     id: "search-1".to_string(),
                     query: "사과".to_string(),
-                    action: Some(WebSearchAction::Search {
+                    action: Some(crate::protocol::v2::WebSearchAction::Search {
                         query: Some("사과".to_string()),
                         queries: None,
                     }),
-                },
+                    results: None,
+                }),
             },
         );
     }

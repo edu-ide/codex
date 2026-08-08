@@ -307,6 +307,7 @@ mod job {
         }];
         prompt.base_instructions = BaseInstructions {
             text: crate::stage_one::PROMPT.to_string(),
+            provenance: None,
         };
         prompt.output_schema = Some(output_schema());
         prompt.output_schema_strict = true;
@@ -650,6 +651,11 @@ fn emit_metrics(context: &StageOneRequestContext, counts: &Stats) {
         );
         context.histogram(
             MEMORY_PHASE_ONE_TOKEN_USAGE,
+            token_usage.cache_write_input_tokens.max(0),
+            &[("token_type", "cache_write_input")],
+        );
+        context.histogram(
+            MEMORY_PHASE_ONE_TOKEN_USAGE,
             token_usage.output_tokens.max(0),
             &[("token_type", "output")],
         );
@@ -821,10 +827,12 @@ mod tests {
                 token_usage: Some(TokenUsage {
                     input_tokens: 10,
                     cached_input_tokens: 2,
+                    cache_write_input_tokens: 0,
                     output_tokens: 3,
                     reasoning_output_tokens: 1,
                     total_tokens: 13,
                     cost_usd: 0.0,
+                    codex_rollout_budget_units: None,
                 }),
             },
             JobResult {
@@ -832,10 +840,12 @@ mod tests {
                 token_usage: Some(TokenUsage {
                     input_tokens: 7,
                     cached_input_tokens: 1,
+                    cache_write_input_tokens: 0,
                     output_tokens: 2,
                     reasoning_output_tokens: 0,
                     total_tokens: 9,
                     cost_usd: 0.0,
+                    codex_rollout_budget_units: None,
                 }),
             },
             JobResult {
@@ -853,10 +863,12 @@ mod tests {
             Some(TokenUsage {
                 input_tokens: 17,
                 cached_input_tokens: 3,
+                cache_write_input_tokens: 0,
                 output_tokens: 5,
                 reasoning_output_tokens: 1,
                 total_tokens: 22,
                 cost_usd: 0.0,
+                codex_rollout_budget_units: None,
             })
         );
     }

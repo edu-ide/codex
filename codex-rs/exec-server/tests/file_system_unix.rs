@@ -23,11 +23,20 @@ use codex_exec_server::CreateDirectoryOptions;
 #[cfg(target_os = "linux")]
 use codex_exec_server::Environment;
 use codex_exec_server::FileMetadata;
+use codex_exec_server::FileSystemSandboxContext;
+use codex_exec_server::ReadDirectoryEntry;
 use codex_exec_server::RemoveOptions;
 use codex_exec_server::WalkEntry;
 use codex_exec_server::WalkEntryKind;
 use codex_exec_server::WalkOptions;
 use codex_exec_server::WalkOutcome;
+use codex_protocol::models::PermissionProfile;
+use codex_protocol::permissions::FileSystemAccessMode;
+use codex_protocol::permissions::FileSystemPath;
+use codex_protocol::permissions::FileSystemSandboxEntry;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::FileSystemSpecialPath;
+use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_utils_path_uri::PathUri;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -181,7 +190,7 @@ async fn sandboxed_file_system_helper_finds_bwrap_on_preserved_path() -> Result<
     }
     let helper_path = std::env::join_paths(path_entries)?;
 
-    let server = exec_server_with_env([("PATH", helper_path.as_os_str())]).await?;
+    let server = exec_server_with_env([("PATH", helper_path.as_os_str())], &[]).await?;
     let environment = Environment::create_for_tests(Some(server.websocket_url().to_string()))?;
     let file_system = environment.get_filesystem();
     let workspace = tmp.path().join("workspace");
@@ -210,10 +219,86 @@ async fn sandboxed_file_system_helper_finds_bwrap_on_preserved_path() -> Result<
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_read_file_materializes_environment_workspace_roots() -> Result<()> {
+    let context = create_file_system_context(FileSystemImplementation::Remote).await?;
+    let file_system = context.file_system;
+    let tmp = TempDir::new()?;
+    let workspace = tmp.path().join("workspace");
+    let workspace_file = workspace.join("included.txt");
+    let excluded_file = tmp.path().join("excluded.txt");
+    std::fs::create_dir(&workspace)?;
+    std::fs::write(&workspace_file, b"included")?;
+    std::fs::write(&excluded_file, b"excluded")?;
+
+    let policy = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
+        path: FileSystemPath::Special {
+            value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
+        },
+        access: FileSystemAccessMode::Read,
+        missing_path_behavior: None,
+    }]);
+    let mut sandbox = FileSystemSandboxContext::from_permission_profile_with_cwd(
+        PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted),
+        PathUri::from_host_native_path(tmp.path())?,
+    );
+    sandbox.workspace_roots = vec![PathUri::from_host_native_path(&workspace)?];
+
+    assert_eq!(
+        file_system
+            .read_file(
+                &PathUri::from_host_native_path(&workspace_file)?,
+                Some(&sandbox),
+            )
+            .await?,
+        b"included"
+    );
+    let error = file_system
+        .read_file(
+            &PathUri::from_host_native_path(&excluded_file)?,
+            Some(&sandbox),
+        )
+        .await
+        .expect_err("read outside environment workspace roots should fail");
+    assert_sandbox_denied(&error);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_read_file_preserves_empty_workspace_roots() -> Result<()> {
+    let context = create_file_system_context(FileSystemImplementation::Remote).await?;
+    let file_system = context.file_system;
+    let tmp = TempDir::new()?;
+    let file = tmp.path().join("excluded.txt");
+    std::fs::write(&file, b"excluded")?;
+
+    let policy = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
+        path: FileSystemPath::Special {
+            value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
+        },
+        access: FileSystemAccessMode::Read,
+        missing_path_behavior: None,
+    }]);
+    let mut sandbox = FileSystemSandboxContext::from_permission_profile_with_cwd(
+        PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted),
+        PathUri::from_host_native_path(tmp.path())?,
+    );
+    sandbox.workspace_roots.clear();
+
+    let error = file_system
+        .read_file(&PathUri::from_host_native_path(&file)?, Some(&sandbox))
+        .await
+        .expect_err("empty workspace roots should not grant cwd access");
+    assert_sandbox_denied(&error);
+
+    Ok(())
+}
+
 #[test_case(FileSystemImplementation::Local ; "local")]
 #[test_case(FileSystemImplementation::Remote ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn file_system_get_metadata_reports_symlink_targets(
+async fn file_system_metadata_and_directory_listing_follow_symlinks(
     implementation: FileSystemImplementation,
 ) -> Result<()> {
     let context = create_file_system_context(implementation).await?;
@@ -267,6 +352,43 @@ async fn file_system_get_metadata_reports_symlink_targets(
         }
     );
 
+    let dangling_symlink_path = tmp.path().join("dangling-link");
+    symlink(tmp.path().join("missing"), &dangling_symlink_path)?;
+    let error = file_system
+        .get_metadata(
+            &PathUri::from_host_native_path(&dangling_symlink_path)?,
+            /*sandbox*/ None,
+        )
+        .await
+        .expect_err("dangling symlink should not resolve");
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+
+    let mut entries = file_system
+        .read_directory(
+            &PathUri::from_host_native_path(tmp.path())?,
+            /*sandbox*/ None,
+        )
+        .await
+        .with_context(|| format!("mode={implementation}"))?;
+    entries.retain(|entry| entry.file_name.contains("link"));
+    entries.sort_by(|left, right| left.file_name.cmp(&right.file_name));
+
+    assert_eq!(
+        entries,
+        vec![
+            ReadDirectoryEntry {
+                file_name: "note-link.txt".to_string(),
+                is_directory: false,
+                is_file: true,
+            },
+            ReadDirectoryEntry {
+                file_name: "notes-link".to_string(),
+                is_directory: true,
+                is_file: false,
+            },
+        ]
+    );
+
     Ok(())
 }
 
@@ -299,6 +421,7 @@ async fn file_system_walk_handles_directory_symlinks(
                 max_directories: 4,
                 max_entries: 8,
                 follow_directory_symlinks: false,
+                prune_hidden_directories: false,
             },
             /*sandbox*/ None,
         )
@@ -321,6 +444,7 @@ async fn file_system_walk_handles_directory_symlinks(
                 max_directories: 4,
                 max_entries: 8,
                 follow_directory_symlinks: true,
+                prune_hidden_directories: false,
             },
             /*sandbox*/ None,
         )
@@ -341,6 +465,68 @@ async fn file_system_walk_handles_directory_symlinks(
                 WalkEntry {
                     path: PathUri::from_host_native_path(target_link.join("root-link"))?,
                     kind: WalkEntryKind::Directory,
+                },
+            ],
+            errors: Vec::new(),
+            truncated: false,
+        }
+    );
+
+    Ok(())
+}
+
+#[test_case(FileSystemImplementation::Local ; "local")]
+#[test_case(FileSystemImplementation::Remote ; "remote")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn file_system_walk_prunes_hidden_directories_without_claiming_visible_aliases(
+    implementation: FileSystemImplementation,
+) -> Result<()> {
+    let context = create_file_system_context(implementation).await?;
+    let file_system = context.file_system;
+
+    let tmp = TempDir::new()?;
+    let root = tmp.path().join("root");
+    let hidden = root.join(".hidden");
+    let hidden_nested = hidden.join("nested");
+    let visible = root.join("visible");
+    std::fs::create_dir_all(&hidden_nested)?;
+    std::fs::write(hidden_nested.join("note.txt"), "visible through alias")?;
+    symlink(&hidden, &visible)?;
+
+    let outcome = file_system
+        .walk(
+            &PathUri::from_host_native_path(&root)?,
+            WalkOptions {
+                max_depth: 3,
+                max_directories: 3,
+                max_entries: 6,
+                follow_directory_symlinks: true,
+                prune_hidden_directories: true,
+            },
+            /*sandbox*/ None,
+        )
+        .await
+        .with_context(|| format!("mode={implementation}"))?;
+
+    assert_eq!(
+        outcome,
+        WalkOutcome {
+            entries: vec![
+                WalkEntry {
+                    path: PathUri::from_host_native_path(hidden)?,
+                    kind: WalkEntryKind::Directory,
+                },
+                WalkEntry {
+                    path: PathUri::from_host_native_path(&visible)?,
+                    kind: WalkEntryKind::Directory,
+                },
+                WalkEntry {
+                    path: PathUri::from_host_native_path(visible.join("nested"))?,
+                    kind: WalkEntryKind::Directory,
+                },
+                WalkEntry {
+                    path: PathUri::from_host_native_path(visible.join("nested/note.txt"))?,
+                    kind: WalkEntryKind::File,
                 },
             ],
             errors: Vec::new(),

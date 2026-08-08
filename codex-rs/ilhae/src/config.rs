@@ -1110,9 +1110,8 @@ fn parse_context_window_from_native_query_params(
     query_params: Option<&std::collections::BTreeMap<String, String>>,
 ) -> Option<u64> {
     let query_params = query_params?;
-    let mut normalized_lookup = |key: &str| -> Option<u64> {
-        query_params.get(key).and_then(|value| value.parse().ok())
-    };
+    let mut normalized_lookup =
+        |key: &str| -> Option<u64> { query_params.get(key).and_then(|value| value.parse().ok()) };
 
     if let Some(value) = normalized_lookup("context-size") {
         return Some(value);
@@ -1146,7 +1145,12 @@ fn parse_context_window_from_native_query_params(
     }
 
     for (raw_key, value) in query_params {
-        match raw_key.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+        match raw_key
+            .trim()
+            .to_ascii_lowercase()
+            .replace('_', "-")
+            .as_str()
+        {
             "context-size" | "ctx-size" | "context-length" | "num-ctx" | "n-ctx" => {
                 if let Ok(value) = value.parse() {
                     return Some(value);
@@ -1159,9 +1163,7 @@ fn parse_context_window_from_native_query_params(
     None
 }
 
-fn native_runtime_model_context_window(
-    runtime: &IlhaeProfileNativeRuntimeConfig,
-) -> u64 {
+fn native_runtime_model_context_window(runtime: &IlhaeProfileNativeRuntimeConfig) -> u64 {
     if let Some(context_window) =
         parse_context_window_from_native_query_params(runtime.query_params.as_ref())
     {
@@ -2783,8 +2785,8 @@ requires_openai_auth = false
         save_ilhae_toml_config(&config).expect("save config");
         prepare_ilhae_codex_home().expect("prepare codex home");
 
-        let managed =
-            std::fs::read_to_string(tmp.path().join("codex-home/config.toml")).expect("read generated config");
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
         let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
 
         let model_providers = parsed
@@ -2834,9 +2836,7 @@ requires_openai_auth = false
             .and_then(toml::Value::as_table)
             .expect("remote profile");
         assert_eq!(
-            profile
-                .get("model_provider")
-                .and_then(toml::Value::as_str),
+            profile.get("model_provider").and_then(toml::Value::as_str),
             Some("ilhae-native-remote-turboquant")
         );
     }

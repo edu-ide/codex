@@ -126,30 +126,34 @@ struct ResponseCompletedUsage {
     output_tokens: i64,
     output_tokens_details: Option<ResponseCompletedOutputTokensDetails>,
     total_tokens: i64,
+    #[serde(default)]
+    codex_rollout_budget_units: Option<serde_json::Number>,
 }
 
 impl From<ResponseCompletedUsage> for TokenUsage {
     fn from(val: ResponseCompletedUsage) -> Self {
+        let input_tokens_details = val.input_tokens_details.unwrap_or_default();
         TokenUsage {
             input_tokens: val.input_tokens,
-            cached_input_tokens: val
-                .input_tokens_details
-                .map(|d| d.cached_tokens)
-                .unwrap_or(0),
+            cached_input_tokens: input_tokens_details.cached_tokens,
+            cache_write_input_tokens: input_tokens_details.cache_write_tokens,
             output_tokens: val.output_tokens,
             reasoning_output_tokens: val
                 .output_tokens_details
                 .map(|d| d.reasoning_tokens)
                 .unwrap_or(0),
             total_tokens: val.total_tokens,
-            ..TokenUsage::default()
+            cost_usd: 0.0,
+            codex_rollout_budget_units: val.codex_rollout_budget_units,
         }
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct ResponseCompletedInputTokensDetails {
     cached_tokens: i64,
+    #[serde(default)]
+    cache_write_tokens: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,6 +172,7 @@ pub struct ResponsesStreamEvent {
     item_id: Option<String>,
     call_id: Option<String>,
     delta: Option<String>,
+    text: Option<String>,
     summary_index: Option<i64>,
     content_index: Option<i64>,
     safety_buffering: Option<Value>,
@@ -232,8 +237,18 @@ impl ResponsesStreamEvent {
             .map(|metadata| TurnModerationMetadataEvent { metadata })
     }
 
-    pub(crate) fn safety_buffering(&self) -> Option<SafetyBuffering> {
-        serde_json::from_value(self.safety_buffering.as_ref()?.clone()).ok()
+    pub(crate) fn safety_buffering(
+        &self,
+        treatment: &SafetyBufferingTreatment,
+    ) -> Option<SafetyBuffering> {
+        let value = self.safety_buffering.as_ref()?;
+        let retry_model_present = value.as_object()?.contains_key("retry_model");
+        let mut buffering: SafetyBuffering = serde_json::from_value(value.clone()).ok()?;
+        buffering.show_buffering_ui = true;
+        if !retry_model_present {
+            buffering.faster_model.clone_from(&treatment.faster_model);
+        }
+        Some(buffering)
     }
 }
 
@@ -349,6 +364,17 @@ pub fn process_responses_event(
                 }));
             }
         }
+        "response.reasoning_summary_text.done" => {
+            if let (Some(item_id), Some(text), Some(summary_index)) =
+                (event.item_id, event.text, event.summary_index)
+            {
+                return Ok(Some(ResponseEvent::ReasoningSummaryDone {
+                    item_id,
+                    text,
+                    summary_index,
+                }));
+            }
+        }
         "response.reasoning_text.delta" => {
             if let (Some(delta), Some(content_index)) = (event.delta, event.content_index) {
                 return Ok(Some(ResponseEvent::ReasoningContentDelta {
@@ -447,8 +473,27 @@ pub fn process_responses_event(
                 }));
             }
         }
-        _ => {
+        "codex.response.metadata"
+        | "response.content_part.added"
+        | "response.content_part.done"
+        | "response.custom_tool_call_input.done"
+        | "response.function_call_arguments.delta"
+        | "response.function_call_arguments.done"
+        | "response.in_progress"
+        | "response.metadata"
+        | "response.output_text.done"
+        | "response.reasoning_summary_part.done"
+        | "responsesapi.websocket_timing" => {
             trace!("unhandled responses event: {}", event.kind);
+        }
+        kind if kind.ends_with(".delta") => {
+            trace!("unhandled responses event: {kind}");
+        }
+        _ => {
+            debug!(
+                "unhandled responses event: {:?}",
+                event.kind.chars().take(128).collect::<String>()
+            );
         }
     }
 
@@ -516,15 +561,19 @@ async fn process_sse_with_treatment(
         let event: ResponsesStreamEvent = match serde_json::from_str(&sse.data) {
             Ok(event) => event,
             Err(e) => {
-                debug!("Failed to parse SSE event: {e}, data: {}", &sse.data);
+                debug!(
+                    error_category = ?e.classify(),
+                    error_line = e.line(),
+                    error_column = e.column(),
+                    payload_bytes = sse.data.len(),
+                    "Failed to parse SSE event"
+                );
                 continue;
             }
         };
         let model_verifications = event.model_verifications();
         let turn_moderation_metadata = event.turn_moderation_metadata();
-        let safety_buffering = event
-            .safety_buffering()
-            .map(|buffering| buffering.with_treatment(&safety_buffering_treatment));
+        let safety_buffering = event.safety_buffering(&safety_buffering_treatment);
 
         if let Some(model) = event.response_model()
             && last_server_model.as_deref() != Some(model.as_str())
@@ -620,7 +669,7 @@ fn is_usage_not_included(error: &Error) -> bool {
 }
 
 fn is_invalid_prompt_error(error: &Error) -> bool {
-    error.code.as_deref() == Some("invalid_prompt")
+    matches!(error.code.as_deref(), Some("invalid_prompt" | "bio_policy"))
 }
 
 fn is_malformed_tool_call_arguments_error(error: &Error) -> bool {
@@ -808,6 +857,61 @@ mod tests {
             }
             other => panic!("unexpected third event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_cache_write_token_usage() {
+        let usage: ResponseCompletedUsage = serde_json::from_value(json!({
+            "input_tokens": 100,
+            "input_tokens_details": {
+                "cached_tokens": 40,
+                "cache_write_tokens": 60
+            },
+            "output_tokens": 10,
+            "output_tokens_details": { "reasoning_tokens": 5 },
+            "total_tokens": 110,
+            "codex_rollout_budget_units": 2.5
+        }))
+        .expect("valid response usage");
+
+        assert_eq!(
+            TokenUsage::from(usage),
+            TokenUsage {
+                input_tokens: 100,
+                cached_input_tokens: 40,
+                cache_write_input_tokens: 60,
+                output_tokens: 10,
+                reasoning_output_tokens: 5,
+                total_tokens: 110,
+                codex_rollout_budget_units: serde_json::Number::from_f64(2.5),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn parses_reasoning_summary_done() {
+        let events = run_sse(vec![
+            json!({
+                "type": "response.reasoning_summary_text.done",
+                "item_id": "reasoning-1",
+                "summary_index": 0,
+                "text": "Checking",
+            }),
+            json!({
+                "type": "response.completed",
+                "response": { "id": "resp1" },
+            }),
+        ])
+        .await;
+
+        assert_matches!(
+            &events[0],
+            ResponseEvent::ReasoningSummaryDone {
+                item_id,
+                text,
+                summary_index: 0,
+            } if item_id == "reasoning-1" && text == "Checking"
+        );
     }
 
     #[tokio::test]
@@ -1052,23 +1156,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_prompt_without_type_is_invalid_request() {
-        let raw_error = r#"{"type":"response.failed","sequence_number":3,"response":{"id":"resp_invalid_prompt_no_type","object":"response","created_at":1759771628,"status":"failed","background":false,"error":{"code":"invalid_prompt","message":"Invalid prompt: we've limited access to this content for safety reasons."},"incomplete_details":null}}"#;
+    async fn content_policy_errors_without_type_are_invalid_requests() {
+        for (code, expected_message) in [
+            (
+                "invalid_prompt",
+                "Invalid prompt: we've limited access to this content for safety reasons.",
+            ),
+            (
+                "bio_policy",
+                "This content was flagged for possible biological risk.",
+            ),
+        ] {
+            let raw_error = json!({
+                "type": "response.failed",
+                "sequence_number": 3,
+                "response": {
+                    "id": "resp_content_policy_no_type",
+                    "object": "response",
+                    "created_at": 1759771628,
+                    "status": "failed",
+                    "background": false,
+                    "error": { "code": code, "message": expected_message },
+                    "incomplete_details": null,
+                },
+            })
+            .to_string();
+            let sse1 = format!("event: response.failed\ndata: {raw_error}\n\n");
 
-        let sse1 = format!("event: response.failed\ndata: {raw_error}\n\n");
+            let events = collect_events(&[sse1.as_bytes()]).await;
 
-        let events = collect_events(&[sse1.as_bytes()]).await;
-
-        assert_eq!(events.len(), 1);
-
-        match &events[0] {
-            Err(ApiError::InvalidRequest { message }) => {
-                assert_eq!(
-                    message,
-                    "Invalid prompt: we've limited access to this content for safety reasons."
-                );
+            assert_eq!(events.len(), 1);
+            match &events[0] {
+                Err(ApiError::InvalidRequest { message }) => {
+                    assert_eq!(message, expected_message);
+                }
+                other => panic!("unexpected event for {code}: {other:?}"),
             }
-            other => panic!("unexpected event: {other:?}"),
         }
     }
 
@@ -1151,7 +1274,27 @@ mod tests {
             },
             TestCase {
                 name: "unknown",
-                event: json!({"type": "response.new_tool_event"}),
+                event: json!({"type": "response.new_tool_event", "sequence_number": 1}),
+                expect_first: is_completed,
+                expected_len: 1,
+            },
+            TestCase {
+                name: "refusal_delta",
+                event: json!({
+                    "type": "response.refusal.delta",
+                    "delta": "no",
+                    "sequence_number": 1
+                }),
+                expect_first: is_completed,
+                expected_len: 1,
+            },
+            TestCase {
+                name: "mcp_call_arguments_delta",
+                event: json!({
+                    "type": "response.mcp_call_arguments.delta",
+                    "delta": "chunk",
+                    "sequence_number": 1
+                }),
                 expect_first: is_completed,
                 expected_len: 1,
             },
@@ -1397,7 +1540,8 @@ mod tests {
                 "delta": "hello",
                 "safety_buffering": {
                     "use_cases": ["cyber"],
-                    "reasons": ["user_risk"]
+                    "reasons": ["user_risk"],
+                    "retry_model": "gpt-fast-wire"
                 }
             }),
             json!({
@@ -1424,7 +1568,10 @@ mod tests {
         assert_matches!(
             &events[1],
             ResponseEvent::SafetyBuffering(buffering)
-                if buffering.use_cases == ["cyber"] && buffering.reasons == ["user_risk"]
+                if buffering.use_cases == ["cyber"]
+                    && buffering.reasons == ["user_risk"]
+                    && buffering.show_buffering_ui
+                    && buffering.faster_model.as_deref() == Some("gpt-fast-wire")
         );
         assert_matches!(&events[2], ResponseEvent::OutputTextDelta(delta) if delta == "hello");
         assert_matches!(
@@ -1439,6 +1586,46 @@ mod tests {
                 if buffering.use_cases == ["cyber"] && buffering.reasons == ["user_risk"]
         );
         assert_matches!(&events[6], ResponseEvent::Completed { response_id, .. } if response_id == "resp-1");
+    }
+
+    #[test]
+    fn safety_buffering_prefers_wire_retry_model_and_only_falls_back_when_omitted() {
+        let treatment = SafetyBufferingTreatment {
+            faster_model: Some("gpt-fast-header".to_string()),
+        };
+
+        for (retry_model, expected_faster_model) in [
+            (None, Some("gpt-fast-header")),
+            (Some(Value::Null), None),
+            (Some(json!("gpt-fast-wire")), Some("gpt-fast-wire")),
+        ] {
+            let mut event = json!({
+                "type": "response.output_text.delta",
+                "safety_buffering": {
+                    "use_cases": ["cyber"],
+                    "reasons": ["user_risk"]
+                }
+            });
+            if let Some(retry_model) = retry_model {
+                event["safety_buffering"]["retry_model"] = retry_model;
+            }
+            let event: ResponsesStreamEvent =
+                serde_json::from_value(event).expect("deserialize safety buffering event");
+
+            let buffering = event
+                .safety_buffering(&treatment)
+                .expect("expected safety buffering payload");
+
+            assert_eq!(
+                buffering,
+                SafetyBuffering {
+                    use_cases: vec!["cyber".to_string()],
+                    reasons: vec!["user_risk".to_string()],
+                    show_buffering_ui: true,
+                    faster_model: expected_faster_model.map(str::to_string),
+                }
+            );
+        }
     }
 
     #[test]

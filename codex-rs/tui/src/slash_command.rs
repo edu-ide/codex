@@ -45,6 +45,7 @@ pub enum SlashCommand {
     Side,
     Btw,
     Copy,
+    Export,
     Raw,
     Diff,
     Mention,
@@ -94,9 +95,10 @@ impl SlashCommand {
             SlashCommand::Delete => "permanently delete this session and exit",
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
-            SlashCommand::App => "continue this session in Codex Desktop",
+            SlashCommand::App => "continue this session in the Desktop app",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
+            SlashCommand::Export => "export the conversation as markdown",
             SlashCommand::Raw => "toggle raw scrollback mode for copy-friendly terminal selection",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
@@ -157,12 +159,16 @@ impl SlashCommand {
             self,
             SlashCommand::Review
                 | SlashCommand::Rename
+                | SlashCommand::New
+                | SlashCommand::Clear
+                | SlashCommand::Fork
                 | SlashCommand::Plan
                 | SlashCommand::Goal
                 | SlashCommand::Superloop
                 | SlashCommand::Ide
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
+                | SlashCommand::Export
                 | SlashCommand::Raw
                 | SlashCommand::Usage
                 | SlashCommand::Pets
@@ -178,6 +184,7 @@ impl SlashCommand {
         matches!(
             self,
             SlashCommand::Copy
+                | SlashCommand::Export
                 | SlashCommand::Raw
                 | SlashCommand::Diff
                 | SlashCommand::Mention
@@ -196,6 +203,7 @@ impl SlashCommand {
             | SlashCommand::Fork
             | SlashCommand::Init
             | SlashCommand::Compact
+            | SlashCommand::Export
             | SlashCommand::Keymap
             | SlashCommand::Vim
             | SlashCommand::ElevateSandbox

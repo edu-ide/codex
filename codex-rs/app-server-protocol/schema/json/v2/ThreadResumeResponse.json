@@ -301,7 +301,7 @@
               "type": "string"
             },
             "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
+              "$ref": "#/definitions/LegacyAppPathString"
             },
             "type": {
               "enum": [
@@ -459,6 +459,26 @@
           ],
           "title": "InputImageDynamicToolCallOutputContentItem",
           "type": "object"
+        },
+        {
+          "properties": {
+            "audioUrl": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "inputAudio"
+              ],
+              "title": "InputAudioDynamicToolCallOutputContentItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "audioUrl",
+            "type"
+          ],
+          "title": "InputAudioDynamicToolCallOutputContentItem",
+          "type": "object"
         }
       ]
     },
@@ -563,12 +583,6 @@
           ]
         },
         "resourceUri": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "templateId": {
           "type": [
             "string",
             "null"
@@ -681,13 +695,29 @@
       ]
     },
     "MultiAgentMode": {
-      "description": "Controls whether the model receives multi-agent delegation instructions and, when it does, whether it should only spawn sub-agents after an explicit user request or may delegate proactively when doing so would help. `none` leaves the multi-agent tools available without injecting delegation instructions.",
-      "enum": [
-        "none",
-        "explicitRequestOnly",
-        "proactive"
-      ],
-      "type": "string"
+      "description": "Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint defines the policy instead of a built-in policy.",
+      "oneOf": [
+        {
+          "enum": [
+            "explicitRequestOnly",
+            "proactive"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "custom": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "custom"
+          ],
+          "title": "CustomMultiAgentMode",
+          "type": "object"
+        }
+      ]
     },
     "NetworkAccess": {
       "enum": [
@@ -1058,17 +1088,6 @@
           "description": "Whether the thread is ephemeral and should not be materialized on disk.",
           "type": "boolean"
         },
-        "extra": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ThreadExtra"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional implementation-specific thread data."
-        },
         "forkedFromId": {
           "description": "Source thread id when this thread was created by forking another thread.",
           "type": [
@@ -1086,15 +1105,6 @@
             }
           ],
           "description": "Optional Git metadata captured when the thread was created."
-        },
-        "historyMode": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ThreadHistoryMode"
-            }
-          ],
-          "default": "legacy",
-          "description": "Persisted thread history contract selected when this thread was created."
         },
         "id": {
           "description": "Identifier for this thread. Codex-generated thread IDs are UUIDv7.",
@@ -1131,6 +1141,27 @@
         },
         "recencyAt": {
           "description": "Unix timestamp (in seconds) used for thread recency ordering.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "section": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadSection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The independently persisted section selected for this thread, if any."
+        },
+        "sectionEnteredAt": {
+          "default": null,
+          "description": "Unix timestamp in seconds when the thread entered its current section.",
           "format": "int64",
           "type": [
             "integer",
@@ -1432,8 +1463,24 @@
             "id": {
               "type": "string"
             },
+            "pluginId": {
+              "default": null,
+              "description": "Trusted first-party plugin id when this command resolves to one plugin script.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "processId": {
               "description": "Identifier for the underlying PTY process (when available).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scriptPath": {
+              "default": null,
+              "description": "Safe plugin-relative path when this command resolves to one plugin script.",
               "type": [
                 "string",
                 "null"
@@ -1544,6 +1591,12 @@
             "pluginId": {
               "type": [
                 "string",
+                "null"
+              ]
+            },
+            "readOnlyHint": {
+              "type": [
+                "boolean",
                 "null"
               ]
             },
@@ -1779,6 +1832,15 @@
             "query": {
               "type": "string"
             },
+            "results": {
+              "default": null,
+              "description": "Structured search results returned out-of-band by standalone web search.\n\nThese stay as opaque JSON at the extension/app-server boundary so new result fields and result types can pass through without a Codex release.",
+              "items": true,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
             "type": {
               "enum": [
                 "webSearch"
@@ -1820,6 +1882,7 @@
           "type": "object"
         },
         {
+          "description": "Display item emitted by the interruptible `clock.sleep` tool.",
           "properties": {
             "durationMs": {
               "format": "uint64",
@@ -1871,6 +1934,13 @@
             },
             "status": {
               "type": "string"
+            },
+            "transparentBackground": {
+              "default": null,
+              "type": [
+                "boolean",
+                "null"
+              ]
             },
             "type": {
               "enum": [
@@ -1958,6 +2028,24 @@
           "type": "object"
         }
       ]
+    },
+    "ThreadSection": {
+      "description": "An independently persisted, user-visible thread section.",
+      "properties": {
+        "id": {
+          "description": "Opaque UUIDv7 identity that remains stable when the section is renamed.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The current user-visible section name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
     },
     "ThreadSource": {
       "type": "string"
@@ -2287,6 +2375,46 @@
         },
         {
           "properties": {
+            "type": {
+              "enum": [
+                "audio"
+              ],
+              "title": "AudioUserInputType",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "title": "AudioUserInput",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "localAudio"
+              ],
+              "title": "LocalAudioUserInputType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "type"
+          ],
+          "title": "LocalAudioUserInput",
+          "type": "object"
+        },
+        {
+          "properties": {
             "name": {
               "type": "string"
             },
@@ -2438,18 +2566,6 @@
     }
   },
   "properties": {
-    "activePermissionProfile": {
-      "anyOf": [
-        {
-          "$ref": "#/definitions/ActivePermissionProfile"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Named or implicit built-in profile that produced the active permissions, when known."
-    },
     "approvalPolicy": {
       "$ref": "#/definitions/AskForApproval"
     },
@@ -2463,18 +2579,6 @@
     },
     "cwd": {
       "$ref": "#/definitions/AbsolutePathBuf"
-    },
-    "initialTurnsPage": {
-      "anyOf": [
-        {
-          "$ref": "#/definitions/TurnsPage"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "`thread/turns/list` page returned when requested by `initialTurnsPage`."
     },
     "instructionSources": {
       "default": [],
@@ -2490,15 +2594,6 @@
     "modelProvider": {
       "type": "string"
     },
-    "multiAgentMode": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/MultiAgentMode"
-        }
-      ],
-      "default": "explicitRequestOnly",
-      "description": "@deprecated Always `explicitRequestOnly`. Use `reasoningEffort` for Ultra behavior."
-    },
     "reasoningEffort": {
       "anyOf": [
         {
@@ -2508,14 +2603,6 @@
           "type": "null"
         }
       ]
-    },
-    "runtimeWorkspaceRoots": {
-      "default": [],
-      "description": "Thread-scoped runtime workspace roots used to materialize `:workspace_roots`.",
-      "items": {
-        "$ref": "#/definitions/AbsolutePathBuf"
-      },
-      "type": "array"
     },
     "sandbox": {
       "allOf": [

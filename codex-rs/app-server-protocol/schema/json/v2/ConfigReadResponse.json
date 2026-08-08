@@ -78,6 +78,7 @@
       "enum": [
         "auto",
         "prompt",
+        "writes",
         "approve"
       ],
       "type": "string"
@@ -269,17 +270,6 @@
             }
           ],
           "description": "[UNSTABLE] Optional default for where approval requests are routed for review."
-        },
-        "apps": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AppsConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         },
         "compact_prompt": {
           "type": [

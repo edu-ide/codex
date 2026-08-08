@@ -1,5 +1,8 @@
 [package]
+edition.workspace = true
+license.workspace = true
 name = "codex-skills"
+version.workspace = true
 build = "build.rs"
 
 [lib]
@@ -10,20 +13,17 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[package.edition]
-workspace = true
+[dependencies]
+codex-protocol = { workspace = true }
+codex-shell-command = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-path-uri = { workspace = true }
+include_dir = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_yaml = { workspace = true }
+shlex = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 
-[package.license]
-workspace = true
-
-[package.version]
-workspace = true
-
-[dependencies.codex-utils-absolute-path]
-workspace = true
-
-[dependencies.include_dir]
-workspace = true
-
-[dependencies.thiserror]
-version = "2.0.17"
+[dev-dependencies]
+pretty_assertions = { workspace = true }

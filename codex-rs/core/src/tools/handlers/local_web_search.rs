@@ -120,12 +120,23 @@ impl LocalWebSearchHandler {
                             call_id,
                             query: query.to_string(),
                             action,
+                            results: None,
                         }),
                     )
                     .await;
                 return Err(err);
             }
         };
+        let event_results = results
+            .iter()
+            .map(|result| {
+                serde_json::json!({
+                    "title": result.title,
+                    "url": result.url,
+                    "snippet": result.snippet,
+                })
+            })
+            .collect();
         session
             .send_event(
                 &turn,
@@ -133,6 +144,7 @@ impl LocalWebSearchHandler {
                     call_id,
                     query: query.to_string(),
                     action,
+                    results: Some(event_results),
                 }),
             )
             .await;

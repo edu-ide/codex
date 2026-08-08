@@ -1,7 +1,10 @@
 use super::*;
 use crate::config::ConfigBuilder;
+use crate::config::PermissionProfileSnapshot;
 use crate::context::ContextualUserFragment;
 use crate::environment_selection::TurnEnvironmentSnapshot;
+use crate::environment_selection::TurnEnvironmentState;
+use crate::session::turn_context::EnvironmentConfig;
 use crate::session::turn_context::TurnEnvironment;
 use codex_config::ConfigLayerEntry;
 use codex_config::ConfigLayerStack;
@@ -19,6 +22,7 @@ use codex_exec_server::ReadDirectoryEntry;
 use codex_exec_server::RemoveOptions;
 use codex_extension_api::UserInstructions;
 use codex_features::Feature;
+use codex_protocol::models::PermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
 use core_test_support::PathBufExt;
@@ -34,11 +38,13 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tempfile::TempDir;
 use tokio::sync::Notify;
+use tokio::sync::Semaphore;
 
 #[derive(Clone, Copy)]
 enum InjectedFailure {
     Metadata(io::ErrorKind),
     MetadataBlocked,
+    MetadataBlockedByFilenamePrefix(&'static str),
     MetadataPending,
     Read(io::ErrorKind),
 }
@@ -49,11 +55,20 @@ struct FailingFileSystem {
     metadata_calls: Arc<MetadataCallCounts>,
 }
 
-#[derive(Default)]
 struct MetadataCallCounts {
     paths: Mutex<Vec<PathUri>>,
     started: Notify,
-    release: Notify,
+    release: Semaphore,
+}
+
+impl Default for MetadataCallCounts {
+    fn default() -> Self {
+        Self {
+            paths: Mutex::new(Vec::new()),
+            started: Notify::new(),
+            release: Semaphore::new(0),
+        }
+    }
 }
 
 impl FailingFileSystem {
@@ -113,7 +128,26 @@ impl FailingFileSystem {
                 Err(io::Error::new(kind, "injected metadata failure"))
             }
             InjectedFailure::MetadataBlocked if path_abs == self.path => {
-                self.metadata_calls.release.notified().await;
+                self.metadata_calls
+                    .release
+                    .acquire()
+                    .await
+                    .expect("metadata release semaphore")
+                    .forget();
+                LOCAL_FS.get_metadata(path, sandbox).await
+            }
+            InjectedFailure::MetadataBlockedByFilenamePrefix(prefix)
+                if path_abs
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(prefix)) =>
+            {
+                self.metadata_calls
+                    .release
+                    .acquire()
+                    .await
+                    .expect("metadata release semaphore")
+                    .forget();
                 LOCAL_FS.get_metadata(path, sandbox).await
             }
             InjectedFailure::MetadataPending if path_abs == self.path => {
@@ -121,6 +155,7 @@ impl FailingFileSystem {
             }
             InjectedFailure::Metadata(_)
             | InjectedFailure::MetadataBlocked
+            | InjectedFailure::MetadataBlockedByFilenamePrefix(_)
             | InjectedFailure::MetadataPending
             | InjectedFailure::Read(_) => LOCAL_FS.get_metadata(path, sandbox).await,
         }
@@ -293,21 +328,27 @@ fn resolved_local_environments<const N: usize>(
     environments: [(&str, AbsolutePathBuf); N],
 ) -> TurnEnvironmentSnapshot {
     TurnEnvironmentSnapshot {
-        turn_environments: environments
+        environments: environments
             .into_iter()
             .map(|(environment_id, cwd)| {
-                TurnEnvironment::new(
+                TurnEnvironmentState::Ready(TurnEnvironment::new(
                     environment_id.to_string(),
                     Arc::new(
                         Environment::create_for_tests(/*exec_server_url*/ None)
                             .expect("local environment"),
                     ),
                     PathUri::from_abs_path(&cwd),
+                    Vec::new(),
                     /*shell*/ None,
-                )
+                    EnvironmentConfig {
+                        allow_login_shell: true,
+                        permission_profile: PermissionProfileSnapshot::legacy(
+                            PermissionProfile::read_only(),
+                        ),
+                    },
+                ))
             })
             .collect(),
-        starting: Vec::new(),
     }
 }
 
@@ -634,9 +675,15 @@ async fn read_agents_md_propagates_metadata_errors() {
     };
 
     let cwd = config.cwd.clone();
-    let err = read_agents_md(&config.config, &fs, "local", &PathUri::from_abs_path(&cwd))
-        .await
-        .expect_err("metadata error");
+    let err = read_agents_md(
+        &config.config,
+        &fs,
+        "local",
+        &PathUri::from_abs_path(&cwd),
+        config.project_doc_max_bytes,
+    )
+    .await
+    .expect_err("metadata error");
 
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 }
@@ -653,9 +700,15 @@ async fn read_agents_md_propagates_read_errors() {
     };
 
     let cwd = config.cwd.clone();
-    let err = read_agents_md(&config.config, &fs, "local", &PathUri::from_abs_path(&cwd))
-        .await
-        .expect_err("read error");
+    let err = read_agents_md(
+        &config.config,
+        &fs,
+        "local",
+        &PathUri::from_abs_path(&cwd),
+        config.project_doc_max_bytes,
+    )
+    .await
+    .expect_err("read error");
 
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 }
@@ -672,9 +725,15 @@ async fn read_agents_md_ignores_files_removed_after_discovery() {
     };
 
     let cwd = config.cwd.clone();
-    let loaded = read_agents_md(&config.config, &fs, "local", &PathUri::from_abs_path(&cwd))
-        .await
-        .expect("removed file is recoverable");
+    let loaded = read_agents_md(
+        &config.config,
+        &fs,
+        "local",
+        &PathUri::from_abs_path(&cwd),
+        config.project_doc_max_bytes,
+    )
+    .await
+    .expect("removed file is recoverable");
 
     assert_eq!(loaded, None);
 }
@@ -719,9 +778,113 @@ async fn marker_search_does_not_wait_for_a_higher_ancestor() {
 }
 
 #[tokio::test]
-async fn project_root_marker_search_pipelines_bounded_window_and_continues() {
+async fn project_root_marker_search_limits_concurrent_probes_and_preserves_order() {
+    const CONCURRENCY_LIMIT: usize = 256;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    fs::write(tmp.path().join("AGENTS.md"), "project doc").unwrap();
+    let nested = tmp.path().join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("AGENTS.md"), "nested project doc").unwrap();
+
+    let markers = (0..=CONCURRENCY_LIMIT)
+        .map(|index| format!(".project-root-{index}"))
+        .collect::<Vec<_>>();
+    fs::write(
+        tmp.path()
+            .join(markers.last().expect("last project root marker")),
+        "",
+    )
+    .unwrap();
+    let marker_refs = markers.iter().map(String::as_str).collect::<Vec<_>>();
+
+    let mut config = make_config_with_project_root_markers(
+        &tmp,
+        /*limit*/ 4096,
+        /*instructions*/ None,
+        &marker_refs,
+    )
+    .await;
+    config.cwd = nested.abs();
+    let cwd = PathUri::from_abs_path(&config.cwd);
+    let expected_initial_probes = markers
+        .iter()
+        .map(|marker| cwd.join(marker).expect("project root marker path"))
+        .collect::<Vec<_>>();
+    let max_probe_count = markers.len() * config.cwd.ancestors().count();
+    let metadata_calls = Arc::new(MetadataCallCounts::default());
+    let fs = FailingFileSystem {
+        path: config.cwd.join("unused"),
+        failure: InjectedFailure::MetadataBlockedByFilenamePrefix(".project-root-"),
+        metadata_calls: Arc::clone(&metadata_calls),
+    };
+
+    let assertions = async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let started = metadata_calls.started.notified();
+                if metadata_calls
+                    .paths
+                    .lock()
+                    .expect("metadata paths lock")
+                    .len()
+                    >= CONCURRENCY_LIMIT
+                {
+                    break;
+                }
+                started.await;
+            }
+        })
+        .await
+        .expect("initial marker window should start");
+        assert_eq!(
+            *metadata_calls.paths.lock().expect("metadata paths lock"),
+            expected_initial_probes[..CONCURRENCY_LIMIT]
+        );
+
+        metadata_calls.release.add_permits(1);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let started = metadata_calls.started.notified();
+                if metadata_calls
+                    .paths
+                    .lock()
+                    .expect("metadata paths lock")
+                    .len()
+                    > CONCURRENCY_LIMIT
+                {
+                    break;
+                }
+                started.await;
+            }
+        })
+        .await
+        .expect("next marker probe should start");
+        assert_eq!(
+            *metadata_calls.paths.lock().expect("metadata paths lock"),
+            expected_initial_probes
+        );
+
+        metadata_calls.release.add_permits(max_probe_count);
+    };
+    let (paths, ()) = tokio::join!(
+        super::agents_md_paths(&config.config, &cwd, &fs),
+        assertions
+    );
+    let paths = paths.expect("AGENTS.md discovery");
+
+    assert_eq!(
+        paths,
+        vec![
+            PathUri::from_abs_path(&tmp.path().join(DEFAULT_AGENTS_MD_FILENAME).abs()),
+            PathUri::from_abs_path(&nested.join(DEFAULT_AGENTS_MD_FILENAME).abs()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn agents_md_search_starts_all_directory_probes() {
     const NESTING_DEPTH: usize = 9;
-    const CONCURRENCY_LIMIT: usize = 8;
 
     let tmp = tempfile::tempdir().expect("tempdir");
     fs::write(tmp.path().join(".git"), "").unwrap();
@@ -735,9 +898,19 @@ async fn project_root_marker_search_pipelines_bounded_window_and_continues() {
     let mut config = make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await;
     config.cwd = nested.abs();
     let cwd = PathUri::from_abs_path(&config.cwd);
+    let mut search_dirs = config
+        .cwd
+        .ancestors()
+        .take(NESTING_DEPTH + 1)
+        .collect::<Vec<_>>();
+    search_dirs.reverse();
+    let expected_probes = search_dirs
+        .into_iter()
+        .map(|directory| PathUri::from_abs_path(&directory.join(LOCAL_AGENTS_MD_FILENAME)))
+        .collect::<Vec<_>>();
     let metadata_calls = Arc::new(MetadataCallCounts::default());
     let fs = FailingFileSystem {
-        path: config.cwd.join(".git"),
+        path: tmp.path().join(LOCAL_AGENTS_MD_FILENAME).abs(),
         failure: InjectedFailure::MetadataBlocked,
         metadata_calls: Arc::clone(&metadata_calls),
     };
@@ -747,34 +920,42 @@ async fn project_root_marker_search_pipelines_bounded_window_and_continues() {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let started = metadata_calls.started.notified();
-            if metadata_calls
-                .paths
-                .lock()
-                .expect("metadata paths lock")
-                .len()
-                >= CONCURRENCY_LIMIT
-            {
+            if expected_probes.iter().all(|candidate| {
+                metadata_calls
+                    .paths
+                    .lock()
+                    .expect("metadata paths lock")
+                    .contains(candidate)
+            }) {
                 break;
             }
             started.await;
         }
     })
     .await
-    .expect("initial marker window should start");
-    assert_eq!(
-        metadata_calls
-            .paths
-            .lock()
-            .expect("metadata paths lock")
-            .len(),
-        CONCURRENCY_LIMIT
-    );
+    .expect("all directory probes should start");
 
-    metadata_calls.release.notify_one();
+    let mut actual_probes = metadata_calls
+        .paths
+        .lock()
+        .expect("metadata paths lock")
+        .iter()
+        .filter(|path| expected_probes.contains(path))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    actual_probes.sort();
+    let mut expected_probes = expected_probes
+        .into_iter()
+        .map(|path| path.to_string())
+        .collect::<Vec<_>>();
+    expected_probes.sort();
+    assert_eq!(actual_probes, expected_probes);
+
+    metadata_calls.release.add_permits(1);
     let paths = tokio::time::timeout(std::time::Duration::from_secs(5), search)
         .await
-        .expect("marker search should complete")
-        .expect("marker search task")
+        .expect("AGENTS.md search should complete")
+        .expect("AGENTS.md search task")
         .expect("AGENTS.md discovery");
 
     assert_eq!(
@@ -1012,12 +1193,12 @@ async fn primary_only_project_doc_preserves_legacy_layout_with_multiple_bound_en
 }
 
 #[tokio::test]
-async fn project_doc_byte_limit_is_applied_independently_per_environment() {
+async fn project_doc_byte_limit_is_shared_across_environments() {
     let primary = tempfile::tempdir().expect("primary tempdir");
     let secondary = tempfile::tempdir().expect("secondary tempdir");
     fs::write(primary.path().join("AGENTS.md"), "ABCDE").unwrap();
     fs::write(secondary.path().join("AGENTS.md"), "VWXYZ").unwrap();
-    let config = make_config(&primary, /*limit*/ 3, /*instructions*/ None).await;
+    let config = make_config(&primary, /*limit*/ 7, /*instructions*/ None).await;
     let environments = resolved_local_environments([
         ("primary", config.cwd.clone()),
         ("secondary", secondary.abs()),
@@ -1031,7 +1212,7 @@ async fn project_doc_byte_limit_is_applied_independently_per_environment() {
     assert_eq!(
         loaded.text(),
         format!(
-            "for `primary` with root {}\n\nABC\n\nfor `secondary` with root {}\n\nVWX",
+            "for `primary` with root {}\n\nABCDE\n\nfor `secondary` with root {}\n\nVW",
             primary.path().display(),
             secondary.path().display()
         )
@@ -1039,9 +1220,7 @@ async fn project_doc_byte_limit_is_applied_independently_per_environment() {
 }
 
 #[tokio::test]
-async fn multiple_environments_can_exceed_single_environment_project_doc_limit() {
-    // TODO(anp): Add an aggregate cap across environments instead of allowing the combined
-    // project instructions to grow by one full per-environment budget for every binding.
+async fn full_primary_environment_budget_excludes_later_environment_docs() {
     const LIMIT: usize = 8;
     let primary = tempfile::tempdir().expect("primary tempdir");
     let secondary = tempfile::tempdir().expect("secondary tempdir");
@@ -1069,10 +1248,9 @@ async fn multiple_environments_can_exceed_single_environment_project_doc_limit()
         .map(|entry| entry.contents.len())
         .sum::<usize>();
 
-    assert_eq!(project_bytes, LIMIT * 2);
-    assert!(project_bytes > config.project_doc_max_bytes);
+    assert_eq!(project_bytes, LIMIT);
     assert!(loaded.text().contains(&primary_doc));
-    assert!(loaded.text().contains(&secondary_doc));
+    assert!(!loaded.text().contains(&secondary_doc));
 }
 
 #[tokio::test]

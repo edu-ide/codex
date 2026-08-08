@@ -33,6 +33,8 @@ fn skills_to_info(
                         short_description: interface.short_description,
                         icon_small: interface.icon_small,
                         icon_large: interface.icon_large,
+                        icon_small_url: None,
+                        icon_large_url: None,
                         brand_color: interface.brand_color,
                         default_prompt: interface.default_prompt,
                     }
@@ -68,10 +70,12 @@ fn hooks_to_info(hooks: &[codex_hooks::HookListEntry]) -> Vec<HookMetadata> {
             key: hook.key.clone(),
             event_name: hook.event_name.into(),
             handler_type: hook.handler_type.into(),
+            execution_mode: hook.execution_mode.into(),
             matcher: hook.matcher.clone(),
             command: hook.command.clone(),
             timeout_sec: hook.timeout_sec,
             status_message: hook.status_message.clone(),
+            additional_context_limit: hook.additional_context_limit,
             source_path: hook.source_path.clone(),
             source: hook.source.into(),
             plugin_id: hook.plugin_id.clone(),
@@ -157,9 +161,13 @@ impl CatalogRequestProcessor {
         &self,
         params: ModelListParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        Self::list_models(self.thread_manager.clone(), params)
-            .await
-            .map(|response| Some(response.into()))
+        Self::list_models(
+            self.thread_manager.clone(),
+            self.config.http_client_factory(),
+            params,
+        )
+        .await
+        .map(|response| Some(response.into()))
     }
 
     pub(crate) async fn experimental_feature_list(
@@ -247,6 +255,7 @@ impl CatalogRequestProcessor {
 
     async fn list_models(
         thread_manager: Arc<ThreadManager>,
+        http_client_factory: codex_http_client::HttpClientFactory,
         params: ModelListParams,
     ) -> Result<ModelListResponse, JSONRPCErrorError> {
         let ModelListParams {
@@ -254,7 +263,12 @@ impl CatalogRequestProcessor {
             cursor,
             include_hidden,
         } = params;
-        let models = supported_models(thread_manager, include_hidden.unwrap_or(false)).await;
+        let models = supported_models(
+            thread_manager,
+            include_hidden.unwrap_or(false),
+            http_client_factory,
+        )
+        .await;
         let total = models.len();
 
         if total == 0 {
@@ -493,6 +507,13 @@ impl CatalogRequestProcessor {
             .await;
         let skills_service = self.thread_manager.skills_service();
         let plugins_manager = self.thread_manager.plugins_manager();
+        if force_reload
+            && workspace_codex_plugins_enabled
+            && config.features.enabled(Feature::Plugins)
+        {
+            plugins_manager.clear_cache();
+            skills_service.clear_cache();
+        }
         let fs = self
             .thread_manager
             .environment_manager()
@@ -522,23 +543,38 @@ impl CatalogRequestProcessor {
                             );
                         }
                     };
-                    let effective_skill_roots = if workspace_codex_plugins_enabled {
-                        let plugins_input = config.plugins_config_input();
-                        plugins_manager
-                            .effective_skill_roots_for_layer_stack(
-                                &config_layer_stack,
-                                &plugins_input,
-                            )
-                            .await
-                    } else {
-                        Vec::new()
-                    };
-                    let skills_input = codex_core::skills::SkillsLoadInput::new(
+                    let (effective_skill_roots, plugin_skill_snapshots) =
+                        if workspace_codex_plugins_enabled {
+                            let plugins_input = config.plugins_config_input();
+                            if config_layer_stack == plugins_input.config_layer_stack {
+                                let plugins =
+                                    plugins_manager.plugins_for_config(&plugins_input).await;
+                                (
+                                    plugins.effective_plugin_skill_roots(),
+                                    plugins_manager
+                                        .plugin_skill_snapshots_for_config(&plugins_input),
+                                )
+                            } else {
+                                (
+                                    plugins_manager
+                                        .effective_skill_roots_for_layer_stack(
+                                            &config_layer_stack,
+                                            &plugins_input,
+                                        )
+                                        .await,
+                                    None,
+                                )
+                            }
+                        } else {
+                            (Vec::new(), None)
+                        };
+                    let skills_input = codex_core::skills::HostSkillsLoadInput::new(
                         cwd_abs.clone(),
                         effective_skill_roots,
                         config_layer_stack,
                         config.bundled_skills_enabled(),
-                    );
+                    )
+                    .with_plugin_skill_snapshots(plugin_skill_snapshots);
                     let snapshot = skills_service
                         .snapshot_for_cwd(&skills_input, force_reload, fs)
                         .await;

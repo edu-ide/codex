@@ -164,7 +164,7 @@
               "type": "string"
             },
             "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
+              "$ref": "#/definitions/LegacyAppPathString"
             },
             "type": {
               "enum": [
@@ -344,31 +344,10 @@
     },
     "CommandExecutionRequestApprovalParams": {
       "properties": {
-        "additionalPermissions": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AdditionalPermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional additional permissions requested for this command."
-        },
         "approvalId": {
           "description": "Unique identifier for this specific approval callback.\n\nFor regular shell/unified_exec approvals, this is null.\n\nFor zsh-exec-bridge subcommand approvals, multiple callbacks can belong to one parent `itemId`, so `approvalId` is a distinct opaque callback id (a UUID) used to disambiguate routing.",
           "type": [
             "string",
-            "null"
-          ]
-        },
-        "availableDecisions": {
-          "description": "Ordered list of decisions the client may present for this prompt.",
-          "items": {
-            "$ref": "#/definitions/CommandExecutionApprovalDecision"
-          },
-          "type": [
-            "array",
             "null"
           ]
         },
@@ -466,17 +445,6 @@
         "startedAtMs",
         "threadId",
         "turnId"
-      ],
-      "type": "object"
-    },
-    "CurrentTimeReadParams": {
-      "properties": {
-        "threadId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "threadId"
       ],
       "type": "object"
     },
@@ -795,9 +763,13 @@
               "type": "string"
             },
             "subpath": {
-              "type": [
-                "string",
-                "null"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/LegacyAppPathString"
+                },
+                {
+                  "type": "null"
+                }
               ]
             }
           },
@@ -849,9 +821,13 @@
               "type": "string"
             },
             "subpath": {
-              "type": [
-                "string",
-                "null"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/LegacyAppPathString"
+                },
+                {
+                  "type": "null"
+                }
               ]
             }
           },
@@ -1756,12 +1732,16 @@
       "properties": {
         "autoResolutionMs": {
           "default": null,
+          "description": "@deprecated Use `isBlocking` to decide whether the request should block.",
           "format": "uint64",
           "minimum": 0.0,
           "type": [
             "integer",
             "null"
           ]
+        },
+        "isBlocking": {
+          "type": "boolean"
         },
         "itemId": {
           "type": "string"
@@ -1780,6 +1760,7 @@
         }
       },
       "required": [
+        "isBlocking",
         "itemId",
         "questions",
         "threadId",
@@ -2024,31 +2005,6 @@
         "params"
       ],
       "title": "Attestation/generateRequest",
-      "type": "object"
-    },
-    {
-      "description": "Read the current time from an external clock owned by the client.",
-      "properties": {
-        "id": {
-          "$ref": "#/definitions/RequestId"
-        },
-        "method": {
-          "enum": [
-            "currentTime/read"
-          ],
-          "title": "CurrentTime/readRequestMethod",
-          "type": "string"
-        },
-        "params": {
-          "$ref": "#/definitions/CurrentTimeReadParams"
-        }
-      },
-      "required": [
-        "id",
-        "method",
-        "params"
-      ],
-      "title": "CurrentTime/readRequest",
       "type": "object"
     },
     {

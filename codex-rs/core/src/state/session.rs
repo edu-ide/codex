@@ -1,6 +1,7 @@
 //! Session-wide mutable state.
 
 use codex_protocol::models::AdditionalPermissionProfile;
+use codex_protocol::models::BaseInstructionsProvenance;
 use codex_protocol::models::ResponseItem;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use std::collections::HashMap;
@@ -25,6 +26,8 @@ use codex_utils_output_truncation::TruncationPolicy;
 /// Persistent, session-scoped state previously stored directly on `Session`.
 pub(crate) struct SessionState {
     pub(crate) session_configuration: SessionConfiguration,
+    /// Persisted origin of the session base instructions, when known.
+    pub(crate) base_instructions_provenance: Option<BaseInstructionsProvenance>,
     pub(crate) history: ContextManager,
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
     pub(crate) server_reasoning_included: bool,
@@ -62,6 +65,7 @@ impl SessionState {
         let history = ContextManager::new();
         Self {
             session_configuration,
+            base_instructions_provenance: None,
             history,
             latest_rate_limits: None,
             server_reasoning_included: false,
@@ -161,6 +165,10 @@ impl SessionState {
 
     pub(crate) fn claim_token_budget_reminder(&mut self) -> bool {
         self.auto_compact_window.claim_token_budget_reminder()
+    }
+
+    pub(crate) fn claim_auto_compact_fallback(&mut self) -> bool {
+        self.auto_compact_window.claim_auto_compact_fallback()
     }
 
     pub(crate) fn auto_compact_window_number(&self) -> u64 {
@@ -326,6 +334,9 @@ fn merge_rate_limit_fields(
     }
     if snapshot.individual_limit.is_none() {
         snapshot.individual_limit = previous.and_then(|prior| prior.individual_limit.clone());
+    }
+    if snapshot.spend_control_reached.is_none() {
+        snapshot.spend_control_reached = previous.and_then(|prior| prior.spend_control_reached);
     }
     if snapshot.plan_type.is_none() {
         snapshot.plan_type = previous.and_then(|prior| prior.plan_type);

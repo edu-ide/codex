@@ -207,6 +207,15 @@ where
                 return;
             }
 
+            if let Err(err) = self
+                .state_dbs
+                .thread_goals()
+                .clear_thread_goal_continuation_deferral(runtime.thread_id())
+                .await
+            {
+                tracing::warn!("failed to clear deferred goal continuation: {err}");
+            }
+
             let accounting = runtime.accounting_state();
             accounting.start_turn(
                 input.turn_id,
@@ -363,7 +372,7 @@ where
             };
             let should_count_for_goal_progress = runtime.is_enabled()
                 && tool_attempt_counts_for_goal_progress(input.outcome)
-                && !(input.tool_name.namespace.is_none()
+                && !(input.tool_name.is_default_namespace()
                     && input.tool_name.name == UPDATE_GOAL_TOOL_NAME);
             if !should_count_for_goal_progress {
                 return;

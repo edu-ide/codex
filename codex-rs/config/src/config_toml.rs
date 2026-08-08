@@ -45,6 +45,7 @@ use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WebSearchToolConfig;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::BaseInstructionsProvenance;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::permissions::NetworkSandboxPolicy;
@@ -66,10 +67,6 @@ const RESERVED_MODEL_PROVIDER_IDS: [&str; 4] = [
 ];
 
 pub const DEFAULT_PROJECT_DOC_MAX_BYTES: usize = 32 * 1024;
-
-const fn default_allow_login_shell() -> Option<bool> {
-    Some(true)
-}
 
 fn default_history() -> Option<History> {
     Some(History::default())
@@ -193,7 +190,6 @@ pub struct ConfigToml {
     /// If `false`, the model can never use a login shell: `login = true`
     /// requests are rejected, and omitting `login` defaults to a non-login
     /// shell.
-    #[serde(default = "default_allow_login_shell")]
     pub allow_login_shell: Option<bool>,
 
     /// Sandbox mode to use.
@@ -287,7 +283,7 @@ pub struct ConfigToml {
     #[serde(default, deserialize_with = "deserialize_model_providers")]
     pub model_providers: HashMap<String, ModelProviderInfo>,
 
-    /// Maximum number of bytes to include from an AGENTS.md project doc file.
+    /// Maximum total bytes of project instruction content across all selected environments.
     #[serde(default = "default_project_doc_max_bytes")]
     pub project_doc_max_bytes: Option<usize>,
 
@@ -354,9 +350,6 @@ pub struct ConfigToml {
     pub model_reasoning_summary: Option<ReasoningSummary>,
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
-
-    /// Override to force-enable reasoning summaries for the configured model.
-    pub model_supports_reasoning_summaries: Option<bool>,
 
     /// Optional path to a JSON model catalog (applied on startup only).
     /// Per-thread `config` overrides are accepted but do not reapply this (no-ops).
@@ -527,6 +520,10 @@ pub struct ConfigLockfileToml {
     pub version: u32,
     pub codex_version: String,
 
+    /// Origin of the effective base instructions captured in the lockfile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_instructions_provenance: Option<BaseInstructionsProvenance>,
+
     /// Replayable effective config captured in the lockfile.
     pub config: ConfigToml,
 }
@@ -647,11 +644,19 @@ pub struct ToolsToml {
     )]
     pub web_search: Option<WebSearchToolConfig>,
     pub experimental_request_user_input: Option<ExperimentalRequestUserInput>,
+    pub update_plan: Option<UpdatePlanToolConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ExperimentalRequestUserInput {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct UpdatePlanToolConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -684,16 +689,22 @@ where
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct AgentsToml {
-    /// Maximum number of agent threads that can be open concurrently.
-    /// When unset, no limit is enforced.
+    /// Whether multi-agent tools are enabled. Defaults to true.
+    /// An enabled `features.multi_agent_v2` setting takes precedence.
+    pub enabled: Option<bool>,
+    /// Maximum number of spawned agent threads that can be open concurrently per session.
+    /// When unset, the selected multi-agent backend uses its default.
+    #[serde(alias = "max_threads")]
     #[schemars(range(min = 1))]
-    pub max_threads: Option<usize>,
-    /// Maximum nesting depth allowed for spawned agent threads.
-    /// Root sessions start at depth 0.
-    #[schemars(range(min = 1))]
+    pub max_concurrent_threads_per_session: Option<usize>,
+    /// Maximum nesting depth for V1 agent threads. Ignored by V2.
     pub max_depth: Option<i32>,
-    /// Default maximum runtime in seconds for agent job workers.
-    #[schemars(range(min = 1))]
+    /// Default model for spawned subagents when the spawn call does not select one.
+    pub default_subagent_model: Option<String>,
+    /// Default reasoning effort for spawned subagents when the spawn call does not select one.
+    pub default_subagent_reasoning_effort: Option<ReasoningEffort>,
+    /// Removed agent-job setting retained as a no-op for compatibility.
+    #[schemars(skip)]
     pub job_max_runtime_seconds: Option<u64>,
     /// Whether to record a model-visible message when an agent turn is interrupted.
     /// Defaults to true.
@@ -996,18 +1007,17 @@ pub fn validate_model_providers(
 ) -> Result<(), String> {
     validate_reserved_model_provider_ids(model_providers)?;
     for (key, provider) in model_providers {
-        if key == AMAZON_BEDROCK_PROVIDER_ID {
-            continue;
-        }
-        if provider.aws.is_some() {
-            return Err(format!(
-                "model_providers.{key}: provider aws is only supported for `{AMAZON_BEDROCK_PROVIDER_ID}`"
-            ));
-        }
-        if provider.name.trim().is_empty() {
-            return Err(format!(
-                "model_providers.{key}: provider name must not be empty"
-            ));
+        if key != AMAZON_BEDROCK_PROVIDER_ID {
+            if provider.aws.is_some() {
+                return Err(format!(
+                    "model_providers.{key}: provider aws is only supported for `{AMAZON_BEDROCK_PROVIDER_ID}`"
+                ));
+            }
+            if provider.name.trim().is_empty() {
+                return Err(format!(
+                    "model_providers.{key}: provider name must not be empty"
+                ));
+            }
         }
         provider
             .validate()
@@ -1093,5 +1103,22 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("TOML list of strings"));
         assert!(message.contains("comma-separated strings are not supported"));
+    }
+
+    #[test]
+    fn amazon_bedrock_auth_command_must_not_be_empty() {
+        let err = toml::from_str::<ConfigToml>(
+            r#"
+[model_providers.amazon-bedrock.auth]
+command = "   "
+"#,
+        )
+        .expect_err("empty Amazon Bedrock auth command should be rejected");
+
+        assert!(
+            err.to_string().contains(
+                "model_providers.amazon-bedrock: provider auth.command must not be empty"
+            )
+        );
     }
 }
