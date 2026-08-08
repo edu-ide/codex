@@ -32,7 +32,7 @@ codex-app-server-protocol = { path = "../app-server-protocol" }
 sacp = { path = "../../../symposium-acp/src/sacp" }
 sacp-tokio = { path = "../../../symposium-acp/src/sacp-tokio" }
 sacp-conductor = { path = "../../../symposium-acp/src/sacp-conductor" }
-agent-client-protocol-schema = { path = "../../../acp-schema" }
+agent-client-protocol-schema = { workspace = true }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

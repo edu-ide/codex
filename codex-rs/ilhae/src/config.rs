@@ -1176,7 +1176,7 @@ fn profile_engine_id_for_display(profile: &IlhaeProfileConfig) -> Option<String>
         .agent
         .engine_id
         .as_deref()
-        .map(str::trim)
+        .map(|engine_id| engine_id.trim())
         .filter(|engine_id| !engine_id.is_empty())
         .map(str::to_string)
         .or_else(|| {
@@ -1395,7 +1395,7 @@ pub fn native_runtime_effective_base_url(runtime: &IlhaeProfileNativeRuntimeConf
     runtime
         .proxy_base_url
         .as_ref()
-        .map(str::trim)
+        .map(|base_url| base_url.trim())
         .filter(|base_url| !base_url.is_empty())
         .map(ToString::to_string)
         .or_else(|| {
@@ -1407,7 +1407,7 @@ pub fn native_runtime_effective_base_url(runtime: &IlhaeProfileNativeRuntimeConf
             }
         })
         .or_else(|| {
-            let base_url = runtime.url.as_ref().map(str::trim)?;
+            let base_url = runtime.url.as_ref().map(|url| url.trim())?;
             if base_url.is_empty() {
                 None
             } else {
@@ -1495,7 +1495,7 @@ fn native_model_provider_table(runtime: &IlhaeProfileNativeRuntimeConfig) -> tom
     if !query_params.is_empty() {
         table.insert(
             "query_params".to_string(),
-            string_map_as_toml_value(query_params),
+            string_map_as_toml_value(&query_params),
         );
     }
     if let Some(http_headers) = runtime.http_headers.as_ref()

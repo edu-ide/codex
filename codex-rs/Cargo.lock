@@ -323,18 +323,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-client-protocol-schema"
-version = "0.11.0"
-dependencies = [
- "anyhow",
- "derive_more 2.1.1",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "strum 0.28.0",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3961,7 +3949,7 @@ dependencies = [
  "a2a-acp-adapter",
  "a2a-rs",
  "action-browser-rs",
- "agent-client-protocol-schema 0.11.0",
+ "agent-client-protocol-schema",
  "anyhow",
  "async-trait",
  "axum 0.7.9",
@@ -14382,7 +14370,7 @@ checksum = "a50f4cf475b65d88e057964e0e9bb1f0aa9bbb2036dc65c64596b42932536984"
 name = "sacp"
 version = "11.0.0-alpha.1"
 dependencies = [
- "agent-client-protocol-schema 0.10.8",
+ "agent-client-protocol-schema",
  "anyhow",
  "boxfnonce",
  "futures",
@@ -14405,7 +14393,7 @@ dependencies = [
 name = "sacp-conductor"
 version = "11.0.0-alpha.1"
 dependencies = [
- "agent-client-protocol-schema 0.10.8",
+ "agent-client-protocol-schema",
  "anyhow",
  "async-stream",
  "axum 0.7.9",
@@ -15975,15 +15963,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
  "strum_macros 0.27.2",
-]
-
-[[package]]
-name = "strum"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
-dependencies = [
- "strum_macros 0.28.0",
 ]
 
 [[package]]
