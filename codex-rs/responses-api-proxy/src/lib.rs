@@ -217,9 +217,10 @@ fn forward_passthrough_request(
     dump_dir: Option<&ExchangeDumper>,
     mut req: Request,
 ) -> Result<()> {
-    // Only allow POST /v1/responses exactly, no query string.
+    // Allow POST /v1/responses with optional query string.
     let method = req.method().clone();
-    let url_path = req.url().to_string();
+    let request_url = req.url().to_string();
+    let (url_path, query) = split_request_path_and_query(&request_url);
     let allow = method == Method::Post && url_path == "/v1/responses";
 
     if !allow {
@@ -235,7 +236,7 @@ fn forward_passthrough_request(
 
     let exchange_dump = dump_dir.and_then(|dump_dir| {
         dump_dir
-            .dump_request(&method, &url_path, req.headers(), &body)
+            .dump_request(&method, &request_url, req.headers(), &body)
             .map_err(|err| {
                 eprintln!("responses-api-proxy failed to dump request: {err}");
                 err
@@ -272,8 +273,9 @@ fn forward_passthrough_request(
 
     headers.insert(HOST, config.host_header.clone());
 
+    let upstream_url = append_query_to_url(&config.upstream_url, query);
     let upstream_resp = client
-        .post(config.upstream_url.clone())
+        .post(upstream_url)
         .headers(headers)
         .body(body)
         .send()
@@ -333,7 +335,8 @@ fn forward_sglang_qwen_request(
     mut req: Request,
 ) -> Result<()> {
     let method = req.method().clone();
-    let url_path = req.url().to_string();
+    let request_url = req.url().to_string();
+    let (url_path, query) = split_request_path_and_query(&request_url);
     let allow = (method == Method::Post && url_path == "/v1/responses")
         || (method == Method::Get && url_path == "/v1/models");
 
@@ -348,7 +351,7 @@ fn forward_sglang_qwen_request(
 
     let exchange_dump = dump_dir.and_then(|dump_dir| {
         dump_dir
-            .dump_request(&method, &url_path, req.headers(), &body)
+            .dump_request(&method, &request_url, req.headers(), &body)
             .map_err(|err| {
                 eprintln!("responses-api-proxy failed to dump request: {err}");
                 err
@@ -357,7 +360,7 @@ fn forward_sglang_qwen_request(
     });
 
     if method == Method::Get && url_path == "/v1/models" {
-        let models_url = derive_models_url(&config.upstream_url)?;
+        let models_url = append_query_to_url(&derive_models_url(&config.upstream_url)?, query);
         return forward_simple_upstream_request(
             client,
             &models_url,
@@ -377,7 +380,7 @@ fn forward_sglang_qwen_request(
         .unwrap_or(false);
     let chat_request = responses_to_chat_completions_request_with_tool_name_map(&request_json)?;
     let upstream_resp =
-        send_sglang_qwen_chat_request_with_retries(client, config, &chat_request.body)?;
+        send_sglang_qwen_chat_request_with_retries(client, config, query, &chat_request.body)?;
     let BufferedUpstreamResponse {
         status,
         headers: upstream_headers,
@@ -427,9 +430,10 @@ fn forward_sglang_qwen_request(
 fn send_sglang_qwen_chat_request_with_retries(
     client: &Client,
     config: &ForwardConfig,
+    query: &str,
     chat_body: &serde_json::Value,
 ) -> Result<BufferedUpstreamResponse> {
-    let chat_url = derive_chat_completions_url(&config.upstream_url)?;
+    let chat_url = append_query_to_url(&derive_chat_completions_url(&config.upstream_url)?, query);
     let request_body = serde_json::to_vec(chat_body)?;
     let deadline = Instant::now() + Duration::from_secs(UPSTREAM_LOADING_RETRY_TIMEOUT_SECS);
     let retry_connection_errors =
@@ -512,6 +516,33 @@ fn fetch_sglang_server_model_id(client: &Client, config: &ForwardConfig) -> Resu
         .context("parsing sglang models metadata JSON")?;
     canonical_model_id_from_models_response(&models_json)
         .ok_or_else(|| anyhow!("could not determine canonical SGLang model id"))
+}
+
+fn split_request_path_and_query(url: &str) -> (&str, &str) {
+    match url.split_once('?') {
+        Some((path, query)) => (path, query),
+        None => (url, ""),
+    }
+}
+
+fn append_query_to_url(base_url: &Url, query: &str) -> Url {
+    let mut url = base_url.clone();
+    let query = query.trim();
+    if query.is_empty() {
+        return url;
+    }
+
+    let merged_query = if let Some(existing_query) = url.query() {
+        if existing_query.is_empty() {
+            query.to_string()
+        } else {
+            format!("{existing_query}&{query}")
+        }
+    } else {
+        query.to_string()
+    };
+    url.set_query(Some(&merged_query));
+    url
 }
 
 fn forward_simple_upstream_request(

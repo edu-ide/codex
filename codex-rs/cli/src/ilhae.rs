@@ -1,2 +1,3 @@
-#![recursion_limit = "1024"]
-include!("main.rs");
+#![recursion_limit = "8192"]
+
+include!("main_body.rs");

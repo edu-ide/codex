@@ -1,4 +1,4 @@
-#![recursion_limit = "256"]
+#![recursion_limit = "2048"]
 
 pub(crate) mod debug_sandbox;
 mod exit_status;
