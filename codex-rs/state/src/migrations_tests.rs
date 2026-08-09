@@ -6,9 +6,14 @@ use sqlx::migrate::Migration;
 use sqlx::migrate::Migrator;
 use std::borrow::Cow;
 
+use super::GOALS_MIGRATOR;
+use super::ILHAE_GOALS_MIGRATOR;
+use super::LEGACY_ILHAE_STATE_MIGRATOR;
 use super::STATE_MIGRATOR;
 use super::THREAD_HISTORY_MIGRATOR;
 use super::repair_legacy_recency_migration_version;
+use super::runtime_goals_migrator;
+use super::runtime_state_migrator;
 use crate::PINNED_THREAD_SECTION_ID;
 use crate::PINNED_THREAD_SECTION_NAME;
 
@@ -30,6 +35,348 @@ fn migrator_through(version: i64) -> Migrator {
         create_schemas: STATE_MIGRATOR.create_schemas.clone(),
         no_tx: STATE_MIGRATOR.no_tx,
     }
+}
+
+fn goals_migrator_through(version: i64) -> Migrator {
+    Migrator {
+        migrations: Cow::Owned(
+            GOALS_MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version <= version)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: GOALS_MIGRATOR.ignore_missing,
+        locking: GOALS_MIGRATOR.locking,
+        table_name: GOALS_MIGRATOR.table_name.clone(),
+        create_schemas: GOALS_MIGRATOR.create_schemas.clone(),
+        no_tx: GOALS_MIGRATOR.no_tx,
+    }
+}
+
+fn legacy_ilhae_goals_migrator_through(version: i64) -> Migrator {
+    let mut migrations = vec![GOALS_MIGRATOR.migrations[0].clone()];
+    let mut loop_history = ILHAE_GOALS_MIGRATOR.migrations[0].clone();
+    loop_history.version = 2;
+    migrations.push(loop_history);
+    let mut continuation = GOALS_MIGRATOR.migrations[1].clone();
+    continuation.version = 3;
+    migrations.push(continuation);
+    migrations.retain(|migration| migration.version <= version);
+    migrations.sort();
+    Migrator {
+        migrations: Cow::Owned(migrations),
+        ignore_missing: GOALS_MIGRATOR.ignore_missing,
+        locking: GOALS_MIGRATOR.locking,
+        table_name: GOALS_MIGRATOR.table_name.clone(),
+        create_schemas: GOALS_MIGRATOR.create_schemas.clone(),
+        no_tx: GOALS_MIGRATOR.no_tx,
+    }
+}
+
+fn legacy_ilhae_goals_migrator_after_upstream_extension() -> Migrator {
+    let mut migrations = GOALS_MIGRATOR.migrations.to_vec();
+    let mut loop_history = ILHAE_GOALS_MIGRATOR.migrations[0].clone();
+    loop_history.version = 3;
+    migrations.push(loop_history);
+    migrations.sort();
+    Migrator {
+        migrations: Cow::Owned(migrations),
+        ignore_missing: GOALS_MIGRATOR.ignore_missing,
+        locking: GOALS_MIGRATOR.locking,
+        table_name: GOALS_MIGRATOR.table_name.clone(),
+        create_schemas: GOALS_MIGRATOR.create_schemas.clone(),
+        no_tx: GOALS_MIGRATOR.no_tx,
+    }
+}
+
+fn legacy_ilhae_state_migrator() -> Migrator {
+    let mut migrations = STATE_MIGRATOR
+        .migrations
+        .iter()
+        .filter(|migration| migration.version <= 32)
+        .cloned()
+        .collect::<Vec<_>>();
+    migrations.extend(LEGACY_ILHAE_STATE_MIGRATOR.migrations.iter().cloned());
+    migrations.extend(
+        STATE_MIGRATOR
+            .migrations
+            .iter()
+            .filter(|migration| (35..=47).contains(&migration.version))
+            .cloned()
+            .map(|mut migration| {
+                migration.version += 5;
+                migration
+            }),
+    );
+    migrations.sort();
+    Migrator {
+        migrations: Cow::Owned(migrations),
+        ignore_missing: STATE_MIGRATOR.ignore_missing,
+        locking: STATE_MIGRATOR.locking,
+        table_name: STATE_MIGRATOR.table_name.clone(),
+        create_schemas: STATE_MIGRATOR.create_schemas.clone(),
+        no_tx: STATE_MIGRATOR.no_tx,
+    }
+}
+
+async fn insert_goal(pool: &sqlx::SqlitePool, thread_id: &str) {
+    sqlx::query(
+        r#"
+INSERT INTO thread_goals (
+    thread_id, goal_id, objective, status, created_at_ms, updated_at_ms
+) VALUES (?, 'goal-1', 'preserve this goal', 'active', 1, 2)
+        "#,
+    )
+    .bind(thread_id)
+    .execute(pool)
+    .await
+    .expect("goal should insert");
+}
+
+async fn assert_current_goals_layout(pool: &sqlx::SqlitePool, thread_id: &str) {
+    let goal = sqlx::query_as::<_, (String, String, String, String, i64, i64)>(
+        r#"
+SELECT thread_id, goal_id, objective, status, superloop_enabled, loop_cycle_number
+FROM thread_goals
+WHERE thread_id = ?
+        "#,
+    )
+    .bind(thread_id)
+    .fetch_one(pool)
+    .await
+    .expect("preserved goal should load through the current schema");
+    assert_eq!(
+        goal,
+        (
+            thread_id.to_string(),
+            "goal-1".to_string(),
+            "preserve this goal".to_string(),
+            "active".to_string(),
+            0,
+            0,
+        )
+    );
+
+    let upstream_applied = sqlx::query_as::<_, (i64, String, Vec<u8>)>(
+        "SELECT version, description, checksum FROM _sqlx_migrations ORDER BY version",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("applied goals migrations should load");
+    let expected_upstream = GOALS_MIGRATOR
+        .migrations
+        .iter()
+        .map(|migration| {
+            (
+                migration.version,
+                migration.description.to_string(),
+                migration.checksum.to_vec(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(upstream_applied, expected_upstream);
+
+    let ilhae_applied = sqlx::query_as::<_, (i64, String, Vec<u8>)>(
+        "SELECT version, description, checksum FROM _ilhae_goals_migrations ORDER BY version",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("applied Ilhae goals migrations should load");
+    let expected_ilhae = ILHAE_GOALS_MIGRATOR
+        .migrations
+        .iter()
+        .map(|migration| {
+            (
+                migration.version,
+                migration.description.to_string(),
+                migration.checksum.to_vec(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ilhae_applied, expected_ilhae);
+}
+
+#[tokio::test]
+async fn goals_migrations_upgrade_released_upstream_layout() {
+    let sqlite_home = crate::runtime::test_support::unique_temp_dir();
+    tokio::fs::create_dir_all(&sqlite_home)
+        .await
+        .expect("sqlite home should be created");
+    let _cleanup = scopeguard::guard(sqlite_home.clone(), |sqlite_home| {
+        let _ = std::fs::remove_dir_all(sqlite_home);
+    });
+    let sqlite = crate::SqliteConfig::new_for_testing(sqlite_home.as_path().abs());
+    let pool = sqlite
+        .open_read_write_pool(&sqlite.goals_db_path())
+        .await
+        .expect("goals database should open");
+    goals_migrator_through(/*version*/ 2)
+        .run(&pool)
+        .await
+        .expect("released upstream goals migrations should apply");
+    insert_goal(&pool, "upstream-thread").await;
+    pool.close().await;
+
+    let pool = sqlite
+        .open_goals_db(&runtime_goals_migrator(), /*telemetry_override*/ None)
+        .await
+        .expect("current goals migrations should extend the upstream layout");
+    assert_current_goals_layout(&pool, "upstream-thread").await;
+
+    let released_upstream_migrator = goals_migrator_through(/*version*/ 2);
+    released_upstream_migrator
+        .run(&pool)
+        .await
+        .expect("released upstream Codex should reopen an Ilhae-extended goals database");
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn goals_migrations_repair_legacy_ilhae_numbering() {
+    let sqlite_home = crate::runtime::test_support::unique_temp_dir();
+    tokio::fs::create_dir_all(&sqlite_home)
+        .await
+        .expect("sqlite home should be created");
+    let _cleanup = scopeguard::guard(sqlite_home.clone(), |sqlite_home| {
+        let _ = std::fs::remove_dir_all(sqlite_home);
+    });
+    let sqlite = crate::SqliteConfig::new_for_testing(sqlite_home.as_path().abs());
+    let pool = sqlite
+        .open_read_write_pool(&sqlite.goals_db_path())
+        .await
+        .expect("goals database should open");
+    legacy_ilhae_goals_migrator_through(/*version*/ 3)
+        .run(&pool)
+        .await
+        .expect("legacy Ilhae goals migrations should apply");
+    insert_goal(&pool, "legacy-ilhae-thread").await;
+    pool.close().await;
+
+    let pool = sqlite
+        .open_goals_db(&runtime_goals_migrator(), /*telemetry_override*/ None)
+        .await
+        .expect("current goals migrations should repair legacy Ilhae numbering");
+    assert_current_goals_layout(&pool, "legacy-ilhae-thread").await;
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn goals_migrations_repair_legacy_ilhae_layout_before_upstream_extension() {
+    let sqlite_home = crate::runtime::test_support::unique_temp_dir();
+    tokio::fs::create_dir_all(&sqlite_home)
+        .await
+        .expect("sqlite home should be created");
+    let _cleanup = scopeguard::guard(sqlite_home.clone(), |sqlite_home| {
+        let _ = std::fs::remove_dir_all(sqlite_home);
+    });
+    let sqlite = crate::SqliteConfig::new_for_testing(sqlite_home.as_path().abs());
+    let pool = sqlite
+        .open_read_write_pool(&sqlite.goals_db_path())
+        .await
+        .expect("goals database should open");
+    legacy_ilhae_goals_migrator_through(/*version*/ 2)
+        .run(&pool)
+        .await
+        .expect("early Ilhae goals migrations should apply");
+    insert_goal(&pool, "early-ilhae-thread").await;
+    pool.close().await;
+
+    let pool = sqlite
+        .open_goals_db(&runtime_goals_migrator(), /*telemetry_override*/ None)
+        .await
+        .expect("current goals migrations should add the upstream extension");
+    assert_current_goals_layout(&pool, "early-ilhae-thread").await;
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn goals_migrations_repair_legacy_ilhae_layout_after_upstream_extension() {
+    let sqlite_home = crate::runtime::test_support::unique_temp_dir();
+    tokio::fs::create_dir_all(&sqlite_home)
+        .await
+        .expect("sqlite home should be created");
+    let _cleanup = scopeguard::guard(sqlite_home.clone(), |sqlite_home| {
+        let _ = std::fs::remove_dir_all(sqlite_home);
+    });
+    let sqlite = crate::SqliteConfig::new_for_testing(sqlite_home.as_path().abs());
+    let pool = sqlite
+        .open_read_write_pool(&sqlite.goals_db_path())
+        .await
+        .expect("goals database should open");
+    legacy_ilhae_goals_migrator_after_upstream_extension()
+        .run(&pool)
+        .await
+        .expect("post-upstream Ilhae goals migrations should apply");
+    insert_goal(&pool, "post-upstream-ilhae-thread").await;
+    pool.close().await;
+
+    let pool = sqlite
+        .open_goals_db(&runtime_goals_migrator(), /*telemetry_override*/ None)
+        .await
+        .expect("current goals migrations should isolate the Ilhae extension ledger");
+    assert_current_goals_layout(&pool, "post-upstream-ilhae-thread").await;
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn state_migrations_repair_legacy_ilhae_numbering() {
+    let sqlite_home = crate::runtime::test_support::unique_temp_dir();
+    tokio::fs::create_dir_all(&sqlite_home)
+        .await
+        .expect("sqlite home should be created");
+    let _cleanup = scopeguard::guard(sqlite_home.clone(), |sqlite_home| {
+        let _ = std::fs::remove_dir_all(sqlite_home);
+    });
+    let sqlite = crate::SqliteConfig::new_for_testing(sqlite_home.as_path().abs());
+    let pool = sqlite
+        .open_read_write_pool(&sqlite.state_db_path())
+        .await
+        .expect("state database should open");
+    legacy_ilhae_state_migrator()
+        .run(&pool)
+        .await
+        .expect("legacy Ilhae state migrations should apply");
+    pool.close().await;
+
+    let pool = sqlite
+        .open_state_db(&runtime_state_migrator(), /*telemetry_override*/ None)
+        .await
+        .expect("current state migrations should repair legacy Ilhae numbering");
+    let applied = sqlx::query_as::<_, (i64, String, Vec<u8>)>(
+        "SELECT version, description, checksum FROM _sqlx_migrations ORDER BY version",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("applied state migrations should load");
+    let expected = STATE_MIGRATOR
+        .migrations
+        .iter()
+        .map(|migration| {
+            (
+                migration.version,
+                migration.description.to_string(),
+                migration.checksum.to_vec(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(applied, expected);
+
+    let legacy_goal_tables = sqlx::query_scalar::<_, String>(
+        r#"
+SELECT name
+FROM sqlite_master
+WHERE type = 'table'
+  AND name IN ('thread_goals', 'thread_goal_loop_history')
+ORDER BY name
+        "#,
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("legacy goal table names should load");
+    assert_eq!(legacy_goal_tables, Vec::<String>::new());
+    pool.close().await;
 }
 
 #[tokio::test]

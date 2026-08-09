@@ -6,8 +6,10 @@
 )]
 
 use crate::DbTelemetry;
+use crate::migrations::repair_legacy_goals_migrations;
+use crate::migrations::repair_legacy_ilhae_state_migrations;
 use crate::migrations::repair_legacy_recency_migration_version;
-use crate::migrations::repair_runtime_migration_checksum_drift;
+use crate::migrations::runtime_ilhae_goals_migrator;
 use crate::runtime::RuntimeDbInitError;
 use crate::telemetry;
 use crate::telemetry::DbKind;
@@ -254,8 +256,14 @@ impl SqliteConfig {
         let started = Instant::now();
         let migrate_result = async {
             if matches!(spec.kind, DbKind::State) {
+                repair_legacy_ilhae_state_migrations(&pool, migrator).await?;
                 repair_legacy_recency_migration_version(&pool, migrator).await?;
-                repair_runtime_migration_checksum_drift(&pool, migrator).await?;
+            } else if matches!(spec.kind, DbKind::Goals) {
+                let ilhae_migrator = runtime_ilhae_goals_migrator();
+                repair_legacy_goals_migrations(&pool, migrator, &ilhae_migrator).await?;
+                migrator.run(&pool).await?;
+                ilhae_migrator.run(&pool).await?;
+                return Ok::<(), anyhow::Error>(());
             }
             migrator.run(&pool).await.map_err(anyhow::Error::from)
         }
