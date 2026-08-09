@@ -33,18 +33,16 @@ fn upstream_url_forwards_arbitrary_http_api_paths() {
 fn normalized_runtime_config_preserves_connection_only_mode() {
     let config = crate::config::IlhaeProfileNativeRuntimeConfig {
         enabled: false,
-        proxy_base_url: Some("http://127.0.0.1:18083/v1".to_string()),
-        proxy_control_url: Some("http://127.0.0.1:18083/_ilhae/native-runtime/ensure".to_string()),
-        ssh_host: Some("yth".to_string()),
-        ssh_local_port: Some(18083),
-        ssh_remote_port: Some(8083),
+        proxy_url: Some("https://yth-runtime.example.com".to_string()),
+        proxy_token: Some("test-token".to_string()),
         ..Default::default()
     };
 
-    assert_eq!(
-        normalized_runtime_config(config),
-        crate::config::IlhaeProfileNativeRuntimeConfig::default()
-    );
+    let expected = crate::config::IlhaeProfileNativeRuntimeConfig {
+        proxy_bypass: true,
+        ..Default::default()
+    };
+    assert_eq!(normalized_runtime_config(config), expected);
 }
 
 #[test]
@@ -63,7 +61,7 @@ fn remote_controller_validates_upstream_instead_of_the_client_proxy_url() {
     let config = crate::config::IlhaeProfileNativeRuntimeConfig {
         base_url: "http://192.168.1.10:8081/v1".to_string(),
         health_url: "http://192.168.1.10:8081/health".to_string(),
-        proxy_base_url: Some("http://127.0.0.1:18083/v1".to_string()),
+        proxy_url: Some("https://yth-runtime.example.com".to_string()),
         ..Default::default()
     };
 

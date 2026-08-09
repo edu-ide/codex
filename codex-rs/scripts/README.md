@@ -20,18 +20,34 @@ Build, install, and enable the native-runtime control proxy on the runtime host:
 ```bash
 cd /home/yth/codex/codex-rs
 cargo build -p codex-ilhae --bin ilhae-runtime-proxy
-sudo scripts/install-ilhae-runtime-proxy-service.sh --overwrite --enable --start
+sudo scripts/install-ilhae-runtime-proxy-service.sh \
+  --service-user "$(id -un)" --overwrite --enable --start
 ```
 
-Keep the controller bound to loopback. Set one OpenSSH host alias in the local profile; Ilhae resolves its user, address, key, and SSH port through `~/.ssh/config`, opens the loopback tunnel automatically, and derives the inference and control URLs. `ssh_local_port` (default `18083`) and `ssh_remote_port` (default `8083`) are optional overrides.
+Every llama-server profile uses the same topology: `Ilhae -> runtime proxy -> llama-server`. The profile's `native_runtime` table is the single source of truth for the complete runtime execution specification. `args`, `env`, paths, provider, logging, request headers, query parameters, retry policy, context window, and startup timeout work identically for local and remote profiles. Only `query_params` become inference-request query parameters.
 
-The local profile keeps the runtime host's complete execution specification. `args`, `env`, paths, provider, logging, and startup timeout are sent to the controller; only `query_params` become inference-request query parameters. The runtime's own base and health URLs are derived from `--host` and `--port`, so they do not need to be repeated:
+For a local profile, omit `proxy_url`. Ilhae automatically uses the local proxy at `http://127.0.0.1:8083` and derives the inference, health, and control routes from that one origin:
+
+```toml
+[profiles.fable-local.native_runtime]
+enabled = true
+provider = "llama-server"
+server_bin = "/opt/llama.cpp/bin/llama-server"
+model_path = "/models/fable.gguf"
+chat_template_file = "/home/me/.ilhae/chat-templates/qwen.jinja"
+log_file = "/home/me/.ilhae/logs/fable.log"
+startup_timeout_secs = 300
+args = ["-m", "/models/fable.gguf", "-c", "131072", "-ngl", "100", "--host", "127.0.0.1", "--port", "8081"]
+```
+
+For a remote runtime, keep the same complete table and add only the authenticated proxy origin and token. The runtime's own base and health URLs are still derived from `--host` and `--port`, so they do not need to be repeated:
 
 ```toml
 [profiles.fable.native_runtime]
 enabled = true
 provider = "llama-server"
-ssh_host = "yth"
+proxy_url = "https://ilhae-runtime.example.com"
+proxy_token = "replace-with-a-long-random-token"
 server_bin = "/opt/llama.cpp/bin/llama-server"
 model_path = "/models/fable.gguf"
 chat_template_file = "/home/yth/.ilhae/chat-templates/qwen.jinja"
@@ -40,9 +56,17 @@ startup_timeout_secs = 300
 args = ["-m", "/models/fable.gguf", "-c", "131072", "-ngl", "100", "--port", "8081"]
 ```
 
-Set `enabled = false` with `ssh_host` present to connect to an already-managed runtime without spawning or stopping it. Existing `health_url`, `base_url`, `proxy_base_url`, and `proxy_control_url` settings remain supported as explicit overrides. The inference proxy streams request and response bodies and forwards every HTTP path. Control payloads and inference traffic do not add proxy-specific size caps; operating-system process limits still apply when spawning a managed runtime. Upstream targets remain loopback-only by default. Set `ILHAE_RUNTIME_PROXY_ALLOW_NON_LOOPBACK_UPSTREAM=1` on the runtime host only when the controller must intentionally reach another HTTP(S) host.
+HTTPS is required away from loopback by default. A direct public-IP deployment without TLS must opt in on that profile; this sends the token, prompts, and responses without transport encryption:
 
-If the proxy is exposed without an SSH tunnel, put it behind TLS, set `ILHAE_RUNTIME_PROXY_TOKEN` in `/etc/default/ilhae-runtime-proxy`, and set `proxy_control_token_env` to the local environment variable containing the same token. Non-loopback binding without a token is rejected; do not send the token over plain HTTP.
+```toml
+proxy_url = "http://203.0.113.10:8083"
+proxy_allow_insecure_http = true
+proxy_token = "replace-with-the-installed-runtime-token"
+```
+
+Set `enabled = false` to connect through the same proxy to an already-managed runtime without spawning or stopping it. The inference proxy streams request and response bodies and forwards every HTTP path. Control payloads and inference traffic do not add proxy-specific size caps; operating-system process limits still apply when spawning a managed runtime. Upstream targets remain loopback-only by default. Set `ILHAE_RUNTIME_PROXY_ALLOW_NON_LOOPBACK_UPSTREAM=1` on the runtime host only when the controller must intentionally reach another HTTP(S) host.
+
+The production service installer binds `0.0.0.0:8083` and generates a persistent random `ILHAE_RUNTIME_PROXY_TOKEN` in `/etc/default/ilhae-runtime-proxy`. Copy that token into authorized profiles. Existing environment files and tokens are preserved unless `--overwrite-env` is passed. Non-loopback binding without a token is rejected. A firewall can narrow which clients reach the listener, and HTTPS should be added before treating an Internet-facing deployment as transport-secure. nginx, Cloudflare, and SSH tunnels are not required by Ilhae; SSH may still be used separately for source deployment and administration.
 
 Check both services:
 

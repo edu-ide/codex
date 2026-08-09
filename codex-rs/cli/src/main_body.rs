@@ -1488,7 +1488,7 @@ async fn run_ilhae_profile_command(cmd: ProfileCommand) -> anyhow::Result<()> {
                                 &profile.native_runtime
                             ),
                             "url": profile.native_runtime.url,
-                            "proxyBaseUrl": profile.native_runtime.proxy_base_url,
+                            "proxyUrl": profile.native_runtime.proxy_url,
                         })
                     })
                     .collect::<Vec<_>>();

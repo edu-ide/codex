@@ -286,12 +286,13 @@ fn streaming_response(upstream: reqwest::Response) -> Response {
 fn normalized_runtime_config(
     mut config: crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> crate::config::IlhaeProfileNativeRuntimeConfig {
-    config.proxy_base_url = None;
-    config.proxy_control_url = None;
-    config.proxy_control_token_env = None;
-    config.ssh_host = None;
-    config.ssh_local_port = None;
-    config.ssh_remote_port = None;
+    config.proxy_url = None;
+    config.proxy_allow_insecure_http = false;
+    config.proxy_token = None;
+    config.proxy_bypass = true;
+    if let Some(headers) = config.http_headers.as_mut() {
+        headers.retain(|name, _| !name.eq_ignore_ascii_case(RUNTIME_TOKEN_HEADER));
+    }
     config
 }
 

@@ -316,12 +316,18 @@ pub struct IlhaeProfileNativeRuntimeConfig {
     pub health_url: String,
     pub url: Option<String>,
     pub base_url: String,
-    pub proxy_base_url: Option<String>,
-    pub proxy_control_url: Option<String>,
-    pub proxy_control_token_env: Option<String>,
-    pub ssh_host: Option<String>,
-    pub ssh_local_port: Option<u16>,
-    pub ssh_remote_port: Option<u16>,
+    /// Runtime proxy origin. Local llama-server profiles default to the local
+    /// Ilhae proxy, so only remote profiles need to set this value.
+    pub proxy_url: Option<String>,
+    /// Explicitly allows cleartext HTTP to a non-loopback runtime proxy.
+    /// Authentication tokens and inference traffic are not encrypted.
+    pub proxy_allow_insecure_http: bool,
+    /// Shared bearer value used by both the proxy control and inference APIs.
+    pub proxy_token: Option<String>,
+    /// Internal marker used by the proxy host after receiving a runtime spec.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub proxy_bypass: bool,
     pub server_bin: String,
     pub model_path: String,
     pub chat_template_file: String,
@@ -439,12 +445,10 @@ impl Default for IlhaeProfileNativeRuntimeConfig {
             health_url: String::new(),
             url: None,
             base_url: String::new(),
-            proxy_base_url: None,
-            proxy_control_url: None,
-            proxy_control_token_env: None,
-            ssh_host: None,
-            ssh_local_port: None,
-            ssh_remote_port: None,
+            proxy_url: None,
+            proxy_allow_insecure_http: false,
+            proxy_token: None,
+            proxy_bypass: false,
             server_bin: String::new(),
             model_path: String::new(),
             chat_template_file: String::new(),
@@ -1557,38 +1561,15 @@ fn native_runtime_effective_query_params(
 
 pub fn native_runtime_effective_base_url(runtime: &IlhaeProfileNativeRuntimeConfig) -> String {
     crate::native_runtime_endpoint::effective_proxy_base_url(runtime)
-        .or_else(|| {
-            let base_url = runtime.base_url.trim();
-            if base_url.is_empty() {
-                None
-            } else {
-                Some(base_url.to_string())
-            }
-        })
-        .or_else(|| {
-            let base_url = runtime.url.as_ref().map(|url| url.trim())?;
-            if base_url.is_empty() {
-                None
-            } else {
-                Some(base_url.to_string())
-            }
-        })
-        .or_else(|| crate::native_runtime_endpoint::runtime_base_url_from_args(runtime))
+        .or_else(|| crate::native_runtime_endpoint::runtime_upstream_base_url(runtime))
         .unwrap_or_default()
 }
 
 pub fn native_runtime_effective_health_url(runtime: &IlhaeProfileNativeRuntimeConfig) -> String {
-    let explicit = runtime.health_url.trim();
-    if !explicit.is_empty() {
-        return explicit.to_string();
+    if let Some(health_url) = crate::native_runtime_endpoint::effective_proxy_health_url(runtime) {
+        return health_url;
     }
-
-    let base_url = native_runtime_effective_base_url(runtime);
-    if base_url.is_empty() {
-        return String::new();
-    }
-
-    native_runtime_health_url_from_base_url(&base_url)
+    crate::native_runtime_endpoint::runtime_upstream_health_url(runtime)
 }
 
 pub(crate) fn native_runtime_health_url_from_base_url(base_url: &str) -> String {
@@ -1662,22 +1643,24 @@ fn native_model_provider_table(runtime: &IlhaeProfileNativeRuntimeConfig) -> tom
             string_map_as_toml_value(&query_params),
         );
     }
-    if let Some(http_headers) = runtime.http_headers.as_ref()
-        && !http_headers.is_empty()
-    {
+    let mut http_headers = runtime.http_headers.clone().unwrap_or_default();
+    let proxy_token = runtime
+        .proxy_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|proxy_token| !proxy_token.is_empty());
+    if let Some(proxy_token) = proxy_token {
+        http_headers.insert("X-Ilhae-Runtime-Token".to_string(), proxy_token.to_string());
+    }
+    if !http_headers.is_empty() {
         table.insert(
             "http_headers".to_string(),
-            string_map_as_toml_value(http_headers),
+            string_map_as_toml_value(&http_headers),
         );
     }
     let mut env_http_headers = runtime.env_http_headers.clone().unwrap_or_default();
-    if let Some(token_env) = runtime
-        .proxy_control_token_env
-        .as_deref()
-        .map(str::trim)
-        .filter(|token_env| !token_env.is_empty())
-    {
-        env_http_headers.insert("X-Ilhae-Runtime-Token".to_string(), token_env.to_string());
+    if proxy_token.is_some() {
+        env_http_headers.retain(|name, _| !name.eq_ignore_ascii_case("X-Ilhae-Runtime-Token"));
     }
     if !env_http_headers.is_empty() {
         table.insert(
@@ -4259,7 +4242,7 @@ requires_openai_auth = false
     }
 
     #[test]
-    fn prepare_ilhae_codex_home_uses_proxy_base_url_for_remote_runtime() {
+    fn prepare_ilhae_codex_home_derives_remote_runtime_urls_from_proxy_origin() {
         let tmp = tempdir().expect("tempdir");
         let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
         let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -4273,9 +4256,15 @@ requires_openai_auth = false
         remote.native_runtime.enabled = false;
         remote.native_runtime.provider = Some("llama-server".to_string());
         remote.native_runtime.base_url = String::new();
-        remote.native_runtime.proxy_base_url = Some("http://127.0.0.1:8082/v1".to_string());
-        remote.native_runtime.proxy_control_token_env =
-            Some("ILHAE_RUNTIME_PROXY_TOKEN".to_string());
+        remote.native_runtime.proxy_url = Some("https://yth-runtime.example.com/".to_string());
+        remote.native_runtime.proxy_token = Some("test-token".to_string());
+        remote.native_runtime.env_http_headers = Some(BTreeMap::from([
+            (
+                "X-Ilhae-Runtime-Token".to_string(),
+                "WRONG_PROXY_TOKEN".to_string(),
+            ),
+            ("X-Test-Env".to_string(), "TEST_ENV_HEADER".to_string()),
+        ]));
         remote.native_runtime.health_url = "http://127.0.0.1:8082/health".to_string();
         remote.native_runtime.model_path = "/models/Qwen3.6-27B-Fable-Fusion.gguf".to_string();
         config.profiles.insert("remote-proxy".to_string(), remote);
@@ -4298,15 +4287,29 @@ requires_openai_auth = false
             remote_provider
                 .get("base_url")
                 .and_then(toml::Value::as_str),
-            Some("http://127.0.0.1:8082/v1")
+            Some("https://yth-runtime.example.com/v1")
+        );
+        assert_eq!(
+            remote_provider
+                .get("http_headers")
+                .and_then(toml::Value::as_table)
+                .and_then(|headers| headers.get("X-Ilhae-Runtime-Token"))
+                .and_then(toml::Value::as_str),
+            Some("test-token")
         );
         assert_eq!(
             remote_provider
                 .get("env_http_headers")
                 .and_then(toml::Value::as_table)
-                .and_then(|headers| headers.get("X-Ilhae-Runtime-Token"))
+                .and_then(|headers| headers.get("X-Test-Env"))
                 .and_then(toml::Value::as_str),
-            Some("ILHAE_RUNTIME_PROXY_TOKEN")
+            Some("TEST_ENV_HEADER")
+        );
+        assert!(
+            remote_provider
+                .get("env_http_headers")
+                .and_then(toml::Value::as_table)
+                .is_some_and(|headers| !headers.contains_key("X-Ilhae-Runtime-Token"))
         );
     }
 

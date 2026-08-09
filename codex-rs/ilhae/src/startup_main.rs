@@ -323,15 +323,7 @@ fn native_runtime_readiness_headers(
         }
     }
 
-    let mut env_headers = config.env_http_headers.clone().unwrap_or_default();
-    if let Some(token_env) = config
-        .proxy_control_token_env
-        .as_deref()
-        .map(str::trim)
-        .filter(|token_env| !token_env.is_empty())
-    {
-        env_headers.insert("X-Ilhae-Runtime-Token".to_string(), token_env.to_string());
-    }
+    let env_headers = config.env_http_headers.clone().unwrap_or_default();
     for (raw_name, raw_env_name) in env_headers {
         let env_name = raw_env_name.trim();
         let raw_value = std::env::var(env_name).map_err(|_| {
@@ -352,6 +344,19 @@ fn native_runtime_readiness_headers(
             ))
         })?;
         headers.insert(name, value);
+    }
+    if let Some(proxy_token) = config
+        .proxy_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|proxy_token| !proxy_token.is_empty())
+    {
+        let value = reqwest::header::HeaderValue::from_str(proxy_token).map_err(|error| {
+            NativeRuntimeReadinessError::configuration(format!(
+                "native runtime proxy token has an invalid header value: {error}"
+            ))
+        })?;
+        headers.insert("X-Ilhae-Runtime-Token", value);
     }
     Ok(headers)
 }
@@ -436,12 +441,6 @@ async fn probe_native_runtime_readiness(
 fn native_runtime_readiness_health_url(
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> String {
-    if crate::native_runtime_endpoint::uses_remote_proxy(config)
-        && let Some(proxy_base_url) =
-            crate::native_runtime_endpoint::effective_proxy_base_url(config)
-    {
-        return crate::config::native_runtime_health_url_from_base_url(&proxy_base_url);
-    }
     crate::config::native_runtime_effective_health_url(config)
 }
 
@@ -457,7 +456,7 @@ pub async fn native_runtime_status_snapshot(
     profile_id: Option<&str>,
 ) -> Option<NativeRuntimeStatusSnapshot> {
     let (profile, config) = crate::config::get_native_runtime_config(profile_id)?;
-    let activated = config.enabled || crate::native_runtime_endpoint::uses_remote_proxy(&config);
+    let activated = config.enabled || crate::native_runtime_endpoint::uses_runtime_proxy(&config);
     let healthy = activated && native_runtime_readiness(&config).await;
     Some(NativeRuntimeStatusSnapshot {
         profile,
@@ -1072,8 +1071,9 @@ pub(crate) fn native_runtime_execution_fingerprint_with_thinking_mode(
     let spec = NativeRuntimeExecutionSpec {
         enabled: config.enabled,
         provider: config.provider.as_deref().map(str::trim),
-        health_url: crate::config::native_runtime_effective_health_url(config),
-        base_url: crate::config::native_runtime_effective_base_url(config),
+        health_url: crate::native_runtime_endpoint::runtime_upstream_health_url(config),
+        base_url: crate::native_runtime_endpoint::runtime_upstream_base_url(config)
+            .unwrap_or_default(),
         server_bin: config.server_bin.trim(),
         model_path: config.model_path.trim(),
         chat_template_file: config.chat_template_file.trim(),
@@ -1090,16 +1090,9 @@ fn native_runtime_configs_equivalent(
     right: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> bool {
     native_runtime_execution_fingerprint(left) == native_runtime_execution_fingerprint(right)
-        && crate::native_runtime_endpoint::effective_proxy_control_url(left)
-            == crate::native_runtime_endpoint::effective_proxy_control_url(right)
-        && crate::native_runtime_endpoint::ssh_host(left)
-            == crate::native_runtime_endpoint::ssh_host(right)
-        && crate::native_runtime_endpoint::ssh_local_port(left)
-            == crate::native_runtime_endpoint::ssh_local_port(right)
-        && crate::native_runtime_endpoint::ssh_remote_port(left)
-            == crate::native_runtime_endpoint::ssh_remote_port(right)
-        && left.proxy_control_token_env.as_deref().map(str::trim)
-            == right.proxy_control_token_env.as_deref().map(str::trim)
+        && crate::native_runtime_endpoint::effective_proxy_url(left)
+            == crate::native_runtime_endpoint::effective_proxy_url(right)
+        && left.proxy_token.as_deref().map(str::trim) == right.proxy_token.as_deref().map(str::trim)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1512,7 +1505,7 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
         return Ok(());
     };
 
-    if crate::native_runtime_endpoint::uses_remote_proxy(&config) {
+    if crate::native_runtime_endpoint::uses_runtime_proxy(&config) {
         crate::native_runtime_proxy::ensure_remote_native_runtime(&profile_id, &config).await?;
     } else if config.enabled {
         let thinking_mode = crate::config::current_thinking_mode();
@@ -1546,7 +1539,7 @@ pub async fn switch_native_runtime_for_cli(
 
     if let Some((previous_id, previous_config)) = previous.as_ref()
         && (previous_config.enabled
-            || crate::native_runtime_endpoint::uses_remote_proxy(previous_config))
+            || crate::native_runtime_endpoint::uses_runtime_proxy(previous_config))
     {
         let should_stop_previous = next
             .as_ref()
@@ -1576,7 +1569,7 @@ pub async fn stop_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Re
         return Ok(());
     };
 
-    if !config.enabled && !crate::native_runtime_endpoint::uses_remote_proxy(&config) {
+    if !config.enabled && !crate::native_runtime_endpoint::uses_runtime_proxy(&config) {
         println!("Native runtime profile {profile_id} is connection-only; nothing to stop.");
         return Ok(());
     }
@@ -1589,7 +1582,7 @@ async fn stop_configured_native_runtime(
     profile_id: &str,
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> anyhow::Result<()> {
-    if crate::native_runtime_endpoint::uses_remote_proxy(config) {
+    if crate::native_runtime_endpoint::uses_runtime_proxy(config) {
         crate::native_runtime_proxy::stop_remote_native_runtime(profile_id, config).await?;
         Ok(())
     } else {
@@ -3190,9 +3183,7 @@ mod tests {
         let (mut config, server) =
             start_readiness_server(Some(r#"{"data":[{"id":"Fable-Fusion.gguf"}]}"#)).await;
         config.health_url = "http://127.0.0.1:9/health".to_string();
-        config.proxy_base_url = Some(config.base_url.clone());
-        config.proxy_control_url =
-            Some("http://127.0.0.1:18083/_ilhae/native-runtime/ensure".to_string());
+        config.proxy_url = config.base_url.strip_suffix("/v1").map(str::to_string);
 
         assert!(native_runtime_readiness(&config).await);
         server.abort();
@@ -3515,8 +3506,8 @@ mod tests {
             "draft".to_string(),
             "mtp".to_string(),
         )]));
-        config.proxy_control_url = Some("http://127.0.0.1:8083/control".to_string());
-        config.proxy_control_token_env = Some("ILHAE_RUNTIME_PROXY_TOKEN".to_string());
+        config.proxy_url = Some("https://yth-runtime.example.com".to_string());
+        config.proxy_token = Some("test-token".to_string());
         assert_eq!(native_runtime_execution_fingerprint(&config), original);
 
         config.args.push("--flash-attn".to_string());
