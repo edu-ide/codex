@@ -35,6 +35,9 @@ fn normalized_runtime_config_preserves_connection_only_mode() {
         enabled: false,
         proxy_base_url: Some("http://127.0.0.1:18083/v1".to_string()),
         proxy_control_url: Some("http://127.0.0.1:18083/_ilhae/native-runtime/ensure".to_string()),
+        ssh_host: Some("yth".to_string()),
+        ssh_local_port: Some(18083),
+        ssh_remote_port: Some(8083),
         ..Default::default()
     };
 

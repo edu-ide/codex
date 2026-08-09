@@ -436,17 +436,11 @@ async fn probe_native_runtime_readiness(
 fn native_runtime_readiness_health_url(
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> String {
-    if config
-        .proxy_control_url
-        .as_deref()
-        .is_some_and(|url| !url.trim().is_empty())
-        && let Some(proxy_base_url) = config
-            .proxy_base_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|url| !url.is_empty())
+    if crate::native_runtime_endpoint::uses_remote_proxy(config)
+        && let Some(proxy_base_url) =
+            crate::native_runtime_endpoint::effective_proxy_base_url(config)
     {
-        return crate::config::native_runtime_health_url_from_base_url(proxy_base_url);
+        return crate::config::native_runtime_health_url_from_base_url(&proxy_base_url);
     }
     crate::config::native_runtime_effective_health_url(config)
 }
@@ -463,11 +457,7 @@ pub async fn native_runtime_status_snapshot(
     profile_id: Option<&str>,
 ) -> Option<NativeRuntimeStatusSnapshot> {
     let (profile, config) = crate::config::get_native_runtime_config(profile_id)?;
-    let activated = config.enabled
-        || config
-            .proxy_control_url
-            .as_deref()
-            .is_some_and(|url| !url.trim().is_empty());
+    let activated = config.enabled || crate::native_runtime_endpoint::uses_remote_proxy(&config);
     let healthy = activated && native_runtime_readiness(&config).await;
     Some(NativeRuntimeStatusSnapshot {
         profile,
@@ -1100,8 +1090,16 @@ fn native_runtime_configs_equivalent(
     right: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> bool {
     native_runtime_execution_fingerprint(left) == native_runtime_execution_fingerprint(right)
-        && left.proxy_control_url.as_deref().map(str::trim)
-            == right.proxy_control_url.as_deref().map(str::trim)
+        && crate::native_runtime_endpoint::effective_proxy_control_url(left)
+            == crate::native_runtime_endpoint::effective_proxy_control_url(right)
+        && crate::native_runtime_endpoint::ssh_host(left)
+            == crate::native_runtime_endpoint::ssh_host(right)
+        && crate::native_runtime_endpoint::ssh_local_port(left)
+            == crate::native_runtime_endpoint::ssh_local_port(right)
+        && crate::native_runtime_endpoint::ssh_remote_port(left)
+            == crate::native_runtime_endpoint::ssh_remote_port(right)
+        && left.proxy_control_token_env.as_deref().map(str::trim)
+            == right.proxy_control_token_env.as_deref().map(str::trim)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1137,22 +1135,8 @@ fn cmdline_contains_model_path(cmdline: &[String], model_path: &str) -> bool {
 fn extract_port_from_config(
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> Option<u16> {
-    for (index, arg) in config.args.iter().enumerate() {
-        if matches!(arg.as_str(), "--port" | "-p")
-            && let Some(port) = config
-                .args
-                .get(index + 1)
-                .and_then(|value| value.parse::<u16>().ok())
-        {
-            return Some(port);
-        }
-        if let Some(port) = arg
-            .strip_prefix("--port=")
-            .or_else(|| arg.strip_prefix("-p="))
-            .and_then(|value| value.parse::<u16>().ok())
-        {
-            return Some(port);
-        }
+    if let Some(port) = crate::native_runtime_endpoint::runtime_port_from_args(config) {
+        return Some(port);
     }
 
     let health_url = crate::config::native_runtime_effective_health_url(config);
@@ -1528,11 +1512,7 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
         return Ok(());
     };
 
-    if config
-        .proxy_control_url
-        .as_deref()
-        .is_some_and(|url| !url.trim().is_empty())
-    {
+    if crate::native_runtime_endpoint::uses_remote_proxy(&config) {
         crate::native_runtime_proxy::ensure_remote_native_runtime(&profile_id, &config).await?;
     } else if config.enabled {
         let thinking_mode = crate::config::current_thinking_mode();
@@ -1564,7 +1544,10 @@ pub async fn switch_native_runtime_for_cli(
         previous_profile_id.and_then(|id| crate::config::get_native_runtime_config(Some(id)));
     let next = next_profile_id.and_then(|id| crate::config::get_native_runtime_config(Some(id)));
 
-    if let Some((previous_id, previous_config)) = previous.as_ref() {
+    if let Some((previous_id, previous_config)) = previous.as_ref()
+        && (previous_config.enabled
+            || crate::native_runtime_endpoint::uses_remote_proxy(previous_config))
+    {
         let should_stop_previous = next
             .as_ref()
             .map(|(_, next_config)| {
@@ -1593,6 +1576,11 @@ pub async fn stop_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Re
         return Ok(());
     };
 
+    if !config.enabled && !crate::native_runtime_endpoint::uses_remote_proxy(&config) {
+        println!("Native runtime profile {profile_id} is connection-only; nothing to stop.");
+        return Ok(());
+    }
+
     println!("Stopping native runtime profile: {}", profile_id);
     stop_configured_native_runtime(&profile_id, &config).await
 }
@@ -1601,11 +1589,7 @@ async fn stop_configured_native_runtime(
     profile_id: &str,
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> anyhow::Result<()> {
-    if config
-        .proxy_control_url
-        .as_deref()
-        .is_some_and(|url| !url.trim().is_empty())
-    {
+    if crate::native_runtime_endpoint::uses_remote_proxy(config) {
         crate::native_runtime_proxy::stop_remote_native_runtime(profile_id, config).await?;
         Ok(())
     } else {
@@ -3327,6 +3311,41 @@ mod tests {
             .expect_err("unowned listener must not be signaled");
 
         assert!(error.to_string().contains("unattested process"));
+        assert!(tokio::net::TcpStream::connect(address).await.is_ok());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn switching_away_from_connection_only_profile_leaves_listener_running() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _config_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind connection-only listener");
+        let address = listener
+            .local_addr()
+            .expect("connection-only listener address");
+        let mut config = crate::config::IlhaeTomlConfig::default();
+        config.profile.active = Some("connection-only".to_string());
+        config.profiles.insert(
+            "connection-only".to_string(),
+            crate::config::IlhaeProfileConfig {
+                native_runtime: crate::config::IlhaeProfileNativeRuntimeConfig {
+                    enabled: false,
+                    health_url: format!("http://{address}/health"),
+                    base_url: format!("http://{address}/v1"),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        crate::config::save_ilhae_toml_config(&config).expect("save Ilhae config");
+
+        switch_native_runtime_for_cli(Some("connection-only"), /*next_profile_id*/ None)
+            .await
+            .expect("connection-only profile should not be stopped");
+
         assert!(tokio::net::TcpStream::connect(address).await.is_ok());
     }
 

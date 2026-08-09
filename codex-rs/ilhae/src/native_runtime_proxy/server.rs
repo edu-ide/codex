@@ -289,6 +289,9 @@ fn normalized_runtime_config(
     config.proxy_base_url = None;
     config.proxy_control_url = None;
     config.proxy_control_token_env = None;
+    config.ssh_host = None;
+    config.ssh_local_port = None;
+    config.ssh_remote_port = None;
     config
 }
 

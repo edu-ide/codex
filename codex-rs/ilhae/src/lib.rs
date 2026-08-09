@@ -24,6 +24,7 @@ pub mod hygiene_loop;
 pub mod knowledge_loop;
 pub mod mcp_manager;
 pub mod memory_provider;
+mod native_runtime_endpoint;
 pub mod native_runtime_proxy;
 
 pub mod acp_ws_server;

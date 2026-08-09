@@ -149,7 +149,24 @@ macro_rules! register_admin_settings_handlers {
                 let cx_cache = s.infra.relay_conductor_cx.clone();
                 async move |req: crate::IlhaeAppProfileSetRequest, responder: Responder<crate::IlhaeAppProfileSetResponse>, _cx: ConnectionTo<Conductor>| {
                     info!("ilhae/app/profile/set RPC profile={}", req.profile_id);
-                    let previous_active = crate::config::load_ilhae_toml_config().profile.active;
+                    let config = crate::config::load_ilhae_toml_config();
+                    let previous_active = config.profile.active;
+                    let Some(target_profile) = config
+                        .profiles
+                        .get(req.profile_id.trim())
+                        .map(|profile| crate::config::profile_to_dto(req.profile_id.trim(), profile))
+                    else {
+                        return responder.respond_with_error(sacp::Error::new(
+                            -32602,
+                            format!("unknown profile id: {}", req.profile_id),
+                        ));
+                    };
+                    if let Err(e) = crate::switch_native_runtime_for_cli(
+                        previous_active.as_deref(),
+                        Some(target_profile.id.as_str()),
+                    ).await {
+                        return responder.respond_with_error(sacp::util::internal_error(e.to_string()));
+                    }
                     let profile = match crate::config::set_active_ilhae_profile(&req.profile_id) {
                         Ok(profile) => profile,
                         Err(e) => {
@@ -161,12 +178,6 @@ macro_rules! register_admin_settings_handlers {
                     }
                     if let Err(e) = crate::config::prepare_ilhae_codex_home() {
                         return responder.respond_with_error(sacp::util::internal_error(e));
-                    }
-                    if let Err(e) = crate::switch_native_runtime_for_cli(
-                        previous_active.as_deref(),
-                        Some(profile.id.as_str()),
-                    ).await {
-                        return responder.respond_with_error(sacp::util::internal_error(e.to_string()));
                     }
                     crate::notify_engine_state(&cx_cache, &settings).await;
                     responder.respond(crate::IlhaeAppProfileSetResponse {

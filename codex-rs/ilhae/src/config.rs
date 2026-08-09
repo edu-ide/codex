@@ -319,6 +319,9 @@ pub struct IlhaeProfileNativeRuntimeConfig {
     pub proxy_base_url: Option<String>,
     pub proxy_control_url: Option<String>,
     pub proxy_control_token_env: Option<String>,
+    pub ssh_host: Option<String>,
+    pub ssh_local_port: Option<u16>,
+    pub ssh_remote_port: Option<u16>,
     pub server_bin: String,
     pub model_path: String,
     pub chat_template_file: String,
@@ -439,6 +442,9 @@ impl Default for IlhaeProfileNativeRuntimeConfig {
             proxy_base_url: None,
             proxy_control_url: None,
             proxy_control_token_env: None,
+            ssh_host: None,
+            ssh_local_port: None,
+            ssh_remote_port: None,
             server_bin: String::new(),
             model_path: String::new(),
             chat_template_file: String::new(),
@@ -1550,12 +1556,7 @@ fn native_runtime_effective_query_params(
 }
 
 pub fn native_runtime_effective_base_url(runtime: &IlhaeProfileNativeRuntimeConfig) -> String {
-    runtime
-        .proxy_base_url
-        .as_ref()
-        .map(|base_url| base_url.trim())
-        .filter(|base_url| !base_url.is_empty())
-        .map(ToString::to_string)
+    crate::native_runtime_endpoint::effective_proxy_base_url(runtime)
         .or_else(|| {
             let base_url = runtime.base_url.trim();
             if base_url.is_empty() {
@@ -1572,7 +1573,8 @@ pub fn native_runtime_effective_base_url(runtime: &IlhaeProfileNativeRuntimeConf
                 Some(base_url.to_string())
             }
         })
-        .unwrap_or_else(|| runtime.base_url.trim().to_string())
+        .or_else(|| crate::native_runtime_endpoint::runtime_base_url_from_args(runtime))
+        .unwrap_or_default()
 }
 
 pub fn native_runtime_effective_health_url(runtime: &IlhaeProfileNativeRuntimeConfig) -> String {

@@ -1517,7 +1517,18 @@ async fn run_ilhae_profile_command(cmd: ProfileCommand) -> anyhow::Result<()> {
             }
         }
         ProfileSubcommand::Set { profile_id, json } => {
-            let previous_active = codex_ilhae::config::load_ilhae_toml_config().profile.active;
+            let config = codex_ilhae::config::load_ilhae_toml_config();
+            let previous_active = config.profile.active;
+            let target_profile = config
+                .profiles
+                .get(profile_id.trim())
+                .map(|profile| codex_ilhae::config::profile_to_dto(profile_id.trim(), profile))
+                .ok_or_else(|| anyhow::anyhow!("unknown profile id: {profile_id}"))?;
+            codex_ilhae::switch_native_runtime_for_cli(
+                previous_active.as_deref(),
+                Some(target_profile.id.as_str()),
+            )
+            .await?;
             let profile = codex_ilhae::config::set_active_ilhae_profile(&profile_id)
                 .map_err(anyhow::Error::msg)?;
             let ilhae_dir = codex_ilhae::config::resolve_ilhae_data_dir();
@@ -1525,11 +1536,6 @@ async fn run_ilhae_profile_command(cmd: ProfileCommand) -> anyhow::Result<()> {
             codex_ilhae::config::apply_ilhae_profile_projection(&settings, &profile)
                 .map_err(anyhow::Error::msg)?;
             codex_ilhae::config::prepare_ilhae_codex_home().map_err(anyhow::Error::msg)?;
-            codex_ilhae::switch_native_runtime_for_cli(
-                previous_active.as_deref(),
-                Some(profile.id.as_str()),
-            )
-            .await?;
 
             if json {
                 let active_profile = profile.id.clone();
