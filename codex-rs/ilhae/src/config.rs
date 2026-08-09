@@ -2447,7 +2447,9 @@ fn write_ilhae_codex_runtime_file_atomically(
                 destination.display()
             )
         })?;
-        File::open(destination)
+        OpenOptions::new()
+            .write(true)
+            .open(destination)
             .and_then(|file| file.sync_all())
             .map_err(|error| {
                 format!(
@@ -3305,6 +3307,22 @@ url = "ftp://example.com/mcp"
             std::fs::read(runtime_home.join(ILHAE_CODEX_RUNTIME_CONFIG_LKG_FILE))
                 .expect("read unchanged LKG"),
             baseline_lkg
+        );
+    }
+
+    #[test]
+    fn atomic_runtime_file_writer_replaces_existing_contents() {
+        let tmp = tempdir().expect("tempdir");
+        let destination = tmp.path().join("model_catalog.json");
+
+        write_ilhae_codex_runtime_file_atomically(&destination, b"first")
+            .expect("write initial runtime file");
+        write_ilhae_codex_runtime_file_atomically(&destination, b"second")
+            .expect("replace runtime file");
+
+        assert_eq!(
+            std::fs::read(destination).expect("read replaced runtime file"),
+            b"second"
         );
     }
 
