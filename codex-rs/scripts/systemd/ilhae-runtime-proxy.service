@@ -1,0 +1,26 @@
+[Unit]
+Description=Ilhae native runtime control proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yth
+Group=yth
+Environment=HOME=/home/yth
+Environment=ILHAE_CONFIG_DIR=/home/yth/.ilhae
+Environment=ILHAE_DATA_DIR=/home/yth/.ilhae
+EnvironmentFile=-/etc/default/ilhae-runtime-proxy
+ExecStart=/usr/local/bin/ilhae-runtime-proxy
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+WorkingDirectory=/home/yth
+
+[Install]
+WantedBy=multi-user.target

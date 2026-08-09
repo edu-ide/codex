@@ -43,6 +43,7 @@ use crate::settings_types::thinking_mode_enabled;
 
 pub const ILHAE_CODEX_RUNTIME_CONFIG_LKG_FILE: &str = ".config.toml.ilhae-lkg";
 pub const ILHAE_CODEX_RUNTIME_CONFIG_LOCK_FILE: &str = ".config.toml.ilhae-runtime.lock";
+const ILHAE_CODEX_MODEL_CATALOG_FILE: &str = "model_catalog.json";
 const ILHAE_RUNTIME_SYSTEM2_PROJECTION_KEY: &str = "ilhae_runtime_system2_projection";
 const ILHAE_RUNTIME_SYSTEM2_PROJECTION_SCHEMA_VERSION: i64 = 1;
 const DESKTOP_MATERIALIZED_MCP_SERVER_NAME: &str = "office";
@@ -307,7 +308,7 @@ fn default_native_runtime_startup_timeout_secs() -> u64 {
     120
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct IlhaeProfileNativeRuntimeConfig {
     pub enabled: bool,
@@ -316,6 +317,8 @@ pub struct IlhaeProfileNativeRuntimeConfig {
     pub url: Option<String>,
     pub base_url: String,
     pub proxy_base_url: Option<String>,
+    pub proxy_control_url: Option<String>,
+    pub proxy_control_token_env: Option<String>,
     pub server_bin: String,
     pub model_path: String,
     pub chat_template_file: String,
@@ -326,6 +329,7 @@ pub struct IlhaeProfileNativeRuntimeConfig {
     pub env_http_headers: Option<BTreeMap<String, String>>,
     pub request_max_retries: Option<u64>,
     pub stream_max_retries: Option<u64>,
+    pub context_window: Option<u64>,
     #[serde(default = "default_native_runtime_startup_timeout_secs")]
     pub startup_timeout_secs: u64,
     pub args: Vec<String>,
@@ -433,6 +437,8 @@ impl Default for IlhaeProfileNativeRuntimeConfig {
             url: None,
             base_url: String::new(),
             proxy_base_url: None,
+            proxy_control_url: None,
+            proxy_control_token_env: None,
             server_bin: String::new(),
             model_path: String::new(),
             chat_template_file: String::new(),
@@ -443,6 +449,7 @@ impl Default for IlhaeProfileNativeRuntimeConfig {
             env_http_headers: None,
             request_max_retries: None,
             stream_max_retries: None,
+            context_window: None,
             startup_timeout_secs: default_native_runtime_startup_timeout_secs(),
             args: Vec::new(),
         }
@@ -1269,7 +1276,7 @@ pub fn sync_codex_auth_to_workspace(home: &str, workspace: &PathBuf) {
     }
 }
 
-fn parse_context_window_from_native_args(args: &[String]) -> u64 {
+fn parse_context_window_from_native_args(args: &[String]) -> Option<u64> {
     let mut idx = 0usize;
     while idx < args.len() {
         let arg = args[idx].trim();
@@ -1278,7 +1285,7 @@ fn parse_context_window_from_native_args(args: &[String]) -> u64 {
             "-c" | "--ctx-size" | "--context-size" | "--context-length"
         ) {
             if let Some(value) = args.get(idx + 1).and_then(|next| next.parse::<u64>().ok()) {
-                return value;
+                return Some(value);
             }
         } else if let Some(value) = arg
             .strip_prefix("--ctx-size=")
@@ -1286,11 +1293,11 @@ fn parse_context_window_from_native_args(args: &[String]) -> u64 {
             .or_else(|| arg.strip_prefix("--context-length="))
             .and_then(|value| value.parse::<u64>().ok())
         {
-            return value;
+            return Some(value);
         }
         idx += 1;
     }
-    32_768
+    None
 }
 
 fn parse_context_window_from_native_query_params(
@@ -1351,13 +1358,24 @@ fn parse_context_window_from_native_query_params(
 }
 
 fn native_runtime_model_context_window(runtime: &IlhaeProfileNativeRuntimeConfig) -> u64 {
+    if let Some(context_window) = runtime
+        .context_window
+        .filter(|context_window| *context_window > 0)
+    {
+        return context_window;
+    }
+
+    if let Some(context_window) = parse_context_window_from_native_args(&runtime.args) {
+        return context_window;
+    }
+
     if let Some(context_window) =
         parse_context_window_from_native_query_params(runtime.query_params.as_ref())
     {
         return context_window;
     }
 
-    parse_context_window_from_native_args(&runtime.args)
+    32_768
 }
 
 fn profile_engine_id_for_display(profile: &IlhaeProfileConfig) -> Option<String> {
@@ -1516,59 +1534,10 @@ fn string_map_as_toml_value(values: &BTreeMap<String, String>) -> toml::Value {
     toml::Value::Table(table)
 }
 
-fn parse_native_runtime_args_as_query_params(args: &[String]) -> BTreeMap<String, String> {
-    let mut query_params = BTreeMap::new();
-    let mut idx = 0;
-    while idx < args.len() {
-        let raw_arg = args[idx].trim();
-        if raw_arg.is_empty() {
-            idx += 1;
-            continue;
-        }
-
-        if let Some((raw_key, raw_value)) = raw_arg.split_once('=') {
-            let key = raw_key.trim_start_matches('-').trim().to_string();
-            if !key.is_empty() {
-                query_params.insert(key, raw_value.to_string());
-            }
-            idx += 1;
-            continue;
-        }
-
-        let key_with_prefix = raw_arg.trim_start_matches('-').trim().to_string();
-        if key_with_prefix.is_empty() {
-            idx += 1;
-            continue;
-        }
-
-        if raw_arg.starts_with('-') {
-            let has_value = idx + 1 < args.len() && !args[idx + 1].trim().starts_with('-');
-            if has_value {
-                query_params.insert(key_with_prefix, args[idx + 1].trim().to_string());
-                idx += 2;
-                continue;
-            }
-
-            query_params.insert(key_with_prefix, "true".to_string());
-            idx += 1;
-            continue;
-        }
-
-        if idx + 1 < args.len() && !args[idx + 1].trim().starts_with('-') {
-            query_params.insert(key_with_prefix, args[idx + 1].trim().to_string());
-            idx += 2;
-        } else {
-            query_params.insert(key_with_prefix, "true".to_string());
-            idx += 1;
-        }
-    }
-    query_params
-}
-
 fn native_runtime_effective_query_params(
     runtime: &IlhaeProfileNativeRuntimeConfig,
 ) -> BTreeMap<String, String> {
-    let mut query_params = parse_native_runtime_args_as_query_params(&runtime.args);
+    let mut query_params = BTreeMap::new();
     if let Some(overrides) = runtime.query_params.as_ref() {
         for (key, value) in overrides {
             let key = key.trim();
@@ -1617,6 +1586,10 @@ pub fn native_runtime_effective_health_url(runtime: &IlhaeProfileNativeRuntimeCo
         return String::new();
     }
 
+    native_runtime_health_url_from_base_url(&base_url)
+}
+
+pub(crate) fn native_runtime_health_url_from_base_url(base_url: &str) -> String {
     if let Ok(mut parsed) = url::Url::parse(&base_url) {
         let mut path = parsed.path().trim_end_matches('/').to_string();
         if path.ends_with("/v1") {
@@ -1695,12 +1668,19 @@ fn native_model_provider_table(runtime: &IlhaeProfileNativeRuntimeConfig) -> tom
             string_map_as_toml_value(http_headers),
         );
     }
-    if let Some(env_http_headers) = runtime.env_http_headers.as_ref()
-        && !env_http_headers.is_empty()
+    let mut env_http_headers = runtime.env_http_headers.clone().unwrap_or_default();
+    if let Some(token_env) = runtime
+        .proxy_control_token_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|token_env| !token_env.is_empty())
     {
+        env_http_headers.insert("X-Ilhae-Runtime-Token".to_string(), token_env.to_string());
+    }
+    if !env_http_headers.is_empty() {
         table.insert(
             "env_http_headers".to_string(),
-            string_map_as_toml_value(env_http_headers),
+            string_map_as_toml_value(&env_http_headers),
         );
     }
     if let Some(request_max_retries) = runtime.request_max_retries {
@@ -1743,6 +1723,7 @@ fn codex_profile_table_for_ilhae_profile(
     profile_id: &str,
     profile: &IlhaeProfileConfig,
     user_model: Option<&str>,
+    model_catalog_path: &Path,
 ) -> toml::value::Table {
     let native = native_runtime_for_profile(profile);
     let engine = profile_engine_id(profile);
@@ -1785,6 +1766,12 @@ fn codex_profile_table_for_ilhae_profile(
         "model_provider".to_string(),
         toml::Value::String(model_provider),
     );
+    if !native_runtime_effective_base_url(&profile.native_runtime).is_empty() {
+        table.insert(
+            "model_catalog_json".to_string(),
+            toml::Value::String(model_catalog_path.display().to_string()),
+        );
+    }
 
     table
 }
@@ -1906,6 +1893,7 @@ fn user_config_value_for_managed_config(
 fn default_ilhae_codex_home_table(
     config: &IlhaeTomlConfig,
     user_config: &toml::Value,
+    model_catalog_path: &Path,
 ) -> toml::value::Table {
     let user_model = user_model_for_managed_config(user_config);
     let active_profile_name = config
@@ -1943,8 +1931,14 @@ fn default_ilhae_codex_home_table(
         &active_profile_provider_id,
         &active_profile,
         user_model.as_deref(),
+        model_catalog_path,
     );
-    for key in ["model", "model_provider", "model_context_window"] {
+    for key in [
+        "model",
+        "model_provider",
+        "model_context_window",
+        "model_catalog_json",
+    ] {
         if let Some(value) = active_codex_profile.get(key).cloned() {
             root.insert(key.to_string(), value);
         }
@@ -2155,6 +2149,7 @@ fn default_ilhae_codex_home_table(
                 profile_id,
                 profile,
                 user_model.as_deref(),
+                model_catalog_path,
             )),
         );
     }
@@ -2246,12 +2241,73 @@ fn load_human_ilhae_config_snapshot() -> Result<HumanIlhaeConfigSnapshot, String
 
 fn render_ilhae_codex_runtime_candidate(
     snapshot: &HumanIlhaeConfigSnapshot,
+    model_catalog_path: &Path,
 ) -> Result<String, String> {
-    let root = default_ilhae_codex_home_table(&snapshot.typed, &snapshot.document);
+    let root =
+        default_ilhae_codex_home_table(&snapshot.typed, &snapshot.document, model_catalog_path);
     let rendered =
         toml::to_string_pretty(&toml::Value::Table(root)).map_err(|error| error.to_string())?;
     validate_ilhae_codex_runtime_config(&rendered)?;
     Ok(rendered)
+}
+
+fn native_model_catalog(
+    config: &IlhaeTomlConfig,
+) -> Option<codex_protocol::openai_models::ModelsResponse> {
+    let mut models_by_slug = BTreeMap::new();
+    for (profile_id, profile) in &config.profiles {
+        if native_runtime_effective_base_url(&profile.native_runtime).is_empty() {
+            continue;
+        }
+        let slug = resolve_ilhae_profile_model_name(profile_id, profile);
+        models_by_slug
+            .entry(slug.clone())
+            .or_insert_with(|| codex_models_manager::model_info::model_info_from_slug(&slug));
+    }
+    (!models_by_slug.is_empty()).then(|| codex_protocol::openai_models::ModelsResponse {
+        models: models_by_slug.into_values().collect(),
+    })
+}
+
+fn serialize_native_model_catalog(
+    catalog: &codex_protocol::openai_models::ModelsResponse,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = serde_json::to_vec_pretty(catalog)
+        .map_err(|error| format!("Failed to serialize native model catalog: {error}"))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn transition_native_model_catalog(
+    catalog_path: &Path,
+    current: &codex_protocol::openai_models::ModelsResponse,
+) -> codex_protocol::openai_models::ModelsResponse {
+    let mut models_by_slug = std::fs::read(catalog_path)
+        .ok()
+        .and_then(|bytes| {
+            serde_json::from_slice::<codex_protocol::openai_models::ModelsResponse>(&bytes).ok()
+        })
+        .unwrap_or_default()
+        .models
+        .into_iter()
+        .map(|model| (model.slug.clone(), model))
+        .collect::<BTreeMap<_, _>>();
+    for model in &current.models {
+        models_by_slug.insert(model.slug.clone(), model.clone());
+    }
+    codex_protocol::openai_models::ModelsResponse {
+        models: models_by_slug.into_values().collect(),
+    }
+}
+
+fn absolute_native_model_catalog_path(codex_home: &Path) -> Result<PathBuf, String> {
+    let path = codex_home.join(ILHAE_CODEX_MODEL_CATALOG_FILE);
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    std::env::current_dir()
+        .map(|current_dir| current_dir.join(path))
+        .map_err(|error| format!("Failed to resolve Codex runtime directory: {error}"))
 }
 
 fn validate_ilhae_codex_runtime_config(content: &str) -> Result<(), String> {
@@ -2503,6 +2559,42 @@ fn install_ilhae_codex_runtime_snapshot_locked(
     write_ilhae_codex_runtime_file_atomically(&lkg_path, rendered.as_bytes())
 }
 
+fn install_ilhae_codex_runtime_generation_locked(
+    codex_home: &Path,
+    rendered: &str,
+    model_catalog: Option<&codex_protocol::openai_models::ModelsResponse>,
+) -> Result<(), String> {
+    let catalog_path = absolute_native_model_catalog_path(codex_home)?;
+    let Some(model_catalog) = model_catalog else {
+        install_ilhae_codex_runtime_snapshot_locked(codex_home, rendered)?;
+        match std::fs::remove_file(&catalog_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => warn!(
+                "Failed to remove unused native model catalog ({}): {error}",
+                catalog_path.display()
+            ),
+        }
+        return Ok(());
+    };
+
+    // First publish the union of the old and new catalogs. Both the currently
+    // active config and the incoming config remain loadable if the process is
+    // interrupted between the independently atomic file replacements.
+    let transition_catalog = transition_native_model_catalog(&catalog_path, model_catalog);
+    let transition_bytes = serialize_native_model_catalog(&transition_catalog)?;
+    write_ilhae_codex_runtime_file_atomically(&catalog_path, &transition_bytes)?;
+    install_ilhae_codex_runtime_snapshot_locked(codex_home, rendered)?;
+
+    // Active and LKG now describe the same generation, so the catalog can be
+    // pruned back to exactly the native models present in that generation.
+    let current_bytes = serialize_native_model_catalog(model_catalog)?;
+    if let Err(error) = write_ilhae_codex_runtime_file_atomically(&catalog_path, &current_bytes) {
+        warn!("Kept the compatible transition model catalog after final pruning failed: {error}");
+    }
+    Ok(())
+}
+
 fn preserve_valid_active_runtime_locked(codex_home: &Path) -> bool {
     let config_path = codex_home.join("config.toml");
     read_valid_ilhae_codex_runtime_config(&config_path).is_some()
@@ -2529,9 +2621,13 @@ fn recover_or_bootstrap_ilhae_codex_runtime_locked(
         return Ok(());
     }
 
-    let safe = render_ilhae_codex_runtime_candidate(&HumanIlhaeConfigSnapshot::default())
-        .map_err(|error| format!("Failed to build safe Codex runtime bootstrap: {error}"))?;
-    install_ilhae_codex_runtime_snapshot_locked(codex_home, &safe)
+    let model_catalog_path = absolute_native_model_catalog_path(codex_home)?;
+    let safe = render_ilhae_codex_runtime_candidate(
+        &HumanIlhaeConfigSnapshot::default(),
+        &model_catalog_path,
+    )
+    .map_err(|error| format!("Failed to build safe Codex runtime bootstrap: {error}"))?;
+    install_ilhae_codex_runtime_generation_locked(codex_home, &safe, None)
 }
 
 fn prepare_ilhae_codex_runtime_config_locked(codex_home: &Path) -> Result<(), String> {
@@ -2545,7 +2641,8 @@ fn prepare_ilhae_codex_runtime_config_locked(codex_home: &Path) -> Result<(), St
             return Ok(());
         }
     };
-    let candidate = match render_ilhae_codex_runtime_candidate(&snapshot) {
+    let model_catalog_path = absolute_native_model_catalog_path(codex_home)?;
+    let candidate = match render_ilhae_codex_runtime_candidate(&snapshot, &model_catalog_path) {
         Ok(candidate) => candidate,
         Err(_) => {
             recover_or_bootstrap_ilhae_codex_runtime_locked(
@@ -2556,7 +2653,12 @@ fn prepare_ilhae_codex_runtime_config_locked(codex_home: &Path) -> Result<(), St
         }
     };
 
-    if let Err(error) = install_ilhae_codex_runtime_snapshot_locked(codex_home, &candidate) {
+    let model_catalog = native_model_catalog(&snapshot.typed);
+    if let Err(error) = install_ilhae_codex_runtime_generation_locked(
+        codex_home,
+        &candidate,
+        model_catalog.as_ref(),
+    ) {
         if preserve_valid_active_runtime_locked(codex_home) {
             warn!(
                 "Keeping the previous validated Codex runtime snapshot after install failure: {error}"
@@ -3196,8 +3298,11 @@ url = "ftp://example.com/mcp"
     fn rejected_candidate_cannot_replace_valid_active_or_lkg_snapshot() {
         let tmp = tempdir().expect("tempdir");
         let runtime_home = tmp.path().join("runtime");
-        let valid = render_ilhae_codex_runtime_candidate(&HumanIlhaeConfigSnapshot::default())
-            .expect("render valid snapshot");
+        let valid = render_ilhae_codex_runtime_candidate(
+            &HumanIlhaeConfigSnapshot::default(),
+            &runtime_home.join(ILHAE_CODEX_MODEL_CATALOG_FILE),
+        )
+        .expect("render valid snapshot");
         install_ilhae_codex_runtime_snapshot_locked(&runtime_home, &valid)
             .expect("install valid snapshot");
         let baseline_active =
@@ -3222,9 +3327,11 @@ url = "ftp://example.com/mcp"
     fn valid_dynamic_active_does_not_replace_base_lkg_and_invalid_active_restores_base() {
         let tmp = tempdir().expect("tempdir");
         let runtime_home = tmp.path().join("runtime");
-        let candidate_a =
-            render_ilhae_codex_runtime_candidate(&HumanIlhaeConfigSnapshot::default())
-                .expect("render candidate A");
+        let candidate_a = render_ilhae_codex_runtime_candidate(
+            &HumanIlhaeConfigSnapshot::default(),
+            &runtime_home.join(ILHAE_CODEX_MODEL_CATALOG_FILE),
+        )
+        .expect("render candidate A");
         install_ilhae_codex_runtime_snapshot_locked(&runtime_home, &candidate_a)
             .expect("install candidate A");
 
@@ -3283,9 +3390,11 @@ url = "ftp://example.com/mcp"
         let tmp = tempdir().expect("tempdir");
         let runtime_home = tmp.path().join("runtime");
         std::fs::create_dir_all(&runtime_home).expect("create runtime home");
-        let candidate_a =
-            render_ilhae_codex_runtime_candidate(&HumanIlhaeConfigSnapshot::default())
-                .expect("render candidate A");
+        let candidate_a = render_ilhae_codex_runtime_candidate(
+            &HumanIlhaeConfigSnapshot::default(),
+            &runtime_home.join(ILHAE_CODEX_MODEL_CATALOG_FILE),
+        )
+        .expect("render candidate A");
         let mut candidate_b_toml = candidate_a
             .parse::<toml::Value>()
             .expect("parse candidate A");
@@ -3650,6 +3759,99 @@ requires_openai_auth = false
     }
 
     #[test]
+    #[serial_test::serial]
+    fn prepare_ilhae_codex_home_scopes_static_catalog_to_native_profiles() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+        let _runtime_environment = preserve_runtime_environment();
+
+        let mut config = IlhaeTomlConfig::default();
+        config.profile.active = Some("qwen-local".to_string());
+
+        let mut qwen = IlhaeProfileConfig::default();
+        qwen.agent.engine_id = Some("llama-server".to_string());
+        qwen.native_runtime.base_url = "http://127.0.0.1:8081/v1".to_string();
+        qwen.native_runtime.model_path = "qwen3.6-27b".to_string();
+        config.profiles.insert("qwen-local".to_string(), qwen);
+
+        let mut review = IlhaeProfileConfig::default();
+        review.agent.engine_id = Some("openai".to_string());
+        review.agent.command = Some("codex".to_string());
+        config.profiles.insert("review".to_string(), review);
+
+        save_ilhae_toml_config(&config).expect("save config");
+        let codex_home = prepare_ilhae_codex_home().expect("prepare codex home");
+        let catalog_path = codex_home.join(ILHAE_CODEX_MODEL_CATALOG_FILE);
+        let managed =
+            std::fs::read_to_string(codex_home.join("config.toml")).expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
+        let profiles = parsed
+            .get("profiles")
+            .and_then(toml::Value::as_table)
+            .expect("profiles table");
+
+        assert_eq!(
+            parsed
+                .get("model_catalog_json")
+                .and_then(toml::Value::as_str),
+            catalog_path.to_str()
+        );
+        assert_eq!(
+            profiles
+                .get("qwen-local")
+                .and_then(|profile| profile.get("model_catalog_json"))
+                .and_then(toml::Value::as_str),
+            catalog_path.to_str()
+        );
+        assert!(
+            profiles
+                .get("review")
+                .and_then(|profile| profile.get("model_catalog_json"))
+                .is_none()
+        );
+
+        let catalog = serde_json::from_slice::<codex_protocol::openai_models::ModelsResponse>(
+            &std::fs::read(&catalog_path).expect("read native model catalog"),
+        )
+        .expect("parse native model catalog");
+        assert_eq!(
+            catalog,
+            codex_protocol::openai_models::ModelsResponse {
+                models: vec![codex_models_manager::model_info::model_info_from_slug(
+                    "qwen3.6-27b"
+                )],
+            }
+        );
+
+        config.profile.active = Some("review".to_string());
+        save_ilhae_toml_config(&config).expect("save OpenAI-active config");
+        prepare_ilhae_codex_home().expect("prepare OpenAI-active codex home");
+        let managed =
+            std::fs::read_to_string(codex_home.join("config.toml")).expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
+        let profiles = parsed
+            .get("profiles")
+            .and_then(toml::Value::as_table)
+            .expect("profiles table");
+
+        assert!(parsed.get("model_catalog_json").is_none());
+        assert!(
+            profiles
+                .get("review")
+                .and_then(|profile| profile.get("model_catalog_json"))
+                .is_none()
+        );
+        assert_eq!(
+            profiles
+                .get("qwen-local")
+                .and_then(|profile| profile.get("model_catalog_json"))
+                .and_then(toml::Value::as_str),
+            catalog_path.to_str()
+        );
+    }
+
+    #[test]
     fn native_runtime_effective_urls_fall_back_to_url_alias() {
         let mut config = IlhaeProfileNativeRuntimeConfig::default();
         config.url = Some("http://127.0.0.1:8085/v1".to_string());
@@ -3819,7 +4021,7 @@ requires_openai_auth = false
     }
 
     #[test]
-    fn prepare_ilhae_codex_home_remote_runtime_args_fallback_to_query_params() {
+    fn prepare_ilhae_codex_home_keeps_runtime_args_out_of_request_query_params() {
         let tmp = tempdir().expect("tempdir");
         let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
         let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -3857,22 +4059,7 @@ requires_openai_auth = false
             .get("ilhae-native-remote-args")
             .and_then(toml::Value::as_table)
             .expect("remote provider");
-        assert_eq!(
-            remote_provider
-                .get("query_params")
-                .and_then(toml::Value::as_table)
-                .and_then(|query| query.get("draft"))
-                .and_then(toml::Value::as_str),
-            Some("mtp")
-        );
-        assert_eq!(
-            remote_provider
-                .get("query_params")
-                .and_then(toml::Value::as_table)
-                .and_then(|query| query.get("ngram-mode"))
-                .and_then(toml::Value::as_str),
-            Some("1")
-        );
+        assert!(remote_provider.get("query_params").is_none());
     }
 
     #[test]
@@ -3933,6 +4120,54 @@ requires_openai_auth = false
                 .and_then(toml::Value::as_str),
             Some("131072")
         );
+    }
+
+    #[test]
+    fn prepare_ilhae_codex_home_keeps_context_window_out_of_request_query_params() {
+        let tmp = tempdir().expect("tempdir");
+        let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
+        let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
+
+        let mut config = IlhaeTomlConfig::default();
+        config.profile.active = Some("remote-context-window".to_string());
+
+        let mut remote = IlhaeProfileConfig::default();
+        remote.agent.engine_id = Some("ilhae".to_string());
+        remote.agent.command = Some("ilhae".to_string());
+        remote.native_runtime.provider = Some("llama-server".to_string());
+        remote.native_runtime.base_url = "http://127.0.0.1:8082/v1".to_string();
+        remote.native_runtime.context_window = Some(16_384);
+        config
+            .profiles
+            .insert("remote-context-window".to_string(), remote);
+
+        save_ilhae_toml_config(&config).expect("save config");
+        prepare_ilhae_codex_home().expect("prepare codex home");
+
+        let managed = std::fs::read_to_string(tmp.path().join("codex-home/config.toml"))
+            .expect("read generated config");
+        let parsed: toml::Value = toml::from_str(&managed).expect("parse generated config");
+
+        let profile = parsed
+            .get("profiles")
+            .and_then(toml::Value::as_table)
+            .and_then(|profiles| profiles.get("remote-context-window"))
+            .and_then(toml::Value::as_table)
+            .expect("remote profile");
+        assert_eq!(
+            profile
+                .get("model_context_window")
+                .and_then(toml::Value::as_integer),
+            Some(16_384)
+        );
+
+        let provider = parsed
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .and_then(|providers| providers.get("ilhae-native-remote-context-window"))
+            .and_then(toml::Value::as_table)
+            .expect("remote provider");
+        assert!(provider.get("query_params").is_none());
     }
 
     #[test]
@@ -4037,6 +4272,8 @@ requires_openai_auth = false
         remote.native_runtime.provider = Some("llama-server".to_string());
         remote.native_runtime.base_url = String::new();
         remote.native_runtime.proxy_base_url = Some("http://127.0.0.1:8082/v1".to_string());
+        remote.native_runtime.proxy_control_token_env =
+            Some("ILHAE_RUNTIME_PROXY_TOKEN".to_string());
         remote.native_runtime.health_url = "http://127.0.0.1:8082/health".to_string();
         remote.native_runtime.model_path = "/models/Qwen3.6-27B-Fable-Fusion.gguf".to_string();
         config.profiles.insert("remote-proxy".to_string(), remote);
@@ -4060,6 +4297,14 @@ requires_openai_auth = false
                 .get("base_url")
                 .and_then(toml::Value::as_str),
             Some("http://127.0.0.1:8082/v1")
+        );
+        assert_eq!(
+            remote_provider
+                .get("env_http_headers")
+                .and_then(toml::Value::as_table)
+                .and_then(|headers| headers.get("X-Ilhae-Runtime-Token"))
+                .and_then(toml::Value::as_str),
+            Some("ILHAE_RUNTIME_PROXY_TOKEN")
         );
     }
 

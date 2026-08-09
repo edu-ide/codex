@@ -1341,16 +1341,6 @@ fn ilhae_profile_provider_id(profile: &codex_ilhae::config::IlhaeProfileConfig) 
 }
 
 #[cfg(feature = "ilhae")]
-fn native_runtime_oss_provider(profile_id: Option<&str>) -> Option<String> {
-    codex_ilhae::config::get_native_runtime_config(profile_id)
-        .filter(|(_, runtime)| {
-            runtime.enabled
-                || !codex_ilhae::config::native_runtime_effective_base_url(runtime).is_empty()
-        })
-        .map(|(_, runtime)| native_runtime_provider_name(&runtime))
-}
-
-#[cfg(feature = "ilhae")]
 fn toml_bool(value: &toml::Value) -> Option<bool> {
     value.as_bool().or_else(|| {
         match value
@@ -2003,14 +1993,6 @@ async fn cli_main(
             {
                 codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile_v2.as_deref())
                     .await?;
-                if let Some(provider) =
-                    native_runtime_oss_provider(exec_cli.config_profile_v2.as_deref())
-                {
-                    exec_cli.oss = true;
-                    if exec_cli.oss_provider.is_none() {
-                        exec_cli.oss_provider = Some(provider);
-                    }
-                }
             }
             exec_cli.psp = psp;
             exec_cli.strict_config |= root_strict_config;
@@ -2065,12 +2047,6 @@ async fn cli_main(
             {
                 codex_ilhae::ensure_native_runtime_for_cli(exec_cli.config_profile_v2.as_deref())
                     .await?;
-                if let Some(provider) =
-                    native_runtime_oss_provider(exec_cli.config_profile_v2.as_deref())
-                {
-                    exec_cli.oss = true;
-                    exec_cli.oss_provider = Some(provider);
-                }
             }
             exec_cli.psp = psp;
             exec_cli.command = Some(ExecCommand::Review(review_args));
@@ -4259,107 +4235,6 @@ mod tests {
 
     #[cfg(feature = "ilhae")]
     #[test]
-    fn native_runtime_oss_provider_ignores_disabled_empty_profile_but_accepts_remote_base_url() {
-        {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let config_dir = tmp.path().join(".ilhae");
-            std::fs::create_dir_all(&config_dir).expect("create config dir");
-            std::fs::write(
-                config_dir.join("config.toml"),
-                r#"
-[profile]
-active = "chatgpt"
-
-[profiles.chatgpt.agent]
-engine = "openai"
-command = "codex"
-
-[profiles.chatgpt.native_runtime]
-enabled = false
-"#,
-            )
-            .expect("write ilhae config");
-
-            let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", &config_dir);
-            let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data"));
-
-            assert_eq!(native_runtime_oss_provider(None), None);
-            assert_eq!(native_runtime_oss_provider(Some("chatgpt")), None);
-        }
-
-        {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let config_dir = tmp.path().join(".ilhae");
-            std::fs::create_dir_all(&config_dir).expect("create config dir");
-            std::fs::write(
-                config_dir.join("config.toml"),
-                r#"
-[profile]
-active = "remote-qwen"
-
-[profiles.remote-qwen.agent]
-engine = "qwen"
-command = "ilhae"
-
-[profiles.remote-qwen.native_runtime]
-enabled = false
-provider = "sglang"
-base_url = "http://127.0.0.1:8081/v1"
-"#,
-            )
-            .expect("write ilhae config");
-
-            let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", &config_dir);
-            let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data"));
-
-            assert_eq!(
-                native_runtime_oss_provider(None),
-                Some("sglang".to_string())
-            );
-            assert_eq!(
-                native_runtime_oss_provider(Some("remote-qwen")),
-                Some("sglang".to_string())
-            );
-        }
-
-        {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let config_dir = tmp.path().join(".ilhae");
-            std::fs::create_dir_all(&config_dir).expect("create config dir");
-            std::fs::write(
-                config_dir.join("config.toml"),
-                r#"
-[profile]
-active = "remote-by-url"
-
-[profiles.remote-by-url.agent]
-engine = "qwen"
-command = "ilhae"
-
-[profiles.remote-by-url.native_runtime]
-enabled = false
-provider = "llama-server"
-url = "http://127.0.0.1:8083/v1"
-"#,
-            )
-            .expect("write ilhae config");
-
-            let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", &config_dir);
-            let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data"));
-
-            assert_eq!(
-                native_runtime_oss_provider(None),
-                Some("llama-server".to_string())
-            );
-            assert_eq!(
-                native_runtime_oss_provider(Some("remote-by-url")),
-                Some("llama-server".to_string())
-            );
-        }
-    }
-
-    #[cfg(feature = "ilhae")]
-    #[test]
     fn ilhae_cli_startup_prepares_codex_home_before_config_load() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let config_dir = tmp.path().join(".ilhae");
@@ -4397,7 +4272,8 @@ args = ["--ctx-size", "131072"]
         );
         let managed = std::fs::read_to_string(codex_home.join("config.toml"))
             .expect("generated config written");
-        assert!(!managed.contains(r#"profile = "qwen-local""#));
+        let managed_toml: toml::Value = toml::from_str(&managed).expect("parse generated config");
+        assert!(managed_toml.get("profile").is_none());
         assert!(managed.contains(r#"model = "Qwen3.6-27B-UD-Q4_K_XL""#));
 
         let mut loader_overrides = codex_config::LoaderOverrides::default();

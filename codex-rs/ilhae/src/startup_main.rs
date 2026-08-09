@@ -279,27 +279,106 @@ fn model_list_contains_exact_basename(
     (false, observed)
 }
 
+fn native_runtime_expected_model_identity(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> Option<String> {
+    let mut alias = None;
+    let mut args = config.args.iter();
+    while let Some(arg) = args.next() {
+        if matches!(arg.as_str(), "--alias" | "-a") {
+            alias = args.next().map(String::as_str);
+            continue;
+        }
+        if let Some(value) = arg
+            .strip_prefix("--alias=")
+            .or_else(|| arg.strip_prefix("-a="))
+        {
+            alias = Some(value);
+        }
+    }
+
+    alias
+        .and_then(exact_model_basename)
+        .or_else(|| exact_model_basename(&config.model_path))
+}
+
+fn native_runtime_readiness_headers(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> Result<reqwest::header::HeaderMap, NativeRuntimeReadinessError> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(configured) = config.http_headers.as_ref() {
+        for (raw_name, raw_value) in configured {
+            let name = reqwest::header::HeaderName::from_bytes(raw_name.trim().as_bytes())
+                .map_err(|error| {
+                    NativeRuntimeReadinessError::configuration(format!(
+                        "native runtime HTTP header name `{raw_name}` is invalid: {error}"
+                    ))
+                })?;
+            let value = reqwest::header::HeaderValue::from_str(raw_value).map_err(|error| {
+                NativeRuntimeReadinessError::configuration(format!(
+                    "native runtime HTTP header `{raw_name}` has an invalid value: {error}"
+                ))
+            })?;
+            headers.insert(name, value);
+        }
+    }
+
+    let mut env_headers = config.env_http_headers.clone().unwrap_or_default();
+    if let Some(token_env) = config
+        .proxy_control_token_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|token_env| !token_env.is_empty())
+    {
+        env_headers.insert("X-Ilhae-Runtime-Token".to_string(), token_env.to_string());
+    }
+    for (raw_name, raw_env_name) in env_headers {
+        let env_name = raw_env_name.trim();
+        let raw_value = std::env::var(env_name).map_err(|_| {
+            NativeRuntimeReadinessError::configuration(format!(
+                "native runtime HTTP header environment variable `{env_name}` is not set"
+            ))
+        })?;
+        let name = reqwest::header::HeaderName::from_bytes(raw_name.trim().as_bytes()).map_err(
+            |error| {
+                NativeRuntimeReadinessError::configuration(format!(
+                    "native runtime HTTP header name `{raw_name}` is invalid: {error}"
+                ))
+            },
+        )?;
+        let value = reqwest::header::HeaderValue::from_str(&raw_value).map_err(|error| {
+            NativeRuntimeReadinessError::configuration(format!(
+                "native runtime HTTP header `{raw_name}` from `{env_name}` has an invalid value: {error}"
+            ))
+        })?;
+        headers.insert(name, value);
+    }
+    Ok(headers)
+}
+
 async fn probe_native_runtime_readiness(
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> Result<(), NativeRuntimeReadinessError> {
-    let health_url = crate::config::native_runtime_effective_health_url(config);
+    let health_url = native_runtime_readiness_health_url(config);
     let health_url = health_url.trim();
     if health_url.is_empty() {
         return Err(NativeRuntimeReadinessError::configuration(
             "native runtime health_url is required",
         ));
     }
-    let expected_basename = exact_model_basename(&config.model_path).ok_or_else(|| {
+    let expected_basename = native_runtime_expected_model_identity(config).ok_or_else(|| {
         NativeRuntimeReadinessError::configuration(
-            "native runtime model_path must identify an exact model file",
+            "native runtime model_path or --alias must identify an exact model",
         )
     })?;
     let base_url = crate::config::native_runtime_effective_base_url(config);
     let models_url = native_runtime_models_url(&base_url)?;
     let client = reqwest::Client::new();
+    let headers = native_runtime_readiness_headers(config)?;
 
     let health_response = client
         .get(health_url)
+        .headers(headers.clone())
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -317,6 +396,7 @@ async fn probe_native_runtime_readiness(
 
     let models_response = client
         .get(models_url.clone())
+        .headers(headers)
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -353,6 +433,24 @@ async fn probe_native_runtime_readiness(
     Ok(())
 }
 
+fn native_runtime_readiness_health_url(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> String {
+    if config
+        .proxy_control_url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty())
+        && let Some(proxy_base_url) = config
+            .proxy_base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+    {
+        return crate::config::native_runtime_health_url_from_base_url(proxy_base_url);
+    }
+    crate::config::native_runtime_effective_health_url(config)
+}
+
 /// Returns true only when the configured endpoint is healthy and serves the
 /// exact configured model basename. Suffix and substring matches are rejected.
 pub async fn native_runtime_readiness(
@@ -365,13 +463,18 @@ pub async fn native_runtime_status_snapshot(
     profile_id: Option<&str>,
 ) -> Option<NativeRuntimeStatusSnapshot> {
     let (profile, config) = crate::config::get_native_runtime_config(profile_id)?;
-    let healthy = config.enabled && native_runtime_readiness(&config).await;
+    let activated = config.enabled
+        || config
+            .proxy_control_url
+            .as_deref()
+            .is_some_and(|url| !url.trim().is_empty());
+    let healthy = activated && native_runtime_readiness(&config).await;
     Some(NativeRuntimeStatusSnapshot {
         profile,
-        enabled: config.enabled,
+        enabled: activated,
         provider: config.provider.clone(),
         model_path: config.model_path.clone(),
-        health_url: crate::config::native_runtime_effective_health_url(&config),
+        health_url: native_runtime_readiness_health_url(&config),
         base_url: crate::config::native_runtime_effective_base_url(&config),
         healthy,
     })
@@ -534,6 +637,8 @@ struct NativeRuntimeOwnershipRecord {
     owner_token: String,
     server_executable: String,
     model_path: String,
+    #[serde(default)]
+    runtime_config_sha256: Option<String>,
 }
 
 fn native_runtime_ownership_path() -> std::path::PathBuf {
@@ -693,7 +798,7 @@ fn attest_native_runtime_process(record: &NativeRuntimeOwnershipRecord) -> anyho
             record.pid
         )
     })?;
-    if !cmdline.iter().any(|arg| arg == &record.model_path) {
+    if !cmdline_contains_model_path(&cmdline, &record.model_path) {
         anyhow::bail!(
             "managed native runtime model argument mismatch for PID {}",
             record.pid
@@ -702,9 +807,8 @@ fn attest_native_runtime_process(record: &NativeRuntimeOwnershipRecord) -> anyho
     Ok(())
 }
 
-fn live_managed_native_runtime_record(
-    profile_id: &str,
-) -> anyhow::Result<Option<NativeRuntimeOwnershipRecord>> {
+fn live_managed_native_runtime_record_any() -> anyhow::Result<Option<NativeRuntimeOwnershipRecord>>
+{
     let Some(record) = read_native_runtime_ownership_record()? else {
         return Ok(None);
     };
@@ -721,6 +825,15 @@ fn live_managed_native_runtime_record(
     }
 
     attest_native_runtime_process(&record)?;
+    Ok(Some(record))
+}
+
+fn live_managed_native_runtime_record(
+    profile_id: &str,
+) -> anyhow::Result<Option<NativeRuntimeOwnershipRecord>> {
+    let Some(record) = live_managed_native_runtime_record_any()? else {
+        return Ok(None);
+    };
     if record.profile_id != profile_id {
         anyhow::bail!(
             "live managed native runtime belongs to profile `{}`, not `{profile_id}`; refusing to signal it",
@@ -733,6 +846,7 @@ fn live_managed_native_runtime_record(
 fn spawn_native_runtime_server_locked(
     profile_id: &str,
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+    thinking_mode: &str,
 ) -> anyhow::Result<u32> {
     if profile_id.trim().is_empty() {
         anyhow::bail!("native runtime profile id is required");
@@ -747,9 +861,8 @@ fn spawn_native_runtime_server_locked(
 
     let server_executable = resolve_server_executable(&config.server_bin)?;
     let owner_token = uuid::Uuid::new_v4().to_string();
-    let thinking_mode = crate::config::current_thinking_mode();
     let mut command = std::process::Command::new(&server_executable);
-    for (key, value) in effective_native_runtime_env(config, &thinking_mode) {
+    for (key, value) in effective_native_runtime_env(config, thinking_mode) {
         command.env(key, value);
     }
     // This is a supervisor-owned attestation secret, not profile-controlled
@@ -767,7 +880,7 @@ fn spawn_native_runtime_server_locked(
             command.arg("--reasoning").arg(&thinking_mode);
         }
     } else {
-        command.args(effective_native_runtime_args(config, &thinking_mode));
+        command.args(effective_native_runtime_args(config, thinking_mode));
     }
 
     #[cfg(unix)]
@@ -806,6 +919,9 @@ fn spawn_native_runtime_server_locked(
                 owner_token: owner_token.clone(),
                 server_executable: server_executable.to_string_lossy().into_owned(),
                 model_path: model_path.to_string(),
+                runtime_config_sha256: Some(
+                    native_runtime_execution_fingerprint_with_thinking_mode(config, thinking_mode),
+                ),
             };
             if actual_executable == server_executable
                 && attest_native_runtime_process(&candidate).is_ok()
@@ -866,13 +982,14 @@ pub fn spawn_native_runtime_server(
     profile_id: &str,
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> anyhow::Result<u32> {
+    let thinking_mode = crate::config::current_thinking_mode();
     let _start_lock = acquire_native_runtime_start_lock(profile_id, config)?;
     if configured_runtime_listener_present(config) {
         anyhow::bail!(
             "native runtime endpoint for profile `{profile_id}` is already occupied; refusing to replace an unattested listener"
         );
     }
-    spawn_native_runtime_server_locked(profile_id, config)
+    spawn_native_runtime_server_locked(profile_id, config, &thinking_mode)
 }
 
 fn native_runtime_supports_reasoning_flag(
@@ -935,22 +1052,62 @@ fn effective_native_runtime_env(
     env
 }
 
+#[derive(serde::Serialize)]
+struct NativeRuntimeExecutionSpec<'a> {
+    enabled: bool,
+    provider: Option<&'a str>,
+    health_url: String,
+    base_url: String,
+    server_bin: &'a str,
+    model_path: &'a str,
+    chat_template_file: &'a str,
+    log_file: &'a str,
+    env: Vec<(String, String)>,
+    args: Vec<String>,
+}
+
+pub fn native_runtime_execution_fingerprint(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> String {
+    let thinking_mode = crate::config::current_thinking_mode();
+    native_runtime_execution_fingerprint_with_thinking_mode(config, &thinking_mode)
+}
+
+pub(crate) fn native_runtime_execution_fingerprint_with_thinking_mode(
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+    thinking_mode: &str,
+) -> String {
+    use sha2::Digest;
+
+    let spec = NativeRuntimeExecutionSpec {
+        enabled: config.enabled,
+        provider: config.provider.as_deref().map(str::trim),
+        health_url: crate::config::native_runtime_effective_health_url(config),
+        base_url: crate::config::native_runtime_effective_base_url(config),
+        server_bin: config.server_bin.trim(),
+        model_path: config.model_path.trim(),
+        chat_template_file: config.chat_template_file.trim(),
+        log_file: config.log_file.trim(),
+        env: effective_native_runtime_env(config, thinking_mode),
+        args: effective_native_runtime_args(config, thinking_mode),
+    };
+    let encoded = serde_json::to_vec(&spec).expect("native runtime execution spec must serialize");
+    format!("{:x}", sha2::Sha256::digest(encoded))
+}
+
 fn native_runtime_configs_equivalent(
     left: &crate::config::IlhaeProfileNativeRuntimeConfig,
     right: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> bool {
-    let left_base = crate::config::native_runtime_effective_base_url(left);
-    let right_base = crate::config::native_runtime_effective_base_url(right);
-    let left_health = crate::config::native_runtime_effective_health_url(left);
-    let right_health = crate::config::native_runtime_effective_health_url(right);
+    native_runtime_execution_fingerprint(left) == native_runtime_execution_fingerprint(right)
+        && left.proxy_control_url.as_deref().map(str::trim)
+            == right.proxy_control_url.as_deref().map(str::trim)
+}
 
-    left.server_bin.trim() == right.server_bin.trim()
-        && left.provider.as_deref().map(str::trim) == right.provider.as_deref().map(str::trim)
-        && left_health == right_health
-        && left_base == right_base
-        && left.model_path.trim() == right.model_path.trim()
-        && left.env == right.env
-        && left.args == right.args
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeRuntimeReusePolicy {
+    AllowExactUnmanaged,
+    RequireManagedExecutionSpec,
 }
 
 fn read_proc_cmdline(pid: u32) -> Option<Vec<String>> {
@@ -967,13 +1124,32 @@ fn read_proc_cmdline(pid: u32) -> Option<Vec<String>> {
     )
 }
 
+fn cmdline_contains_model_path(cmdline: &[String], model_path: &str) -> bool {
+    cmdline.iter().any(|arg| {
+        arg == model_path
+            || arg
+                .strip_prefix("--model=")
+                .or_else(|| arg.strip_prefix("-m="))
+                .is_some_and(|value| value == model_path)
+    })
+}
+
 fn extract_port_from_config(
     config: &crate::config::IlhaeProfileNativeRuntimeConfig,
 ) -> Option<u16> {
-    for i in 0..config.args.len() {
-        if (config.args[i] == "--port" || config.args[i] == "-p")
-            && i + 1 < config.args.len()
-            && let Ok(port) = config.args[i + 1].parse::<u16>()
+    for (index, arg) in config.args.iter().enumerate() {
+        if matches!(arg.as_str(), "--port" | "-p")
+            && let Some(port) = config
+                .args
+                .get(index + 1)
+                .and_then(|value| value.parse::<u16>().ok())
+        {
+            return Some(port);
+        }
+        if let Some(port) = arg
+            .strip_prefix("--port=")
+            .or_else(|| arg.strip_prefix("-p="))
+            .and_then(|value| value.parse::<u16>().ok())
         {
             return Some(port);
         }
@@ -1090,7 +1266,7 @@ fn native_runtime_cmdline_matches(
         return true;
     }
 
-    cmdline.iter().any(|arg| arg == model_path)
+    cmdline_contains_model_path(cmdline, model_path)
 }
 
 pub fn find_native_runtime_pids(
@@ -1136,28 +1312,14 @@ fn send_native_runtime_signal(pid: u32, signal: i32) -> anyhow::Result<()> {
     }
 }
 
-async fn stop_managed_native_runtime_server_locked(
-    profile_id: &str,
-    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+async fn stop_managed_native_runtime_record_locked(
+    record: NativeRuntimeOwnershipRecord,
 ) -> anyhow::Result<()> {
-    let Some(record) = live_managed_native_runtime_record(profile_id)? else {
-        if configured_runtime_listener_present(config) {
-            anyhow::bail!(
-                "native runtime endpoint for profile `{profile_id}` is occupied by an unattested process; refusing to signal it"
-            );
-        }
-        info!(
-            profile = %profile_id,
-            "[NativeRuntime] no owned local model server to stop"
-        );
-        return Ok(());
-    };
-
     // Full token/executable/model/start-time attestation occurs again at the
     // destructive boundary, after the caller has acquired the global lock.
     attest_native_runtime_process(&record)?;
     info!(
-        profile = %profile_id,
+        profile = %record.profile_id,
         pid = record.pid,
         "[NativeRuntime] terminating owned local model server"
     );
@@ -1201,11 +1363,31 @@ async fn stop_managed_native_runtime_server_locked(
     }
 
     info!(
-        profile = %profile_id,
+        profile = %record.profile_id,
         pid = record.pid,
         "[NativeRuntime] stopped owned local model server"
     );
     Ok(())
+}
+
+async fn stop_managed_native_runtime_server_locked(
+    profile_id: &str,
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> anyhow::Result<()> {
+    let Some(record) = live_managed_native_runtime_record(profile_id)? else {
+        if configured_runtime_listener_present(config) {
+            anyhow::bail!(
+                "native runtime endpoint for profile `{profile_id}` is occupied by an unattested process; refusing to signal it"
+            );
+        }
+        info!(
+            profile = %profile_id,
+            "[NativeRuntime] no owned local model server to stop"
+        );
+        return Ok(());
+    };
+
+    stop_managed_native_runtime_record_locked(record).await
 }
 
 pub async fn stop_native_runtime_server_for_config(
@@ -1216,60 +1398,48 @@ pub async fn stop_native_runtime_server_for_config(
     stop_managed_native_runtime_server_locked(profile_id, config).await
 }
 
-pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Result<()> {
-    let Some((profile_id, config)) = crate::config::get_native_runtime_config(profile_id) else {
-        return Ok(());
-    };
-
-    if !config.enabled {
-        return Ok(());
-    }
-
+async fn ensure_native_runtime_for_config_with_policy(
+    profile_id: &str,
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+    thinking_mode: &str,
+    reuse_policy: NativeRuntimeReusePolicy,
+) -> anyhow::Result<()> {
     crate::gpu_queue::start_gate::wait_for_native_runtime_start_gate().await?;
 
-    let base_url = crate::config::native_runtime_effective_base_url(&config);
-    if probe_native_runtime_readiness(&config).await.is_ok() {
-        if !base_url.trim().is_empty() {
-            unsafe {
-                std::env::set_var("CODEX_OSS_BASE_URL", &base_url);
-            }
-        }
-        return Ok(());
-    }
-
-    let _start_lock = acquire_native_runtime_start_lock(&profile_id, &config)?;
-    let readiness_error = match probe_native_runtime_readiness(&config).await {
-        Ok(()) => {
-            if !base_url.trim().is_empty() {
-                unsafe {
-                    std::env::set_var("CODEX_OSS_BASE_URL", &base_url);
-                }
-            }
+    let desired_fingerprint =
+        native_runtime_execution_fingerprint_with_thinking_mode(config, thinking_mode);
+    let _start_lock = acquire_native_runtime_start_lock(profile_id, config)?;
+    if let Some(record) = live_managed_native_runtime_record_any()? {
+        let exact_execution_spec = record.profile_id == profile_id
+            && record.runtime_config_sha256.as_deref() == Some(desired_fingerprint.as_str());
+        if exact_execution_spec && probe_native_runtime_readiness(config).await.is_ok() {
             return Ok(());
         }
-        Err(error) => error,
-    };
-
-    if live_managed_native_runtime_record(&profile_id)?.is_some() {
-        stop_managed_native_runtime_server_locked(&profile_id, &config).await?;
-    } else {
-        let matching_unowned_pids = find_native_runtime_pids(&config);
+        stop_managed_native_runtime_record_locked(record).await?;
+    } else if let Err(readiness_error) = probe_native_runtime_readiness(config).await {
+        let matching_unowned_pids = find_native_runtime_pids(config);
         if readiness_error.listener_confirmed
-            || configured_runtime_listener_present(&config)
+            || configured_runtime_listener_present(config)
             || !matching_unowned_pids.is_empty()
         {
             anyhow::bail!(
                 "native runtime profile `{profile_id}` is not exact-model ready ({readiness_error}), but its endpoint/process is not owned by Ilhae; refusing to kill or replace it"
             );
         }
+    } else if reuse_policy == NativeRuntimeReusePolicy::AllowExactUnmanaged {
+        return Ok(());
+    } else {
+        anyhow::bail!(
+            "native runtime profile `{profile_id}` is exact-model ready but is not owned by Ilhae; refusing to claim that its complete execution specification matches"
+        );
     }
 
-    let runtime_pid = spawn_native_runtime_server_locked(&profile_id, &config)?;
+    let runtime_pid = spawn_native_runtime_server_locked(profile_id, config, thinking_mode)?;
 
     let timeout_secs = config.startup_timeout_secs.max(1);
     let started = tokio::time::Instant::now();
     loop {
-        let last_readiness_error = match probe_native_runtime_readiness(&config).await {
+        let last_readiness_error = match probe_native_runtime_readiness(config).await {
             Ok(()) => break,
             Err(error) => error,
         };
@@ -1285,8 +1455,7 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
         }
         if started.elapsed().as_secs() >= timeout_secs {
             let last_error = last_readiness_error.to_string();
-            if let Err(error) =
-                stop_managed_native_runtime_server_locked(&profile_id, &config).await
+            if let Err(error) = stop_managed_native_runtime_server_locked(profile_id, config).await
             {
                 warn!(
                     profile = %profile_id,
@@ -1301,18 +1470,89 @@ pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
+    info!(
+        profile = %profile_id,
+        model = %config.model_path,
+        base_url = %crate::config::native_runtime_effective_base_url(config),
+        "[NativeRuntime] exact local model runtime ready"
+    );
+    Ok(())
+}
+
+pub async fn ensure_native_runtime_for_config(
+    profile_id: &str,
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> anyhow::Result<()> {
+    let thinking_mode = crate::config::current_thinking_mode();
+    ensure_native_runtime_for_config_with_thinking_mode(profile_id, config, &thinking_mode).await
+}
+
+pub(crate) async fn ensure_native_runtime_for_config_with_thinking_mode(
+    profile_id: &str,
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+    thinking_mode: &str,
+) -> anyhow::Result<()> {
+    ensure_native_runtime_for_config_with_policy(
+        profile_id,
+        config,
+        thinking_mode,
+        NativeRuntimeReusePolicy::RequireManagedExecutionSpec,
+    )
+    .await
+}
+
+pub(crate) async fn ensure_native_runtime_for_proxy_with_thinking_mode(
+    profile_id: &str,
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+    thinking_mode: &str,
+) -> anyhow::Result<()> {
+    if config.enabled {
+        ensure_native_runtime_for_config_with_policy(
+            profile_id,
+            config,
+            thinking_mode,
+            NativeRuntimeReusePolicy::AllowExactUnmanaged,
+        )
+        .await
+    } else {
+        probe_native_runtime_readiness(config).await.map_err(|error| {
+            anyhow::anyhow!(
+                "native runtime profile `{profile_id}` is configured for connection-only mode but is not exact-model ready: {error}"
+            )
+        })
+    }
+}
+
+pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Result<()> {
+    let Some((profile_id, config)) = crate::config::get_native_runtime_config(profile_id) else {
+        return Ok(());
+    };
+
+    if config
+        .proxy_control_url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty())
+    {
+        crate::native_runtime_proxy::ensure_remote_native_runtime(&profile_id, &config).await?;
+    } else if config.enabled {
+        let thinking_mode = crate::config::current_thinking_mode();
+        ensure_native_runtime_for_config_with_policy(
+            &profile_id,
+            &config,
+            &thinking_mode,
+            NativeRuntimeReusePolicy::AllowExactUnmanaged,
+        )
+        .await?;
+    } else {
+        return Ok(());
+    }
+
+    let base_url = crate::config::native_runtime_effective_base_url(&config);
     if !base_url.trim().is_empty() {
         unsafe {
             std::env::set_var("CODEX_OSS_BASE_URL", &base_url);
         }
     }
-
-    info!(
-        profile = %profile_id,
-        model = %config.model_path,
-        base_url = %base_url,
-        "[NativeRuntime] exact local model runtime ready"
-    );
     Ok(())
 }
 
@@ -1332,7 +1572,7 @@ pub async fn switch_native_runtime_for_cli(
             })
             .unwrap_or(true);
         if should_stop_previous {
-            stop_native_runtime_server_for_config(previous_id, previous_config).await?;
+            stop_configured_native_runtime(previous_id, previous_config).await?;
         }
     }
 
@@ -1354,7 +1594,23 @@ pub async fn stop_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Re
     };
 
     println!("Stopping native runtime profile: {}", profile_id);
-    stop_native_runtime_server_for_config(&profile_id, &config).await
+    stop_configured_native_runtime(&profile_id, &config).await
+}
+
+async fn stop_configured_native_runtime(
+    profile_id: &str,
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> anyhow::Result<()> {
+    if config
+        .proxy_control_url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty())
+    {
+        crate::native_runtime_proxy::stop_remote_native_runtime(profile_id, config).await?;
+        Ok(())
+    } else {
+        stop_native_runtime_server_for_config(profile_id, config).await
+    }
 }
 
 fn flatten_prompt_blocks_to_text(blocks: Vec<ContentBlock>) -> String {
@@ -2923,6 +3179,103 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exact_model_readiness_accepts_configured_alias() {
+        let (mut config, server) =
+            start_readiness_server(Some(r#"{"data":[{"id":"fable-remote"}]}"#)).await;
+        config.args = vec!["--alias=fable-remote".to_string()];
+
+        assert!(native_runtime_readiness(&config).await);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn proxy_connection_only_mode_reuses_exact_existing_runtime() {
+        let (mut config, server) =
+            start_readiness_server(Some(r#"{"data":[{"id":"Fable-Fusion.gguf"}]}"#)).await;
+        config.enabled = false;
+
+        ensure_native_runtime_for_proxy_with_thinking_mode("fable-test", &config, "on")
+            .await
+            .expect("connection-only proxy mode should reuse the exact existing runtime");
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn remote_model_readiness_uses_the_proxy_health_route() {
+        let (mut config, server) =
+            start_readiness_server(Some(r#"{"data":[{"id":"Fable-Fusion.gguf"}]}"#)).await;
+        config.health_url = "http://127.0.0.1:9/health".to_string();
+        config.proxy_base_url = Some(config.base_url.clone());
+        config.proxy_control_url =
+            Some("http://127.0.0.1:18083/_ilhae/native-runtime/ensure".to_string());
+
+        assert!(native_runtime_readiness(&config).await);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn native_runtime_readiness_sends_configured_http_headers() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind authenticated readiness server");
+        let address = listener.local_addr().expect("readiness server address");
+        let authorized = |headers: axum::http::HeaderMap| {
+            headers
+                .get("x-runtime-auth")
+                .is_some_and(|value| value == "ready")
+        };
+        let app = Router::new()
+            .route(
+                "/health",
+                get(move |headers| async move {
+                    if authorized(headers) {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::UNAUTHORIZED
+                    }
+                }),
+            )
+            .route(
+                "/v1/models",
+                get(move |headers| async move {
+                    if authorized(headers) {
+                        (
+                            StatusCode::OK,
+                            [("content-type", "application/json")],
+                            r#"{"data":[{"id":"Fable-Fusion.gguf"}]}"#,
+                        )
+                    } else {
+                        (
+                            StatusCode::UNAUTHORIZED,
+                            [("content-type", "application/json")],
+                            "{}",
+                        )
+                    }
+                }),
+            );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve authenticated readiness responses");
+        });
+        let config = crate::config::IlhaeProfileNativeRuntimeConfig {
+            enabled: true,
+            health_url: format!("http://{address}/health"),
+            base_url: format!("http://{address}/v1"),
+            model_path: "/models/Fable-Fusion.gguf".to_string(),
+            http_headers: Some(std::collections::BTreeMap::from([(
+                "X-Runtime-Auth".to_string(),
+                "ready".to_string(),
+            )])),
+            ..Default::default()
+        };
+
+        assert!(native_runtime_readiness(&config).await);
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn exact_model_readiness_rejects_wrong_or_suffix_model() {
         let (config, server) = start_readiness_server(Some(
             r#"{"data":[{"id":"/models/Fable-Fusion.gguf.backup"},{"id":"Other.gguf"}]}"#,
@@ -3037,6 +3390,7 @@ mod tests {
             owner_token,
             server_executable: server_executable.to_string_lossy().into_owned(),
             model_path: "30".to_string(),
+            runtime_config_sha256: None,
         };
         write_native_runtime_ownership_record(&record).expect("write ownership record");
         attest_native_runtime_process(&record).expect("pre-stop ownership attestation");
@@ -3087,6 +3441,24 @@ mod tests {
     }
 
     #[test]
+    fn native_runtime_argument_parsing_accepts_inline_model_and_port() {
+        let config = crate::config::IlhaeProfileNativeRuntimeConfig {
+            model_path: "/models/fable.gguf".to_string(),
+            args: vec![
+                "--model=/models/fable.gguf".to_string(),
+                "--port=18081".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        assert!(cmdline_contains_model_path(
+            &config.args,
+            &config.model_path
+        ));
+        assert_eq!(extract_port_from_config(&config), Some(18081));
+    }
+
+    #[test]
     fn effective_native_runtime_env_includes_config_env_and_thinking_mode() {
         let mut config = crate::config::IlhaeProfileNativeRuntimeConfig::default();
         config
@@ -3102,6 +3474,69 @@ mod tests {
         assert!(
             env.iter()
                 .any(|(key, value)| { key == "TURBO_AUTO_ASYMMETRIC" && value == "0" })
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_runtime_fingerprint_tracks_execution_spec_but_not_proxy_request_options() {
+        let _thinking_mode = EnvVarGuard::set(ILHAE_NATIVE_THINKING_MODE_ENV, "on");
+        let mut config = crate::config::IlhaeProfileNativeRuntimeConfig {
+            provider: Some("llama-server".to_string()),
+            health_url: "http://127.0.0.1:8081/health".to_string(),
+            base_url: "http://127.0.0.1:8081/v1".to_string(),
+            server_bin: "/opt/llama-server".to_string(),
+            model_path: "/models/fable.gguf".to_string(),
+            args: vec!["-c".to_string(), "131072".to_string()],
+            ..Default::default()
+        };
+        let original = native_runtime_execution_fingerprint(&config);
+
+        config.query_params = Some(std::collections::BTreeMap::from([(
+            "draft".to_string(),
+            "mtp".to_string(),
+        )]));
+        config.proxy_control_url = Some("http://127.0.0.1:8083/control".to_string());
+        config.proxy_control_token_env = Some("ILHAE_RUNTIME_PROXY_TOKEN".to_string());
+        assert_eq!(native_runtime_execution_fingerprint(&config), original);
+
+        config.args.push("--flash-attn".to_string());
+        assert_ne!(native_runtime_execution_fingerprint(&config), original);
+
+        config.args.pop();
+        config.enabled = true;
+        assert_ne!(native_runtime_execution_fingerprint(&config), original);
+    }
+
+    #[test]
+    fn native_runtime_fingerprint_tracks_transmitted_thinking_mode() {
+        let config = crate::config::IlhaeProfileNativeRuntimeConfig {
+            provider: Some("llama-server".to_string()),
+            health_url: "http://127.0.0.1:8081/health".to_string(),
+            base_url: "http://127.0.0.1:8081/v1".to_string(),
+            server_bin: "/opt/llama-server".to_string(),
+            model_path: "/models/fable.gguf".to_string(),
+            args: vec![
+                "-m".to_string(),
+                "/models/fable.gguf".to_string(),
+                "--reasoning".to_string(),
+                "on".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        assert_ne!(
+            native_runtime_execution_fingerprint_with_thinking_mode(&config, "on"),
+            native_runtime_execution_fingerprint_with_thinking_mode(&config, "off")
+        );
+        assert_eq!(
+            effective_native_runtime_args(&config, "off"),
+            vec![
+                "-m".to_string(),
+                "/models/fable.gguf".to_string(),
+                "--reasoning".to_string(),
+                "off".to_string(),
+            ]
         );
     }
 }

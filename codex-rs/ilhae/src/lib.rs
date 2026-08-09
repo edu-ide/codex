@@ -24,6 +24,7 @@ pub mod hygiene_loop;
 pub mod knowledge_loop;
 pub mod mcp_manager;
 pub mod memory_provider;
+pub mod native_runtime_proxy;
 
 pub mod acp_ws_server;
 pub mod config_builder;
@@ -99,6 +100,7 @@ pub use startup_main::current_native_backend_capability_profile;
 pub use startup_main::current_native_backend_engine;
 pub use startup_main::emit_native_loop_lifecycle;
 pub use startup_main::ensure_native_runtime_for_cli;
+pub use startup_main::ensure_native_runtime_for_config;
 pub use startup_main::find_native_runtime_pids;
 pub use startup_main::native_runtime_context;
 pub use startup_main::native_runtime_healthcheck;

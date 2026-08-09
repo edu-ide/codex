@@ -4129,6 +4129,7 @@ dependencies = [
  "codex-config",
  "codex-core",
  "codex-hooks",
+ "codex-models-manager",
  "codex-protocol",
  "dashmap",
  "dirs 6.0.0",

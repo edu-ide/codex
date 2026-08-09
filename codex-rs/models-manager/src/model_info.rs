@@ -136,7 +136,15 @@ fn is_h1_heading(line: &str) -> bool {
 
 /// Build a minimal fallback model descriptor for missing/unknown slugs.
 pub fn model_info_from_slug(slug: &str) -> ModelInfo {
+    if is_qwen3_6_27b_slug(slug) {
+        return qwen3_6_27b_model_info(slug);
+    }
+
     warn!("Unknown model {slug} is used. This will use fallback model metadata.");
+    fallback_model_info(slug)
+}
+
+fn fallback_model_info(slug: &str) -> ModelInfo {
     ModelInfo {
         slug: slug.to_string(),
         display_name: slug.to_string(),
@@ -180,6 +188,34 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         tool_mode: None,
         multi_agent_version: None,
     }
+}
+
+fn is_qwen3_6_27b_slug(slug: &str) -> bool {
+    slug.rsplit('/')
+        .next()
+        .is_some_and(|slug| slug.to_ascii_lowercase().starts_with("qwen3.6-27b"))
+}
+
+fn qwen3_6_27b_model_info(slug: &str) -> ModelInfo {
+    let mut model = fallback_model_info(slug);
+    let display_suffix = slug
+        .rsplit('/')
+        .next()
+        .and_then(|slug| slug.get("qwen3.6-27b".len()..))
+        .unwrap_or_default()
+        .trim_start_matches(['-', '_'])
+        .replace('-', " ");
+    model.display_name = if display_suffix.is_empty() {
+        "Qwen3.6 27B".to_string()
+    } else {
+        format!("Qwen3.6 27B {display_suffix}")
+    };
+    model.description = Some("Local Qwen3.6 27B model".to_string());
+    model.context_window = Some(131_072);
+    model.max_context_window = Some(131_072);
+    model.used_fallback_model_metadata = false;
+    model.supports_search_tool = true;
+    model
 }
 
 fn local_model_messages_for_slug(slug: &str) -> ModelMessages {

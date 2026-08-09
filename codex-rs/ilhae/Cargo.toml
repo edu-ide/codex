@@ -12,6 +12,10 @@ path = "src/lib.rs"
 name = "ilhae-proxy"
 path = "src/main.rs"
 
+[[bin]]
+name = "ilhae-runtime-proxy"
+path = "src/bin/ilhae_runtime_proxy.rs"
+
 [features]
 default = []
 # channels = ["dep:codex-channels"]
@@ -24,6 +28,7 @@ default = []
 codex-core = { path = "../core" }
 codex-config = { workspace = true }
 codex-hooks = { path = "../hooks" }
+codex-models-manager = { workspace = true }
 codex-protocol = { path = "../protocol" }
 codex-app-server = { path = "../app-server" }
 codex-app-server-client = { path = "../app-server-client" }
@@ -105,7 +110,7 @@ moka = { version = "0.12", features = ["sync"] }
 
 # Telegram (brought from channels for re-export convenience)
 teloxide = { version = "0.13", features = ["macros"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 # Discord
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
 # Slack

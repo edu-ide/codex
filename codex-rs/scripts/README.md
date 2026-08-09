@@ -15,43 +15,50 @@ sudo "${SCRIPT_DIR}/install-codex-llama-server-service.sh" --overwrite --start \
   --env-file /etc/default/codex-llama-server
 ```
 
-Install and enable the local llama-server edge proxy:
+Build, install, and enable the native-runtime control proxy on the runtime host:
 
 ```bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-sudo "${SCRIPT_DIR}/install-codex-llama-server-proxy-service.sh" --overwrite --enable --start
+cd /home/yth/codex/codex-rs
+cargo build -p codex-ilhae --bin ilhae-runtime-proxy
+sudo scripts/install-ilhae-runtime-proxy-service.sh --overwrite --enable --start
 ```
 
-Optional (change listen/upstream with one URL, or legacy host/port, CORS, or timeouts):
+Keep the controller bound to loopback and carry both control and inference traffic through SSH:
 
 ```bash
-sudo cp /home/yth/codex/codex-rs/scripts/systemd/codex-llama-server-proxy.env /etc/default/codex-llama-server-proxy
-sudo sed -i 's|LLAMA_UPSTREAM_URL=.*|LLAMA_UPSTREAM_URL="http://127.0.0.1:8082"|' /etc/default/codex-llama-server-proxy
-sudo sed -i 's|LLAMA_PROXY_LISTEN_URL=.*|LLAMA_PROXY_LISTEN_URL="http://0.0.0.0:8083"|' /etc/default/codex-llama-server-proxy
-# Legacy host/port mode (optional, still supported):
-# sudo sed -i 's/LLAMA_UPSTREAM_HOST=.*/LLAMA_UPSTREAM_HOST=127.0.0.1/' /etc/default/codex-llama-server-proxy
-# sudo sed -i 's/LLAMA_UPSTREAM_PORT=.*/LLAMA_UPSTREAM_PORT=8082/' /etc/default/codex-llama-server-proxy
-# sudo sed -i 's/LLAMA_PROXY_LISTEN_ADDR=.*/LLAMA_PROXY_LISTEN_ADDR=0.0.0.0/' /etc/default/codex-llama-server-proxy
-# sudo sed -i 's/LLAMA_PROXY_LISTEN_PORT=.*/LLAMA_PROXY_LISTEN_PORT=8083/' /etc/default/codex-llama-server-proxy
-sudo sed -i 's|LLAMA_PROXY_CORS_ORIGINS=.*|LLAMA_PROXY_CORS_ORIGINS="*"|' /etc/default/codex-llama-server-proxy
-sudo sed -i 's|LLAMA_PROXY_DEFAULT_QUERY_ARGS=.*|LLAMA_PROXY_DEFAULT_QUERY_ARGS="draft=mtp&ngram-mode=1&cache-type-k=turbo4_0&cache-type-v=turbo4_0"|' /etc/default/codex-llama-server-proxy
-sudo systemctl restart codex-llama-server-proxy
+ssh -N -L 18083:127.0.0.1:8083 yth
 ```
 
-`LLAMA_PROXY_DEFAULT_QUERY_ARGS` is the default query fragment appended to every `/v1` request through the proxy:
+The local profile keeps the runtime host's complete execution specification. `args`, `env`, paths, provider, logging, and startup timeout are sent to the controller; only `query_params` become inference-request query parameters:
 
-- Set empty (`LLAMA_PROXY_DEFAULT_QUERY_ARGS=""`) to disable.
-- Set query keys like `draft=mtp`, `ngram-mode=1`, `cache-type-k=turbo4_0`, `cache-type-v=turbo4_0` to expose tunings externally.
-- `cache-type-*` must remain actual runtime keys; these are examples currently used for turbo-quant tuning.
+```toml
+[profiles.fable.native_runtime]
+enabled = false
+provider = "llama-server"
+health_url = "http://127.0.0.1:8081/health"
+base_url = "http://127.0.0.1:8081/v1"
+proxy_base_url = "http://127.0.0.1:18083/v1"
+proxy_control_url = "http://127.0.0.1:18083/_ilhae/native-runtime/ensure"
+server_bin = "/opt/llama.cpp/bin/llama-server"
+model_path = "/models/fable.gguf"
+chat_template_file = "/home/yth/.ilhae/chat-templates/qwen.jinja"
+log_file = "/home/yth/.ilhae/logs/fable.log"
+startup_timeout_secs = 300
+args = ["-m", "/models/fable.gguf", "-c", "131072", "-ngl", "100", "--port", "8081"]
+```
+
+Set `enabled = false` with the proxy fields present to connect to an already-managed runtime without spawning or stopping it. The inference proxy streams request and response bodies and forwards every HTTP path. Control payloads and inference traffic do not add proxy-specific size caps; operating-system process limits still apply when spawning a managed runtime. Upstream targets remain loopback-only by default. Set `ILHAE_RUNTIME_PROXY_ALLOW_NON_LOOPBACK_UPSTREAM=1` on the runtime host only when the controller must intentionally reach another HTTP(S) host.
+
+If the proxy is exposed without an SSH tunnel, put it behind TLS, set `ILHAE_RUNTIME_PROXY_TOKEN` in `/etc/default/ilhae-runtime-proxy`, and set `proxy_control_token_env` to the local environment variable containing the same token. Non-loopback binding without a token is rejected; do not send the token over plain HTTP.
 
 Check both services:
 
 Service check:
 ```bash
 systemctl --no-pager status codex-llama-server
-systemctl --no-pager status codex-llama-server-proxy
+systemctl --no-pager status ilhae-runtime-proxy
 systemctl stop codex-llama-server
 systemctl start codex-llama-server
-systemctl stop codex-llama-server-proxy
-systemctl start codex-llama-server-proxy
+systemctl stop ilhae-runtime-proxy
+systemctl start ilhae-runtime-proxy
 ```
