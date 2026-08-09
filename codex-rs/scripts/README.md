@@ -24,6 +24,10 @@ sudo scripts/install-ilhae-runtime-proxy-service.sh \
   --service-user "$(id -un)" --overwrite --enable --start
 ```
 
+For the current yth deployment, including the exact public endpoint, client
+profile, token handoff, verification, and troubleshooting steps, see
+[`ILHAE_RUNTIME_PROXY_YTH_HANDOFF.ko.md`](ILHAE_RUNTIME_PROXY_YTH_HANDOFF.ko.md).
+
 Every llama-server profile uses the same topology: `Ilhae -> runtime proxy -> llama-server`. The profile's `native_runtime` table is the single source of truth for the complete runtime execution specification. `args`, `env`, paths, provider, logging, request headers, query parameters, retry policy, context window, and startup timeout work identically for local and remote profiles. Only `query_params` become inference-request query parameters.
 
 For a local profile, omit `proxy_url`. Ilhae automatically uses the local proxy at `http://127.0.0.1:8083` and derives the inference, health, and control routes from that one origin:
