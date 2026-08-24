@@ -1,11 +1,15 @@
 use crate::context_proxy::TeamRoleTarget;
 use crate::context_proxy::load_team_runtime_config;
+use crate::team_timeline::TeamWorkerContribution;
 use crate::team_timeline::agent_response_event;
 use crate::team_timeline::delegation_completed_event;
 use crate::team_timeline::delegation_started_event;
+use crate::team_timeline::merge_team_contributions;
 use crate::team_timeline::persist_events;
+use crate::team_timeline::persist_team_merge_followup;
 use crate::team_timeline::task_status_event;
 use crate::team_timeline::task_submitted_event;
+use crate::team_timeline::worker_body_mergeable_text;
 use a2a_rs::proxy::A2aProxy;
 use sacp::Client;
 use sacp::Conductor;
@@ -288,6 +292,7 @@ async fn planning_score(state: &crate::SharedState, target: &TeamRoleTarget, que
     score
 }
 
+#[allow(dead_code)]
 fn summarize_worker_response_for_leader(
     state: &Arc<crate::SharedState>,
     session_id: &str,
@@ -343,23 +348,38 @@ fn summarize_worker_response_for_leader(
     )
 }
 
-fn client_facing_team_response(
+fn collect_merge_contributions(
     state: &Arc<crate::SharedState>,
     session_id: &str,
-    role: &str,
-    text: &str,
-) -> Option<(String, String)> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
+    current_role: &str,
+    current_text: &str,
+) -> Vec<TeamWorkerContribution> {
+    let mut contributions = Vec::new();
+    if let Ok(messages) = state.infra.brain.session_load_messages(session_id) {
+        for message in messages {
+            if message.role != "assistant" || message.channel_id != "team" {
+                continue;
+            }
+            let role = message.agent_id.trim();
+            if role.is_empty()
+                || role.eq_ignore_ascii_case("team")
+                || role.eq_ignore_ascii_case(current_role)
+            {
+                continue;
+            }
+            if worker_body_mergeable_text(&message.content).is_ok() {
+                contributions.push(TeamWorkerContribution {
+                    role: role.to_string(),
+                    body: message.content.clone(),
+                });
+            }
+        }
     }
-    match current_team_merge_policy(state).as_str() {
-        "leader_only" if !should_emit_team_response(state, role) => Some((
-            current_main_team_role(state),
-            summarize_worker_response_for_leader(state, session_id, role, trimmed),
-        )),
-        _ => Some((role.to_string(), trimmed.to_string())),
-    }
+    contributions.push(TeamWorkerContribution {
+        role: current_role.to_string(),
+        body: current_text.to_string(),
+    });
+    contributions
 }
 
 pub(crate) async fn is_team_role_healthy(state: &crate::SharedState, role_lower: &str) -> bool {
@@ -1479,11 +1499,27 @@ pub async fn emit_team_assistant_response(
     role: &str,
     text: &str,
 ) {
-    let Some((visible_role, visible_text)) =
-        client_facing_team_response(state, session_id, role, text)
-    else {
+    if worker_body_mergeable_text(text).is_err() {
+        warn!(
+            "[TeamMerge] Rejecting unusable worker body as parent-session answer (session={}, role={})",
+            session_id, role
+        );
+        return;
+    }
+    let Some(decision) = merge_team_contributions(
+        &current_team_merge_policy(state),
+        &collect_merge_contributions(state, session_id, role, text),
+        &current_main_team_role(state),
+    ) else {
         return;
     };
+    if let Err(error) =
+        persist_team_merge_followup(state.infra.brain.sessions(), session_id, &decision)
+    {
+        warn!("[TeamMerge] {error}");
+    }
+    let visible_role = decision.user_facing_role.clone();
+    let visible_text = decision.user_facing_text.clone();
     let turn_id = format!("team-response-{}", Uuid::new_v4());
     if !visible_text.trim().is_empty() {
         if let Ok(notif) = UntypedMessage::new(
