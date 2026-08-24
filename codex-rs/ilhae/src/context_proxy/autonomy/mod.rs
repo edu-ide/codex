@@ -1,6 +1,23 @@
+pub mod decision;
 pub mod runner;
 pub mod state;
 pub mod user_agent;
+
+pub use decision::AutoDirectiveGate;
+pub use decision::AutoLoopDecision;
+pub use decision::AutoUnusableKind;
+pub use decision::ClassifiedUserAgentOutcome;
+pub use decision::STOP_REASON_COMPLETE;
+pub use decision::STOP_REASON_MAX_TURNS;
+pub use decision::STOP_REASON_STALL;
+pub use decision::STOP_REASON_TIMEBOX;
+pub use decision::STOP_REASON_USER_AGENT_FAILURE;
+pub use decision::budget_stop_reason;
+pub use decision::classify_user_agent_error;
+pub use decision::classify_user_agent_text;
+pub use decision::decide_auto_loop_action;
+pub use decision::followup_text_to_persist;
+pub use decision::persist_autonomous_followup;
 
 use agent_client_protocol_schema::StopReason;
 

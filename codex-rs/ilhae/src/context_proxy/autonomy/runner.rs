@@ -9,7 +9,6 @@ use sacp::Client;
 use sacp::Conductor;
 use sacp::ConnectionTo;
 use sacp::UntypedMessage;
-use serde_json::json;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -19,6 +18,18 @@ use tracing::info;
 use tracing::warn;
 
 use crate::SharedState;
+use crate::context_proxy::autonomy::AutoDirectiveGate;
+use crate::context_proxy::autonomy::AutoLoopDecision;
+use crate::context_proxy::autonomy::ClassifiedUserAgentOutcome;
+use crate::context_proxy::autonomy::STOP_REASON_COMPLETE;
+use crate::context_proxy::autonomy::STOP_REASON_MAX_TURNS;
+use crate::context_proxy::autonomy::STOP_REASON_STALL;
+use crate::context_proxy::autonomy::STOP_REASON_TIMEBOX;
+use crate::context_proxy::autonomy::budget_stop_reason;
+use crate::context_proxy::autonomy::classify_user_agent_error;
+use crate::context_proxy::autonomy::classify_user_agent_text;
+use crate::context_proxy::autonomy::followup_text_to_persist;
+use crate::context_proxy::autonomy::persist_autonomous_followup;
 use crate::context_proxy::autonomy::should_continue_autonomous_on_stop_reason;
 use crate::context_proxy::autonomy::state::AutonomousPhase;
 use crate::context_proxy::autonomy::state::AutonomousSessionState;
@@ -133,6 +144,7 @@ pub fn spawn_autonomous_loop(
         let mut last_directive: Option<String> = None;
         let mut stalled_turns = 0u32;
         let mut last_progress_signature = Some(progress_signature(&context_so_far));
+        let mut directive_gate = AutoDirectiveGate::default();
         let _leader_a2a_proxy = resolve_leader_a2a_proxy(&state);
 
         for turn in 1..=max_turns {
@@ -153,7 +165,7 @@ pub fn spawn_autonomous_loop(
                         &goal_summary,
                         &context_so_far,
                         stalled_turns,
-                        Some("timebox_reached".to_string()),
+                        Some(STOP_REASON_TIMEBOX.to_string()),
                     ),
                 )
                 .await;
@@ -181,7 +193,7 @@ pub fn spawn_autonomous_loop(
 
             let remaining_turns = max_turns.saturating_sub(turn).saturating_add(1);
             let remaining_time_secs = timebox.saturating_sub(started_at.elapsed()).as_secs();
-            let ua_response = match super::user_agent::request_next_directive_with_context(
+            let classified = match super::user_agent::request_next_directive_with_context(
                 &session_id,
                 &context_so_far,
                 &super::user_agent::UserAgentLoopContext {
@@ -194,8 +206,20 @@ pub fn spawn_autonomous_loop(
             )
             .await
             {
-                Ok(super::user_agent::UserAgentDirective::Continue(text)) => text,
+                Ok(super::user_agent::UserAgentDirective::Continue(text)) => {
+                    classify_user_agent_text(&text)
+                }
                 Ok(super::user_agent::UserAgentDirective::Complete) => {
+                    ClassifiedUserAgentOutcome::Complete
+                }
+                Ok(super::user_agent::UserAgentDirective::Empty) => classify_user_agent_text(""),
+                Err(error) => classify_user_agent_error(&error),
+            };
+            let decision = directive_gate.step(classified, &context_so_far);
+            let persist_accepted = followup_text_to_persist(&decision).map(str::to_string);
+            let ua_response = match decision {
+                AutoLoopDecision::Accept { text } => text,
+                AutoLoopDecision::Complete => {
                     let is_retro = state
                         .sessions
                         .autonomous_sessions
@@ -215,43 +239,72 @@ pub fn spawn_autonomous_loop(
                                 &goal_summary,
                                 &context_so_far,
                                 stalled_turns,
-                                Some("retro_complete".to_string()),
+                                Some(STOP_REASON_COMPLETE.to_string()),
                             ),
                         )
                         .await;
                         break;
-                    } else {
-                        info!("[AutoMode] User Agent signaled completion. Initiating Retro phase.");
-                        let retro_msg = "작업이 완료되었습니다. 이제 지금까지의 작업 내역을 바탕으로 `brain_artifact_ops`를 사용해 `index.md`와 관련 프로젝트 위키를 갱신(Compile)하고 세션을 완벽히 종료하세요.".to_string();
-
-                        set_autonomous_snapshot(
-                            &state,
-                            &session_id,
-                            build_loop_snapshot(
-                                AutonomousPhase::Retro,
-                                turn,
-                                Some("entering retro phase".to_string()),
-                                Some(retro_msg.clone()),
-                                &goal_summary,
-                                &context_so_far,
-                                stalled_turns,
-                                None,
-                            ),
-                        )
-                        .await;
-
-                        retro_msg
                     }
+                    info!("[AutoMode] User Agent signaled completion. Initiating Retro phase.");
+                    let retro_msg = "작업이 완료되었습니다. 이제 지금까지의 작업 내역을 바탕으로 `brain_artifact_ops`를 사용해 `index.md`와 관련 프로젝트 위키를 갱신(Compile)하고 세션을 완벽히 종료하세요.".to_string();
+
+                    set_autonomous_snapshot(
+                        &state,
+                        &session_id,
+                        build_loop_snapshot(
+                            AutonomousPhase::Retro,
+                            turn,
+                            Some("entering retro phase".to_string()),
+                            Some(retro_msg.clone()),
+                            &goal_summary,
+                            &context_so_far,
+                            stalled_turns,
+                            None,
+                        ),
+                    )
+                    .await;
+
+                    if let Err(error) = persist_autonomous_followup(
+                        state.infra.brain.sessions(),
+                        &session_id,
+                        &retro_msg,
+                    ) {
+                        warn!("[AutoMode] {error}");
+                    }
+
+                    retro_msg
                 }
-                Ok(super::user_agent::UserAgentDirective::Empty) => {
+                AutoLoopDecision::RecoverOnce {
+                    prompt,
+                    kind,
+                    detail,
+                } => {
                     warn!(
-                        "[AutoMode] User Agent returned empty response. Falling back to Ralph Loop."
+                        "[AutoMode] Unusable user-agent outcome ({kind:?}): {detail}. Using a single Ralph recovery prompt."
                     );
-                    build_ralph_loop_prompt(&context_so_far)
+                    prompt
                 }
-                Err(error) => {
-                    warn!("[AutoMode] {}. Falling back to Ralph Loop.", error);
-                    build_ralph_loop_prompt(&context_so_far)
+                AutoLoopDecision::Stop { stop_reason } => {
+                    warn!(
+                        "[AutoMode] Stopping after consecutive unusable user-agent outcomes (session={}, reason={})",
+                        session_id, stop_reason
+                    );
+                    set_autonomous_snapshot(
+                        &state,
+                        &session_id,
+                        build_loop_snapshot(
+                            AutonomousPhase::Completed,
+                            turn,
+                            Some("consecutive unusable user-agent outcomes".to_string()),
+                            None,
+                            &goal_summary,
+                            &context_so_far,
+                            stalled_turns,
+                            Some(stop_reason),
+                        ),
+                    )
+                    .await;
+                    break;
                 }
             };
 
@@ -294,24 +347,15 @@ pub fn spawn_autonomous_loop(
             )
             .await;
 
-            let directive_blocks = serde_json::to_string(&vec![json!({
-                "type": "text",
-                "text": ua_response.clone()
-            })])
-            .unwrap_or_else(|_| "[]".to_string());
-            let _ = state.infra.brain.session_add_message_with_blocks(
-                &session_id,
-                "system",
-                &ua_response,
-                "leader",
-                "",
-                "[]",
-                &directive_blocks,
-                0,
-                0,
-                0,
-                0,
-            );
+            if let Some(persist_text) = persist_accepted {
+                if let Err(error) = persist_autonomous_followup(
+                    state.infra.brain.sessions(),
+                    &session_id,
+                    &persist_text,
+                ) {
+                    warn!("[AutoMode] {error}");
+                }
+            }
 
             let new_req = PromptRequest::new(
                 SessionId::new(session_id.clone()),
@@ -368,27 +412,55 @@ pub fn spawn_autonomous_loop(
                     last_progress_signature = Some(observation_signature);
                     context_so_far = latest_observation;
 
-                    if stalled_turns >= 2 {
-                        warn!(
-                            "[AutoMode] No material progress detected across consecutive turns. Stopping autonomous loop (session={})",
-                            session_id
-                        );
-                        set_autonomous_snapshot(
-                            &state,
-                            &session_id,
-                            build_loop_snapshot(
-                                AutonomousPhase::Completed,
-                                turn,
-                                Some("no material progress across consecutive turns".to_string()),
-                                None,
-                                &goal_summary,
-                                &context_so_far,
-                                stalled_turns,
-                                Some("stalled_no_progress".to_string()),
-                            ),
-                        )
-                        .await;
-                        break;
+                    if let Some(stop_reason) =
+                        budget_stop_reason(false, turn, max_turns, stalled_turns)
+                    {
+                        if stop_reason == STOP_REASON_STALL {
+                            warn!(
+                                "[AutoMode] No material progress detected across consecutive turns. Stopping autonomous loop (session={})",
+                                session_id
+                            );
+                            set_autonomous_snapshot(
+                                &state,
+                                &session_id,
+                                build_loop_snapshot(
+                                    AutonomousPhase::Completed,
+                                    turn,
+                                    Some(
+                                        "no material progress across consecutive turns".to_string(),
+                                    ),
+                                    None,
+                                    &goal_summary,
+                                    &context_so_far,
+                                    stalled_turns,
+                                    Some(STOP_REASON_STALL.to_string()),
+                                ),
+                            )
+                            .await;
+                            break;
+                        }
+                        if stop_reason == STOP_REASON_MAX_TURNS {
+                            info!(
+                                "[AutoMode] Max turns reached (session={}, turn={}/{})",
+                                session_id, turn, max_turns
+                            );
+                            set_autonomous_snapshot(
+                                &state,
+                                &session_id,
+                                build_loop_snapshot(
+                                    AutonomousPhase::Completed,
+                                    turn,
+                                    Some("autonomous max turns reached".to_string()),
+                                    None,
+                                    &goal_summary,
+                                    &context_so_far,
+                                    stalled_turns,
+                                    Some(STOP_REASON_MAX_TURNS.to_string()),
+                                ),
+                            )
+                            .await;
+                            break;
+                        }
                     }
 
                     set_autonomous_snapshot(
@@ -494,6 +566,35 @@ pub fn spawn_autonomous_loop(
             ) {
                 let _ = cx.send_notification_to(Client, notif);
             }
+        }
+
+        let still_running = state
+            .sessions
+            .autonomous_sessions
+            .get(&session_id)
+            .map(|snapshot| {
+                matches!(
+                    snapshot.phase,
+                    AutonomousPhase::Running | AutonomousPhase::QueuedTurn | AutonomousPhase::Retro
+                )
+            })
+            .unwrap_or(false);
+        if still_running {
+            set_autonomous_snapshot(
+                &state,
+                &session_id,
+                build_loop_snapshot(
+                    AutonomousPhase::Completed,
+                    max_turns,
+                    Some("autonomous max turns reached".to_string()),
+                    None,
+                    &goal_summary,
+                    &context_so_far,
+                    stalled_turns,
+                    Some(STOP_REASON_MAX_TURNS.to_string()),
+                ),
+            )
+            .await;
         }
     });
 }

@@ -9,7 +9,23 @@
 //!   2. User Agent HTTP call + response parsing
 //!   3. Fallback to RALPH_LOOP_TEMPLATE when User Agent is unavailable
 
+use brain_session_rs::session_store::SessionStore;
+use ilhae_proxy::context_proxy::autonomy::AutoDirectiveGate;
+use ilhae_proxy::context_proxy::autonomy::AutoLoopDecision;
+use ilhae_proxy::context_proxy::autonomy::AutoUnusableKind;
+use ilhae_proxy::context_proxy::autonomy::ClassifiedUserAgentOutcome;
+use ilhae_proxy::context_proxy::autonomy::STOP_REASON_MAX_TURNS;
+use ilhae_proxy::context_proxy::autonomy::STOP_REASON_STALL;
+use ilhae_proxy::context_proxy::autonomy::STOP_REASON_TIMEBOX;
+use ilhae_proxy::context_proxy::autonomy::STOP_REASON_USER_AGENT_FAILURE;
+use ilhae_proxy::context_proxy::autonomy::budget_stop_reason;
+use ilhae_proxy::context_proxy::autonomy::classify_user_agent_error;
+use ilhae_proxy::context_proxy::autonomy::classify_user_agent_text;
+use ilhae_proxy::context_proxy::autonomy::followup_text_to_persist;
+use ilhae_proxy::context_proxy::autonomy::persist_autonomous_followup;
+use ilhae_proxy::context_proxy::autonomy::user_agent::parse_user_agent_response_text;
 use serde_json::json;
+use tempfile::TempDir;
 
 /// Simulates the SSE buffer parsing logic from runner.rs (lines 1655-1669)
 /// to detect if the last event has an `input-required` state.
@@ -187,26 +203,16 @@ async fn test_user_agent_http_call_returns_directive() {
     assert!(resp.status().is_success(), "UA should return 200");
 
     let body: serde_json::Value = resp.json().await.expect("Should parse JSON");
-
-    // Parse using the same logic as runner.rs (lines 1714-1721)
-    let mut ua_response_text = String::new();
-    if let Some(result) = body.get("result") {
-        if let Some(parts) = result
-            .pointer("/status/message/parts")
-            .and_then(|v| v.as_array())
-        {
-            for part in parts {
-                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                    ua_response_text.push_str(text);
-                }
-            }
-        }
-    }
+    let ua_response_text = parse_user_agent_response_text(&body);
 
     assert_eq!(
         ua_response_text, expected_text,
         "Parsed User Agent response should match expected text"
     );
+    assert!(matches!(
+        classify_user_agent_text(&ua_response_text),
+        ClassifiedUserAgentOutcome::Continue(text) if text == expected_text
+    ));
 }
 
 #[tokio::test]
@@ -291,21 +297,7 @@ data: {"kind":"status-update","status":{"state":"input-required","message":{"par
         .expect("UA call should succeed");
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    let mut current_prompt = String::new();
-
-    // Parse response (mirrors runner.rs lines 1714-1729)
-    if let Some(result) = body.get("result") {
-        if let Some(parts) = result
-            .pointer("/status/message/parts")
-            .and_then(|v| v.as_array())
-        {
-            for part in parts {
-                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                    current_prompt.push_str(text);
-                }
-            }
-        }
-    }
+    let current_prompt = parse_user_agent_response_text(&body);
 
     assert!(
         !current_prompt.is_empty(),
@@ -315,6 +307,16 @@ data: {"kind":"status-update","status":{"state":"input-required","message":{"par
         current_prompt, "Yes, deploy to production.",
         "Step 3: User Agent directive should match"
     );
+    assert!(
+        followup_text_to_persist(
+            &ilhae_proxy::context_proxy::autonomy::decide_auto_loop_action(
+                classify_user_agent_text(&current_prompt),
+                0,
+                progress,
+            )
+        )
+        .is_some()
+    );
 
     // 4. This prompt would be fed back to the Leader as the next iteration
     // In the actual runner.rs, this becomes `current_prompt` for the next loop iteration
@@ -322,4 +324,121 @@ data: {"kind":"status-update","status":{"state":"input-required","message":{"par
         "✅ Auto Mode E2E: input-required detected → User Agent returned: {}",
         current_prompt
     );
+}
+
+#[test]
+fn shipped_classifier_rejects_quota_empty_and_unreachable() {
+    let accepted = classify_user_agent_text("첨부 원문을 근거로 회신 초안을 작성하세요.");
+    let quota = classify_user_agent_text(
+        "Agent Error, unknown agent message: quota will reset at midnight UTC",
+    );
+    let empty = classify_user_agent_text("");
+    let unreachable = classify_user_agent_error("User Agent timed out after 5s");
+
+    assert!(matches!(accepted, ClassifiedUserAgentOutcome::Continue(_)));
+    assert!(matches!(
+        quota,
+        ClassifiedUserAgentOutcome::Unusable {
+            kind: AutoUnusableKind::QuotaOrAgentError,
+            ..
+        }
+    ));
+    assert!(matches!(
+        empty,
+        ClassifiedUserAgentOutcome::Unusable {
+            kind: AutoUnusableKind::Empty,
+            ..
+        }
+    ));
+    assert!(matches!(
+        unreachable,
+        ClassifiedUserAgentOutcome::Unusable {
+            kind: AutoUnusableKind::Unreachable,
+            ..
+        }
+    ));
+
+    for outcome in [quota, empty, unreachable] {
+        let decision =
+            ilhae_proxy::context_proxy::autonomy::decide_auto_loop_action(outcome, 0, "progress");
+        assert!(
+            followup_text_to_persist(&decision).is_none(),
+            "rejected outcomes must not produce a persistable follow-up, got {decision:?}"
+        );
+    }
+}
+
+#[test]
+fn shipped_followup_persist_survives_fresh_store_and_surfaces_errors() {
+    let tmp = TempDir::new().expect("tmpdir");
+    let data_dir = tmp.path().join("ilhae");
+    let session_id = "auto-mode-followup";
+    let directive = "다음 단계는 검토 의견을 표로 정리하세요.";
+
+    {
+        let store = SessionStore::new(&data_dir).expect("store");
+        store
+            .create_session(session_id, "auto mode", "leader", "/")
+            .expect("create session");
+        persist_autonomous_followup(&store, session_id, directive).expect("persist");
+    }
+
+    let fresh = SessionStore::new(&data_dir).expect("fresh store");
+    let messages = fresh
+        .load_session_messages(session_id)
+        .expect("load messages");
+    assert!(
+        messages.iter().any(|message| {
+            message.role == "system" && message.agent_id == "leader" && message.content == directive
+        }),
+        "fresh store missing follow-up row: {messages:?}"
+    );
+
+    let error = persist_autonomous_followup(&fresh, "no-such-session", directive)
+        .expect_err("missing session must surface a persist error");
+    assert!(
+        error.contains("not found"),
+        "unexpected persist error: {error}"
+    );
+}
+
+#[test]
+fn shipped_stop_reason_ends_after_two_unusable_outcomes() {
+    let mut gate = AutoDirectiveGate::default();
+    let mut persisted = Vec::new();
+    let outcomes = [
+        classify_user_agent_text("Agent Error, unknown agent message: quota will reset soon"),
+        classify_user_agent_text(""),
+        classify_user_agent_text("Agent Error, unknown agent message: quota will reset soon"),
+    ];
+
+    let mut last = None;
+    for outcome in outcomes {
+        let decision = gate.step(outcome, "progress");
+        if let Some(text) = followup_text_to_persist(&decision) {
+            persisted.push(text.to_string());
+        }
+        let stop = matches!(decision, AutoLoopDecision::Stop { .. });
+        last = Some(decision);
+        if stop {
+            break;
+        }
+    }
+
+    match last {
+        Some(AutoLoopDecision::Stop { stop_reason }) => {
+            assert_eq!(stop_reason, STOP_REASON_USER_AGENT_FAILURE);
+        }
+        other => panic!("expected user-agent failure stop, got {other:?}"),
+    }
+    assert!(
+        persisted.is_empty(),
+        "no identical Ralph/error rows should be written: {persisted:?}"
+    );
+    assert_eq!(budget_stop_reason(true, 1, 8, 0), Some(STOP_REASON_TIMEBOX));
+    assert_eq!(
+        budget_stop_reason(false, 8, 8, 0),
+        Some(STOP_REASON_MAX_TURNS)
+    );
+    assert_eq!(budget_stop_reason(false, 3, 8, 2), Some(STOP_REASON_STALL));
 }

@@ -2,6 +2,9 @@ use serde_json::json;
 use tracing::info;
 use tracing::warn;
 
+use super::classify_user_agent_text;
+use super::decision::AutoUnusableKind;
+use super::decision::ClassifiedUserAgentOutcome;
 use super::resolve_user_agent_endpoint;
 
 #[derive(Debug, Clone)]
@@ -139,8 +142,29 @@ async fn request_next_directive_inner(
         .await
         .map_err(|e| format!("User Agent JSON parse failed: {}", e))?;
 
+    let trimmed = parse_user_agent_response_text(&body);
+    info!(
+        "[AutoMode] User-agent directive parsed endpoint={} len={} preview={}",
+        endpoint,
+        trimmed.len(),
+        &trimmed[..trimmed.len().min(120)]
+    );
+    match classify_user_agent_text(&trimmed) {
+        ClassifiedUserAgentOutcome::Continue(text) => Ok(UserAgentDirective::Continue(text)),
+        ClassifiedUserAgentOutcome::Complete => Ok(UserAgentDirective::Complete),
+        ClassifiedUserAgentOutcome::Unusable {
+            kind: AutoUnusableKind::Empty,
+            ..
+        } => Ok(UserAgentDirective::Empty),
+        ClassifiedUserAgentOutcome::Unusable { kind, detail } => Err(format!(
+            "unusable user-agent directive ({kind:?}): {detail}"
+        )),
+    }
+}
+
+pub fn parse_user_agent_response_text(body: &serde_json::Value) -> String {
     let mut text = String::new();
-    let result_node = body.get("result").unwrap_or(&body);
+    let result_node = body.get("result").unwrap_or(body);
     if let Some(parts) = result_node
         .pointer("/status/message/parts")
         .and_then(|v| v.as_array())
@@ -183,21 +207,7 @@ async fn request_next_directive_inner(
             }
         }
     }
-
-    let trimmed = text.trim().to_string();
-    info!(
-        "[AutoMode] User-agent directive parsed endpoint={} len={} preview={}",
-        endpoint,
-        trimmed.len(),
-        &trimmed[..trimmed.len().min(120)]
-    );
-    if trimmed.is_empty() {
-        return Ok(UserAgentDirective::Empty);
-    }
-    if trimmed.contains("완료되었습니다") || trimmed.contains("프로젝트를 종료") {
-        return Ok(UserAgentDirective::Complete);
-    }
-    Ok(UserAgentDirective::Continue(trimmed))
+    text.trim().to_string()
 }
 
 pub async fn request_next_directive_with_fallback(
@@ -206,7 +216,14 @@ pub async fn request_next_directive_with_fallback(
     fallback_builder: impl FnOnce() -> String,
 ) -> String {
     match request_next_directive(session_id, progress).await {
-        Ok(UserAgentDirective::Continue(text)) => text,
+        Ok(UserAgentDirective::Continue(text)) => match classify_user_agent_text(&text) {
+            ClassifiedUserAgentOutcome::Continue(accepted) => accepted,
+            ClassifiedUserAgentOutcome::Complete => "모든 작업이 완료되었습니다".to_string(),
+            ClassifiedUserAgentOutcome::Unusable { kind, detail } => {
+                warn!("[AutoMode] Rejecting unusable user-agent continue ({kind:?}): {detail}");
+                fallback_builder()
+            }
+        },
         Ok(UserAgentDirective::Complete) => "모든 작업이 완료되었습니다".to_string(),
         Ok(UserAgentDirective::Empty) => {
             warn!("[AutoMode] User Agent returned empty response. Falling back to Ralph Loop.");
