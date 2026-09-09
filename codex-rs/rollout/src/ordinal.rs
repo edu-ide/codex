@@ -67,8 +67,15 @@ pub(crate) fn ordinal_state_for_rollout(
 
     let mut scanner = ReverseJsonlScanner::new(file)?;
     let record = loop {
-        match scanner.scan_next::<RolloutLine>()? {
-            Some(ScanOutcome::Parsed(record)) => break record,
+        // Match the forward reader: directly deserializing a flattened RolloutLine with
+        // arbitrary_precision can reject decimal rate-limit values. Skipping that valid tail
+        // would reuse its ordinal when the recorder resumes.
+        match scanner.scan_next::<serde_json::Value>()? {
+            Some(ScanOutcome::Parsed(value)) => {
+                if let Ok(record) = serde_json::from_value::<RolloutLine>(value) {
+                    break record;
+                }
+            }
             Some(ScanOutcome::Rejected(_)) => continue,
             None => {
                 return Err(io::Error::other(format!(
