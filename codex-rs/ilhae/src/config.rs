@@ -1898,13 +1898,26 @@ fn default_ilhae_codex_home_table(
 
     let mut root = toml::value::Table::new();
 
+    // 승인·샌드박스는 사용자 설정(permissions.approval_preset)을 따른다.
+    //
+    // 2026-09-09 까지 여기에 "never" / "danger-full-access" 가 하드코딩돼 있었다. 제품은
+    // "승인은 사람이 한다"고 광고하는데, 앱이 기동할 때마다 이 생성기가 codex 런타임
+    // 설정을 그 값으로 덮어써서 실제로는 아무것도 묻지 않았다. 데스크톱이 thread/start
+    // 에 정책을 실어 보내도록 고쳤지만, 정책을 싣지 않는 경로(CLI 등)는 이 파일의 값을
+    // 그대로 쓴다. 그래서 여기서도 같은 매핑을 쓴다. 값이 비었거나 모르는 값이면 안전한
+    // 쪽으로 떨어진다(fail-safe) — 전체 접근은 "full-access" 라고 정확히 적혔을 때만.
+    let (approval_policy, sandbox_mode) =
+        match active_profile.permissions.approval_preset.trim() {
+            "full-access" => ("never", "danger-full-access"),
+            _ => ("on-request", "workspace-write"),
+        };
     root.insert(
         "approval_policy".to_string(),
-        toml::Value::String("never".to_string()),
+        toml::Value::String(approval_policy.to_string()),
     );
     root.insert(
         "sandbox_mode".to_string(),
-        toml::Value::String("danger-full-access".to_string()),
+        toml::Value::String(sandbox_mode.to_string()),
     );
     // Keep credentials in a file: the keyring backend is unavailable in the
     // headless/desktop-spawned sessions this config is generated for.
