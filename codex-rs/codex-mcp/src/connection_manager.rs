@@ -50,6 +50,7 @@ use crate::tool_catalog_cache::McpToolCatalogCacheContext;
 use crate::tools::ToolFilter;
 use crate::tools::ToolInfo;
 use crate::tools::filter_tools;
+use crate::work_evidence::WorkEvidenceOutbox;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -176,6 +177,7 @@ pub(crate) struct McpConnectionSet {
     prefix_mcp_tool_names: bool,
     non_prefixed_mcp_tool_servers: Vec<String>,
     elicitation_requests: ElicitationRequestManager,
+    work_evidence: Option<Arc<WorkEvidenceOutbox>>,
 }
 
 impl McpConnectionSet {
@@ -576,7 +578,9 @@ impl McpConnectionSet {
             prefix_mcp_tool_names,
             non_prefixed_mcp_tool_servers,
             elicitation_requests: elicitation_requests.clone(),
+            work_evidence: Some(Arc::new(WorkEvidenceOutbox::new(&codex_home))),
         };
+        manager.start_work_evidence_delivery();
         let summary_publication_gate = publication_gate;
         tokio::spawn(async move {
             let outcomes = join_set.join_all().await;
@@ -640,6 +644,7 @@ impl McpConnectionSet {
                 /*lifecycle*/ None,
                 ElicitationRequestRouter::default(),
             ),
+            work_evidence: None,
         }
     }
 
@@ -779,13 +784,72 @@ impl McpConnectionSet {
             .client()
             .await
             .context("failed to get client")?;
+        let indexing_pending = self.prepare_work_evidence_query(server, tool).await;
+        let observation_meta = meta.clone();
         let result: rmcp::model::CallToolResult = client
             .client
             .call_tool(tool.to_string(), arguments, meta, view.tool_timeout)
             .await
             .with_context(|| format!("tool call failed for `{server}/{tool}`"))?;
 
-        Ok(call_tool_result_from_rmcp(result))
+        let mut result = call_tool_result_from_rmcp(result);
+        self.observe_work_evidence(server, tool, observation_meta.as_ref(), &mut result)
+            .await;
+        if indexing_pending {
+            crate::work_evidence::append_pending_notice(&mut result);
+        }
+        Ok(result)
+    }
+
+    pub(crate) async fn prepare_work_evidence_query(&self, server: &str, tool: &str) -> bool {
+        if server != "brain" || !matches!(tool, "brain_work_search" | "brain_work_context") {
+            return false;
+        }
+        let Some(outbox) = &self.work_evidence else {
+            return false;
+        };
+        self.start_work_evidence_delivery();
+        outbox.wait_for_delivery().await
+    }
+
+    pub(crate) async fn observe_work_evidence(
+        &self,
+        server: &str,
+        tool: &str,
+        meta: Option<&serde_json::Value>,
+        result: &mut CallToolResult,
+    ) {
+        if let Some(outbox) = &self.work_evidence {
+            outbox.observe(server, tool, meta, result).await;
+            self.start_work_evidence_delivery();
+        }
+    }
+
+    fn start_work_evidence_delivery(&self) {
+        let Some(outbox) = &self.work_evidence else {
+            return;
+        };
+        let Some(brain) = self.servers.get("brain") else {
+            return;
+        };
+        if !brain.tool_filter.allows(crate::work_evidence::RECORD_TOOL) || !outbox.claim_delivery()
+        {
+            return;
+        }
+        let outbox = Arc::clone(outbox);
+        let connection = Arc::clone(&brain.connection);
+        let cancelled = connection.client.cancel_token.clone();
+        tokio::spawn(async move {
+            let client = tokio::time::timeout(Duration::from_secs(15), connection.client()).await;
+            drop(connection);
+            match client {
+                Ok(Ok(client)) => tokio::select! {
+                    _ = cancelled.cancelled() => outbox.release_delivery(),
+                    _ = outbox.deliver(Arc::clone(&client.client)) => {},
+                },
+                _ => outbox.release_delivery(),
+            }
+        });
     }
 
     /// Returns presentation metadata from the current connection.

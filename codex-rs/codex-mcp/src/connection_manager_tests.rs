@@ -96,6 +96,7 @@ impl McpConnectionSet {
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
             prefix_mcp_tool_names,
             non_prefixed_mcp_tool_servers: Vec::new(),
+            work_evidence: None,
             elicitation_requests: ElicitationRequestManager::new(
                 approval_policy.value(),
                 permission_profile.get().clone(),

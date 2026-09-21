@@ -277,6 +277,11 @@ impl PreparedMcpCall {
             ));
         }
         let (arguments, meta) = prepare().await?;
+        let indexing_pending = self
+            ._connections
+            .prepare_work_evidence_query(&self.server_name, &tool_name)
+            .await;
+        let observation_meta = meta.clone();
         let result = self
             .client
             .client
@@ -284,7 +289,19 @@ impl PreparedMcpCall {
             .await
             .with_context(|| format!("tool call failed for `{}/{tool_name}`", self.server_name))?;
         drop(current_revision);
-        Ok(call_tool_result_from_rmcp(result))
+        let mut result = call_tool_result_from_rmcp(result);
+        self._connections
+            .observe_work_evidence(
+                &self.server_name,
+                &tool_name,
+                observation_meta.as_ref(),
+                &mut result,
+            )
+            .await;
+        if indexing_pending {
+            crate::work_evidence::append_pending_notice(&mut result);
+        }
+        Ok(result)
     }
 }
 

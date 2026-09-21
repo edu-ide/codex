@@ -106,3 +106,4 @@ pub(crate) mod runtime;
 pub(crate) mod server;
 mod tool_catalog_cache;
 pub(crate) mod tools;
+mod work_evidence;

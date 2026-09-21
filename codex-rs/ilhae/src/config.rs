@@ -20,6 +20,9 @@ use std::time::Instant;
 use tracing::info;
 use tracing::warn;
 
+#[path = "../../../../../../tools/desktop/native_mcp_launchers.rs"]
+mod native_mcp_launchers;
+
 use crate::settings_store::SettingsStore;
 use crate::settings_types::default_advisor_preset;
 use crate::settings_types::default_approval_preset;
@@ -46,7 +49,6 @@ pub const ILHAE_CODEX_RUNTIME_CONFIG_LOCK_FILE: &str = ".config.toml.ilhae-runti
 const ILHAE_CODEX_MODEL_CATALOG_FILE: &str = "model_catalog.json";
 const ILHAE_RUNTIME_SYSTEM2_PROJECTION_KEY: &str = "ilhae_runtime_system2_projection";
 const ILHAE_RUNTIME_SYSTEM2_PROJECTION_SCHEMA_VERSION: i64 = 1;
-const DESKTOP_MATERIALIZED_MCP_SERVER_NAME: &str = "office";
 const RETIRED_EXCEL_MCP_SERVER_NAME: &str = "excel-mcp";
 const ILHAE_CODEX_RUNTIME_CONFIG_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const ILHAE_CODEX_RUNTIME_CONFIG_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -1765,10 +1767,9 @@ fn user_mcp_servers_for_managed_config(user_config: &toml::Value) -> toml::value
     let mut servers = toml::value::Table::new();
     let mut excluded_invalid_count = 0usize;
     for (name, server) in user_table_for_managed_config(user_config, "mcp_servers") {
-        // The desktop owns the exact per-turn `office` endpoint; carrying a
-        // human snapshot here can make that binding stale. The old Excel alias
-        // is intentionally retired. The human source itself remains untouched.
-        if name == DESKTOP_MATERIALIZED_MCP_SERVER_NAME || name == RETIRED_EXCEL_MCP_SERVER_NAME {
+        // Explicit Office desktop/remote transports are user intent too. Only
+        // the retired Excel alias is excluded; no human source is rewritten.
+        if name == RETIRED_EXCEL_MCP_SERVER_NAME {
             continue;
         }
         match server.clone().try_into::<codex_config::McpServerConfig>() {
@@ -1786,6 +1787,83 @@ fn user_mcp_servers_for_managed_config(user_config: &toml::Value) -> toml::value
 
     disable_duplicate_legacy_fortune_mcp_server(&mut servers);
     servers
+}
+
+fn native_mcp_defaults(servers: &mut toml::value::Table, user_config: &toml::Value) {
+    let configured = user_config
+        .get("mcp_servers")
+        .and_then(toml::Value::as_table);
+    for (name, command, aliases) in [
+        ("brain", "brain", &["brain-mcp", "mcpb_brain"][..]),
+        ("office", "ugot-office-mcp", &["mcpb_office"][..]),
+        (
+            "browser",
+            "ugot-browser",
+            &["agent-browser", "ugot-browser", "browser-bridge-mcp"][..],
+        ),
+        (
+            "email",
+            "email",
+            &[
+                "mail",
+                "mail-mcp",
+                "ugot-mail",
+                "mcpb_mail_mcp",
+                "mcpb_mail-mcp",
+            ][..],
+        ),
+    ] {
+        if servers.contains_key(name) {
+            continue;
+        }
+        if configured.is_some_and(|original| {
+            original.contains_key(name)
+                || aliases
+                    .iter()
+                    .any(|alias| original.contains_key(*alias) && !servers.contains_key(*alias))
+        }) {
+            // Invalid explicit configuration must not turn into a different
+            // default account after validation excludes that entry.
+            continue;
+        }
+        let configured_aliases: Vec<_> = aliases
+            .iter()
+            .filter(|alias| servers.contains_key(**alias))
+            .collect();
+        if configured_aliases.len() == 1 {
+            let server = servers
+                .remove(*configured_aliases[0])
+                .expect("configured alias");
+            servers.insert(name.to_owned(), server);
+            continue;
+        }
+        if !configured_aliases.is_empty() {
+            // Multiple configured services may represent different accounts.
+            // Leave them untouched rather than pick or launch a default profile.
+            continue;
+        }
+        let mut server = toml::value::Table::new();
+        let Some(executable) =
+            native_mcp_launchers::resolve_command(command, Path::new(env!("CARGO_MANIFEST_DIR")))
+        else {
+            warn!(
+                "Native {command} launcher was not found; configure mcp_servers.{name}.command or install its native executable"
+            );
+            continue;
+        };
+        server.insert("command".to_owned(), executable.into());
+        server.insert("args".to_owned(), toml::Value::Array(vec!["mcp".into()]));
+        server.insert(
+            "env_vars".to_owned(),
+            toml::Value::Array(
+                native_mcp_launchers::env_vars(command)
+                    .into_iter()
+                    .map(toml::Value::from)
+                    .collect(),
+            ),
+        );
+        servers.insert(name.to_owned(), server.into());
+    }
 }
 
 fn mcp_server_transport_is_semantically_valid(config: &codex_config::McpServerConfig) -> bool {
@@ -2057,30 +2135,10 @@ fn default_ilhae_codex_home_table(
         root.insert("desktop".to_string(), toml::Value::Table(desktop));
     }
 
-    let mut mcp_servers = toml::value::Table::new();
+    let mut mcp_servers = user_mcp_servers_for_managed_config(user_config);
 
     if std::env::var("ILHAE_DREAM_MODE").is_err() {
-        let mut brain = toml::value::Table::new();
-        brain.insert(
-            "command".to_string(),
-            toml::Value::String("brain".to_string()),
-        );
-        brain.insert(
-            "args".to_string(),
-            toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
-        );
-        mcp_servers.insert("brain".to_string(), toml::Value::Table(brain));
-
-        let mut browser = toml::value::Table::new();
-        browser.insert(
-            "command".to_string(),
-            toml::Value::String("browser".to_string()),
-        );
-        browser.insert(
-            "args".to_string(),
-            toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
-        );
-        mcp_servers.insert("browser".to_string(), toml::Value::Table(browser));
+        native_mcp_defaults(&mut mcp_servers, user_config);
 
         let mut computer = toml::value::Table::new();
         computer.insert(
@@ -2091,22 +2149,9 @@ fn default_ilhae_codex_home_table(
             "args".to_string(),
             toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
         );
-        mcp_servers.insert("computer".to_string(), toml::Value::Table(computer));
-
-        let mut email = toml::value::Table::new();
-        email.insert(
-            "command".to_string(),
-            toml::Value::String("email".to_string()),
-        );
-        email.insert(
-            "args".to_string(),
-            toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
-        );
-        mcp_servers.insert("email".to_string(), toml::Value::Table(email));
-    }
-
-    for (name, server) in user_mcp_servers_for_managed_config(user_config) {
-        mcp_servers.insert(name, server);
+        mcp_servers
+            .entry("computer".to_string())
+            .or_insert(toml::Value::Table(computer));
     }
 
     root.insert("mcp_servers".to_string(), toml::Value::Table(mcp_servers));
@@ -3134,14 +3179,13 @@ url = "ftp://example.com/mcp"
         validate_ilhae_codex_runtime_config(active_text).expect("active snapshot validates");
         let parsed = toml::from_str::<codex_config::config_toml::ConfigToml>(active_text)
             .expect("parse exact Codex config type");
-        for preserved in ["valid_stdio", "valid_http", "mcpb_custom"] {
+        for preserved in ["valid_stdio", "valid_http", "mcpb_custom", "office"] {
             assert!(
                 parsed.mcp_servers.contains_key(preserved),
                 "valid human MCP intent must be preserved: {preserved}"
             );
         }
         for excluded in [
-            "office",
             "excel-mcp",
             "mixed_poison",
             "missing_transport",
@@ -3168,6 +3212,116 @@ url = "ftp://example.com/mcp"
                 "warning leaked poison diagnostic: {secret}"
             );
         }
+    }
+
+    #[test]
+    fn native_mcp_defaults_preserve_explicit_transports_and_profile_environments() {
+        let user: toml::Value = r#"
+    [mcp_servers.browser]
+    url = "http://127.0.0.1:18709/mcp"
+    enabled = false
+    [mcp_servers.browser.env]
+    AGENT_BROWSER_PROFILE = "work"
+    [mcp_servers.email]
+    command = "/opt/mail/custom-email"
+    args = ["mcp", "--account", "work"]
+    [mcp_servers.email.env]
+    MAIL_MCP_DB_PATH = "/profiles/work/mail.db"
+    [mcp_servers.brain]
+    command = "/opt/brain"
+    args = ["mcp"]
+    [mcp_servers.office]
+    command = "node"
+    args = ["/opt/ugot-office/launcher.mjs", "mcp"]
+    [mcp_servers.office.env]
+    UGOT_OFFICE_DATA_DIR = "/profiles/work/uk.ugot.office"
+    UGOT_SESSION_PATH = "/profiles/work/ugot-session.json"
+    "#
+        .parse()
+        .expect("valid explicit configuration");
+        let mut servers = user_mcp_servers_for_managed_config(&user);
+        let before = servers.clone();
+        native_mcp_defaults(&mut servers, &user);
+        assert_eq!(servers, before);
+    }
+
+    #[test]
+    fn native_mcp_alias_projection_preserves_profile_without_duplicate_defaults() {
+        let user: toml::Value = r#"
+    [mcp_servers.agent-browser]
+    command = "/opt/ugot-browser"
+    args = ["mcp"]
+    [mcp_servers.agent-browser.env]
+    AGENT_BROWSER_PROFILE = "work"
+    UGOT_BROWSER_STATE_DIR = "/profiles/work/service"
+    "#
+        .parse()
+        .expect("valid alias configuration");
+        let mut servers = user_mcp_servers_for_managed_config(&user);
+        let selected = servers["agent-browser"].clone();
+        native_mcp_defaults(&mut servers, &user);
+        assert_eq!(servers["browser"], selected);
+        assert!(!servers.contains_key("agent-browser"));
+        assert_eq!(user["mcp_servers"]["agent-browser"], selected);
+    }
+
+    #[test]
+    fn native_mcp_defaults_do_not_pick_between_multiple_profiles() {
+        let user: toml::Value = r#"
+    [mcp_servers.agent-browser]
+    url = "http://127.0.0.1:18701/mcp"
+    [mcp_servers.browser-bridge-mcp]
+    url = "http://127.0.0.1:18702/mcp"
+    [mcp_servers.browser-work]
+    url = "http://127.0.0.1:18703/mcp"
+    "#
+        .parse()
+        .expect("valid profile configuration");
+        let mut servers = user_mcp_servers_for_managed_config(&user);
+        native_mcp_defaults(&mut servers, &user);
+        assert!(!servers.contains_key("browser"));
+        for name in ["agent-browser", "browser-bridge-mcp", "browser-work"] {
+            assert_eq!(servers[name], user["mcp_servers"][name]);
+        }
+    }
+
+    #[test]
+    fn native_mcp_invalid_explicit_browser_never_launches_a_default_profile() {
+        for name in ["browser", "agent-browser"] {
+            let mut browser = toml::value::Table::new();
+            browser.insert("url".into(), "file:///not-an-mcp-endpoint".into());
+            let mut configured = toml::value::Table::new();
+            configured.insert(name.into(), browser.into());
+            let mut root = toml::value::Table::new();
+            root.insert("mcp_servers".into(), configured.into());
+            let user = toml::Value::Table(root);
+            let mut servers = user_mcp_servers_for_managed_config(&user);
+            assert!(!servers.contains_key(name));
+            native_mcp_defaults(&mut servers, &user);
+            assert!(!servers.contains_key("browser"));
+        }
+    }
+
+    #[test]
+    fn native_mcp_office_default_uses_desktop_launcher_and_workspace_environment() {
+        let user = toml::Value::Table(toml::value::Table::new());
+        let mut servers = toml::value::Table::new();
+        native_mcp_defaults(&mut servers, &user);
+        let office = &servers["office"];
+        let executable = native_mcp_launchers::resolve_command(
+            "ugot-office-mcp",
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+        .expect("Office launcher command");
+        assert_eq!(office["command"].as_str(), Some(executable.as_str()));
+        assert_eq!(
+            office["args"].as_array().unwrap(),
+            &[toml::Value::from("mcp")]
+        );
+        let names = office["env_vars"].as_array().unwrap();
+        assert!(names.contains(&toml::Value::from("UGOT_OFFICE_DATA_DIR")));
+        assert!(names.contains(&toml::Value::from("UGOT_SESSION_PATH")));
+        assert!(!office.as_table().unwrap().contains_key("url"));
     }
 
     #[test]
