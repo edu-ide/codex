@@ -834,6 +834,52 @@ async fn resumed_paginated_rollout_continues_after_ordinal_gap() -> std::io::Res
 }
 
 #[tokio::test]
+async fn resumed_paginated_rollout_preserves_decimal_rate_limit_tail() -> std::io::Result<()> {
+    for used_percent in ["15.0", "15.5"] {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let rollout_path = home.path().join("rollout.jsonl");
+        write_paginated_rollout(&rollout_path, ThreadId::new(), &[4])?;
+        let mut file = fs::OpenOptions::new().append(true).open(&rollout_path)?;
+        writeln!(
+            file,
+            r#"{{"timestamp":"2026-07-09T00:00:05Z","ordinal":5,"type":"event_msg","payload":{{"type":"token_count","info":null,"rate_limits":{{"primary":{{"used_percent":{used_percent},"window_minutes":300,"resets_at":1788950000}}}}}}}}"#
+        )?;
+        drop(file);
+        let before = fs::read(&rollout_path)?;
+
+        let recorder =
+            RolloutRecorder::new(&config, RolloutRecorderParams::resume(rollout_path.clone()))
+                .await?;
+        recorder
+            .record_canonical_items(&[agent_message_item("after-rate-limit-tail")])
+            .await?;
+        recorder.flush().await?;
+        recorder.shutdown().await?;
+
+        let contents = fs::read(&rollout_path)?;
+        assert!(
+            contents.starts_with(&before),
+            "existing records must be preserved"
+        );
+        let ordinals = contents
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(serde_json::from_slice::<serde_json::Value>)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|value| value["ordinal"].as_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordinals,
+            vec![Some(0), Some(4), Some(5), Some(6)],
+            "resuming after used_percent={used_percent} must not reuse the final ordinal"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn resumed_paginated_rollout_repairs_unsafe_tail() -> std::io::Result<()> {
     let valid_unterminated = serde_json::to_string(&RolloutLine {
         timestamp: "2026-07-09T00:00:05Z".to_string(),
