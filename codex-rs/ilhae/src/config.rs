@@ -1468,20 +1468,6 @@ pub(crate) fn resolve_ilhae_profile_model_name(
         return model_name;
     }
 
-    if let Some(model_name) = codex_model_from_root_config(profile_id) {
-        return model_name;
-    }
-
-    if profile
-        .agent
-        .engine_id
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|engine_id| engine_id.eq_ignore_ascii_case("openai"))
-    {
-        return "gpt-5.5".to_string();
-    }
-
     if let Some(engine_id) = profile
         .agent
         .engine_id
@@ -1495,6 +1481,20 @@ pub(crate) fn resolve_ilhae_profile_model_name(
         })
     {
         return engine_id.to_string();
+    }
+
+    if let Some(model_name) = codex_model_from_root_config(profile_id) {
+        return model_name;
+    }
+
+    if profile
+        .agent
+        .engine_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|engine_id| engine_id.eq_ignore_ascii_case("openai"))
+    {
+        return "gpt-5.5".to_string();
     }
 
     if let Some(command) = profile
@@ -1706,19 +1706,8 @@ fn insert_native_model_provider(
     );
 }
 
-fn codex_profile_table_for_ilhae_profile(
-    profile_id: &str,
-    profile: &IlhaeProfileConfig,
-    user_model: Option<&str>,
-    model_catalog_path: &Path,
-) -> toml::value::Table {
+fn model_provider_id_for_ilhae_profile(profile_id: &str, profile: &IlhaeProfileConfig) -> String {
     let native = native_runtime_for_profile(profile);
-    let engine = profile_engine_id(profile);
-    let mut table = toml::value::Table::new();
-    let model_name = resolve_ilhae_profile_model_name(profile_id, profile);
-    let model_context_window = native
-        .map(native_runtime_model_context_window)
-        .unwrap_or(32_768);
     let model_provider = native
         .filter(|runtime| !native_runtime_effective_base_url(runtime).is_empty())
         .map(|_| native_model_provider_id_for_profile(profile_id))
@@ -1727,22 +1716,30 @@ fn codex_profile_table_for_ilhae_profile(
                 .and_then(|runtime| runtime.provider.clone())
                 .filter(|provider| !provider.trim().is_empty())
         })
-        .unwrap_or_else(|| {
-            if engine == "ilhae" || engine == "codex" {
-                "llama-server".to_string()
-            } else {
-                engine.clone()
-            }
-        });
+        .unwrap_or_else(|| profile_engine_id(profile));
 
-    // Final safety check: if the resolved provider is "ilhae" or "codex",
-    // it MUST be mapped to "llama-server" because "ilhae" is not a valid
-    // provider ID in the core engine (it's the engine name).
-    let model_provider = if model_provider == "ilhae" || model_provider == "codex" {
+    // Engine aliases use the configured llama-server provider in both the
+    // runtime projection and its local model catalog.
+    if model_provider == "ilhae" || model_provider == "codex" {
         "llama-server".to_string()
     } else {
         model_provider
-    };
+    }
+}
+
+fn codex_profile_table_for_ilhae_profile(
+    profile_id: &str,
+    profile: &IlhaeProfileConfig,
+    user_config: &toml::Value,
+    model_catalog_path: &Path,
+) -> toml::value::Table {
+    let native = native_runtime_for_profile(profile);
+    let mut table = toml::value::Table::new();
+    let model_name = resolve_ilhae_profile_model_name(profile_id, profile);
+    let model_context_window = native
+        .map(native_runtime_model_context_window)
+        .unwrap_or(32_768);
+    let model_provider = model_provider_id_for_ilhae_profile(profile_id, profile);
 
     table.insert("model".to_string(), toml::Value::String(model_name));
     table.insert(
@@ -1753,7 +1750,7 @@ fn codex_profile_table_for_ilhae_profile(
         "model_provider".to_string(),
         toml::Value::String(model_provider),
     );
-    if !native_runtime_effective_base_url(&profile.native_runtime).is_empty() {
+    if profile_uses_native_catalog(profile_id, profile, user_config) {
         table.insert(
             "model_catalog_json".to_string(),
             toml::Value::String(model_catalog_path.display().to_string()),
@@ -1923,12 +1920,6 @@ fn user_web_search_for_managed_config(user_config: &toml::Value) -> Option<toml:
     user_config_value_for_managed_config(user_config, "web_search")
 }
 
-fn user_model_for_managed_config(user_config: &toml::Value) -> Option<String> {
-    user_config_value_for_managed_config(user_config, "model")
-        .and_then(|value| value.as_str().map(str::trim).map(str::to_string))
-        .filter(|model| !model.is_empty())
-}
-
 fn user_tools_for_managed_config(user_config: &toml::Value) -> toml::value::Table {
     let user_tools = user_table_for_managed_config(user_config, "tools");
     let mut tools = toml::value::Table::new();
@@ -1958,7 +1949,6 @@ fn default_ilhae_codex_home_table(
     user_config: &toml::Value,
     model_catalog_path: &Path,
 ) -> toml::value::Table {
-    let user_model = user_model_for_managed_config(user_config);
     let active_profile_name = config
         .profile
         .active
@@ -1984,11 +1974,10 @@ fn default_ilhae_codex_home_table(
     // 에 정책을 실어 보내도록 고쳤지만, 정책을 싣지 않는 경로(CLI 등)는 이 파일의 값을
     // 그대로 쓴다. 그래서 여기서도 같은 매핑을 쓴다. 값이 비었거나 모르는 값이면 안전한
     // 쪽으로 떨어진다(fail-safe) — 전체 접근은 "full-access" 라고 정확히 적혔을 때만.
-    let (approval_policy, sandbox_mode) =
-        match active_profile.permissions.approval_preset.trim() {
-            "full-access" => ("never", "danger-full-access"),
-            _ => ("on-request", "workspace-write"),
-        };
+    let (approval_policy, sandbox_mode) = match active_profile.permissions.approval_preset.trim() {
+        "full-access" => ("never", "danger-full-access"),
+        _ => ("on-request", "workspace-write"),
+    };
     root.insert(
         "approval_policy".to_string(),
         toml::Value::String(approval_policy.to_string()),
@@ -2006,7 +1995,7 @@ fn default_ilhae_codex_home_table(
     let active_codex_profile = codex_profile_table_for_ilhae_profile(
         &active_profile_provider_id,
         &active_profile,
-        user_model.as_deref(),
+        user_config,
         model_catalog_path,
     );
     for key in [
@@ -2191,7 +2180,7 @@ fn default_ilhae_codex_home_table(
             toml::Value::Table(codex_profile_table_for_ilhae_profile(
                 profile_id,
                 profile,
-                user_model.as_deref(),
+                user_config,
                 model_catalog_path,
             )),
         );
@@ -2294,18 +2283,48 @@ fn render_ilhae_codex_runtime_candidate(
     Ok(rendered)
 }
 
+// Native runtimes and separately configured routers both own their model lists.
+// In particular, a router without a model_path must not inherit the OpenAI catalog.
+fn profile_uses_native_catalog(
+    profile_id: &str,
+    profile: &IlhaeProfileConfig,
+    user_config: &toml::Value,
+) -> bool {
+    if !native_runtime_effective_base_url(&profile.native_runtime).is_empty() {
+        return true;
+    }
+    let provider_id = model_provider_id_for_ilhae_profile(profile_id, profile);
+    let Some(provider) = user_config
+        .get("model_providers")
+        .and_then(|providers| providers.get(&provider_id))
+    else {
+        return false;
+    };
+    provider
+        .get("base_url")
+        .and_then(toml::Value::as_str)
+        .is_some_and(|url| !url.trim().is_empty())
+        && matches!(
+            provider.get("requires_openai_auth"),
+            None | Some(toml::Value::Boolean(false))
+        )
+}
+
 fn native_model_catalog(
     config: &IlhaeTomlConfig,
+    user_config: &toml::Value,
 ) -> Option<codex_protocol::openai_models::ModelsResponse> {
     let mut models_by_slug = BTreeMap::new();
     for (profile_id, profile) in &config.profiles {
-        if native_runtime_effective_base_url(&profile.native_runtime).is_empty() {
+        if !profile_uses_native_catalog(profile_id, profile, user_config) {
             continue;
         }
         let slug = resolve_ilhae_profile_model_name(profile_id, profile);
-        models_by_slug
-            .entry(slug.clone())
-            .or_insert_with(|| codex_models_manager::model_info::model_info_from_slug(&slug));
+        models_by_slug.entry(slug.clone()).or_insert_with(|| {
+            let mut model = codex_models_manager::model_info::model_info_from_slug(&slug);
+            model.visibility = codex_protocol::openai_models::ModelVisibility::List;
+            model
+        });
     }
     (!models_by_slug.is_empty()).then(|| codex_protocol::openai_models::ModelsResponse {
         models: models_by_slug.into_values().collect(),
@@ -2698,7 +2717,7 @@ fn prepare_ilhae_codex_runtime_config_locked(codex_home: &Path) -> Result<(), St
         }
     };
 
-    let model_catalog = native_model_catalog(&snapshot.typed);
+    let model_catalog = native_model_catalog(&snapshot.typed, &snapshot.document);
     if let Err(error) = install_ilhae_codex_runtime_generation_locked(
         codex_home,
         &candidate,
@@ -3988,9 +4007,12 @@ requires_openai_auth = false
         assert_eq!(
             catalog,
             codex_protocol::openai_models::ModelsResponse {
-                models: vec![codex_models_manager::model_info::model_info_from_slug(
-                    "qwen3.6-27b"
-                )],
+                models: vec![{
+                    let mut model =
+                        codex_models_manager::model_info::model_info_from_slug("qwen3.6-27b");
+                    model.visibility = codex_protocol::openai_models::ModelVisibility::List;
+                    model
+                }],
             }
         );
 
@@ -5199,3 +5221,7 @@ model_path = "/models/human-model.gguf"
         );
     }
 }
+
+#[cfg(test)]
+#[path = "config_model_tests.rs"]
+mod model_tests;

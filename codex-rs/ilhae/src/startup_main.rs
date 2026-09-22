@@ -1742,10 +1742,8 @@ pub async fn bootstrap_ilhae_runtime() -> anyhow::Result<BootstrappedIlhaeRuntim
     let ilhae_dir = resolve_ilhae_data_dir();
     std::fs::create_dir_all(&ilhae_dir).ok();
     crate::superpowers_skills::provision_superpowers_skills();
-    tokio::task::spawn_blocking(|| {
-        tracing::info!("Running brain init (syncing tools/skills)...");
-        let _ = brain_rs::sync::run_sync();
-    });
+    // Cross-client Brain sync writes other applications' configuration files.
+    // Keep it an explicit operation; starting Ilhae must preserve those files.
     crate::mock_provider::init_mock_mode(false);
     let settings_store = Arc::new(SettingsStore::new(&ilhae_dir));
     if let Err(err) = crate::config::apply_active_ilhae_profile_projection(&settings_store) {
@@ -2152,22 +2150,6 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                     process_supervisor::register_team_processes(&sv, &team_entries, &workspace_map)
                         .await;
 
-                    // Refresh agent cards from brain-rs registry before spawning
-                    tokio::task::spawn_blocking(|| {
-                        let (refreshed, errors) = brain_rs::sync::startup_refresh_agents();
-                        if refreshed > 0 {
-                            info!(
-                                "[TeamPreSpawn] Refreshed {} agent cards from running agents",
-                                refreshed
-                            );
-                        }
-                        for err in &errors {
-                            warn!("[TeamPreSpawn] Agent refresh error: {}", err);
-                        }
-                    })
-                    .await
-                    .ok();
-
                     info!("[TeamPreSpawn] Pre-spawning {} team agents...", agent_count);
                     let children =
                         spawn_team_a2a_servers(&team, &workspace_map, None, "pre-spawn").await;
@@ -2251,21 +2233,12 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
 
     // ── Periodic Agent Health Monitor (30s interval) ───────────────────
     // Monitors all registered brain-rs agents, fires webhooks on status changes,
-    // persists snapshots for historical metrics, and checks for new agent files.
+    // persists snapshots for historical metrics without syncing client configs.
     tokio::spawn(async move {
         // Wait 15s before first check (let agents start up)
         tokio::time::sleep(std::time::Duration::from_secs(15)).await;
         loop {
             tokio::task::spawn_blocking(|| {
-                // Check if agents/ directory changed (new .md files added externally)
-                if brain_rs::sync::agents_dir_changed() {
-                    info!("[AgentMonitor] agents/ directory changed — re-syncing cards");
-                    let report = brain_rs::sync::run_sync_agent_cards();
-                    info!(
-                        "[AgentMonitor] Synced: found={}, synced={}",
-                        report.agent_cards_found, report.agent_cards_synced
-                    );
-                }
                 // Health check + webhook for status changes
                 let snapshot = brain_rs::sync::monitor_agents_with_webhook();
                 let total = snapshot.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
