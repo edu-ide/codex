@@ -107,6 +107,66 @@ fn invalid_scope_and_unconfirmed_success_are_not_indexed() {
 }
 
 #[test]
+fn browser_archive_is_forwarded_exactly_and_changes_event_identity() {
+    let mut result = observed_result();
+    let envelope = &mut result.meta.as_mut().unwrap()[ENVELOPE_KEY][0];
+    envelope["source_kind"] = json!("browser");
+    envelope["browser_archive"] = json!({
+        "html": "<html><body>관측한 내용</body></html>",
+        "sha256": "a".repeat(64),
+        "capture_kind": "sanitized_dom_html",
+    });
+    let expected = envelope["browser_archive"].clone();
+    let events = events_from_result("browser", "read_page", Some(&request_meta()), &result);
+    assert_eq!(events[0]["browser_archive"], expected);
+    result.meta.as_mut().unwrap()[ENVELOPE_KEY][0]["browser_archive"]["html"] =
+        json!("<html><body>Changed observation</body></html>");
+    let changed = events_from_result("browser", "read_page", Some(&request_meta()), &result);
+    assert_ne!(events[0]["event_id"], changed[0]["event_id"]);
+}
+
+#[test]
+fn malformed_or_oversize_archive_is_not_silently_downgraded() {
+    for archive in [
+        json!({"html":"x", "sha256":"A".repeat(64), "capture_kind":"sanitized_dom_html"}),
+        json!({"html":"x", "sha256":"a".repeat(63), "capture_kind":"sanitized_dom_html"}),
+        json!({"html":"x", "sha256":"a".repeat(64), "capture_kind":"raw_html"}),
+        json!({"html":"한".repeat(90000), "sha256":"a".repeat(64), "capture_kind":"sanitized_dom_html"}),
+        json!({"html":"\0", "sha256":"a".repeat(64), "capture_kind":"sanitized_dom_html"}),
+    ] {
+        let mut result = observed_result();
+        let envelope = &mut result.meta.as_mut().unwrap()[ENVELOPE_KEY][0];
+        envelope["source_kind"] = json!("browser");
+        envelope["browser_archive"] = archive;
+        assert!(
+            events_from_result("browser", "read_page", Some(&request_meta()), &result).is_empty()
+        );
+    }
+}
+
+#[test]
+fn json_escaped_archive_survives_durable_outbox_reopen() {
+    let temporary = tempdir().unwrap();
+    let outbox = WorkEvidenceOutbox::new(temporary.path());
+    let mut result = observed_result();
+    let envelope = &mut result.meta.as_mut().unwrap()[ENVELOPE_KEY][0];
+    envelope["source_kind"] = json!("browser");
+    envelope["browser_archive"] = json!({
+        "html": format!("<p>{}</p>", "\u{1}".repeat(MAX_BROWSER_ARCHIVE_BYTES - 7)),
+        "sha256": "a".repeat(64),
+        "capture_kind": "sanitized_dom_html",
+    });
+    let events = events_from_result("browser", "read_page", Some(&request_meta()), &result);
+    assert!(serde_json::to_vec(&events[0]).unwrap().len() > 512 * 1024);
+    outbox.persist(&events).unwrap();
+    let reopened = WorkEvidenceOutbox::new(temporary.path());
+    assert_eq!(reopened.pending().unwrap()[0].1, events[0]);
+    let receipt = receipt_for_events(&events);
+    assert!(!receipt.contains("browser_archive"));
+    assert!(receipt.len() < 2048);
+}
+
+#[test]
 fn brain_recursion_is_skipped_and_profile_ids_do_not_collide() {
     assert!(
         events_from_result(
