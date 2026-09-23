@@ -190,6 +190,61 @@ fn brain_recursion_is_skipped_and_profile_ids_do_not_collide() {
     assert_ne!(events[0]["event_id"], other_events[0]["event_id"]);
 }
 
+#[tokio::test]
+async fn office_and_mail_archives_survive_outbox_without_model_payload_growth() {
+    for (server, source_kind, capture_kind) in [
+        ("office", "office", "office_document"),
+        ("email", "mail", "mail_message"),
+    ] {
+        let temporary = tempdir().unwrap();
+        let outbox = Arc::new(WorkEvidenceOutbox::new(temporary.path()));
+        let mut result = observed_result();
+        let envelope = &mut result.meta.as_mut().unwrap()[ENVELOPE_KEY][0];
+        envelope["source_kind"] = json!(source_kind);
+        let body = serde_json::to_string(&json!({
+            "version": 1, "source_kind": source_kind,
+            "original": { "data_base64": "a".repeat(3 * 1024 * 1024) },
+            "view": {"body": "exact \"quote\"\n"},
+        }))
+        .unwrap();
+        let archive = json!({"json": body, "sha256": "a".repeat(64), "capture_kind": capture_kind});
+        envelope["source_archive"] = archive.clone();
+        outbox
+            .observe(server, "read", Some(&request_meta()), &mut result)
+            .await;
+        let reopened = WorkEvidenceOutbox::new(temporary.path());
+        let records = reopened.pending().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].1["source_archive"], archive);
+        assert!(serde_json::to_vec(&result.content).unwrap().len() < 4096);
+        let original_id = records[0].1["event_id"].clone();
+        result.meta.as_mut().unwrap()[ENVELOPE_KEY][0]["source_archive"]["json"] = json!(
+            serde_json::to_string(
+                &json!({"version":1,"source_kind":source_kind,"view":{"body":"changed"}})
+            )
+            .unwrap()
+        );
+        let changed = events_from_result(server, "read", Some(&request_meta()), &result);
+        assert_ne!(original_id, changed[0]["event_id"]);
+    }
+}
+
+#[test]
+fn source_archive_rejects_mismatched_source_invalid_json_and_oversize_without_downgrade() {
+    let body = serde_json::to_string(&json!({"version":1,"source_kind":"office"})).unwrap();
+    for archive in [
+        json!({"json":body,"sha256":"a".repeat(64),"capture_kind":"mail_message"}),
+        json!({"json":body,"sha256":"bad","capture_kind":"office_document"}),
+        json!({"json":"not-json","sha256":"a".repeat(64),"capture_kind":"office_document"}),
+        json!({"json": "x".repeat(MAX_SOURCE_ARCHIVE_BYTES + 1),"sha256":"a".repeat(64),"capture_kind":"office_document"}),
+        json!({"json":"{\"version\":1,\"source_kind\":\"mail\"}","sha256":"a".repeat(64),"capture_kind":"office_document"}),
+    ] {
+        let mut result = observed_result();
+        result.meta.as_mut().unwrap()[ENVELOPE_KEY][0]["source_archive"] = archive;
+        assert!(events_from_result("office", "read", Some(&request_meta()), &result).is_empty());
+    }
+}
+
 #[test]
 fn durable_outbox_reopens_without_changing_observation_or_duplicating_files() {
     let temporary = tempdir().unwrap();

@@ -25,8 +25,9 @@ use sha1::Sha1;
 pub(crate) const RECORD_TOOL: &str = "brain_work_record";
 const ENVELOPE_KEY: &str = "ugot/work-evidence";
 const MAX_BROWSER_ARCHIVE_BYTES: usize = 256 * 1024;
-// JSON escaping can expand the bounded HTML and excerpt by up to six times.
-const MAX_OUTBOX_RECORD_BYTES: usize = 2 * 1024 * 1024;
+const MAX_SOURCE_ARCHIVE_BYTES: usize = 10 * 1024 * 1024;
+// A valid serialized archive JSON string can double when nested in the event.
+const MAX_OUTBOX_RECORD_BYTES: usize = 24 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) struct WorkEvidenceOutbox {
@@ -367,6 +368,36 @@ fn events_from_result(
             event.insert("content".to_string(), content.into());
             if let Some(revision) = envelope.get("revision").filter(|value| !value.is_null()) {
                 event.insert("revision".to_string(), bounded(Some(revision), 256)?.into());
+            }
+            if let Some(archive) = envelope
+                .get("source_archive")
+                .filter(|value| !value.is_null())
+            {
+                let capture_kind = match expected_source {
+                    "office" => "office_document",
+                    "mail" => "mail_message",
+                    _ => return None,
+                };
+                let json = bounded(archive.get("json"), MAX_SOURCE_ARCHIVE_BYTES)?;
+                let sha256 = bounded(archive.get("sha256"), 64)?;
+                let payload: Value = serde_json::from_str(json).ok()?;
+                if archive.get("capture_kind").and_then(Value::as_str) != Some(capture_kind)
+                    || sha256.len() != 64
+                    || !sha256
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    || payload.get("version").and_then(Value::as_u64) != Some(1)
+                    || payload.get("source_kind").and_then(Value::as_str) != Some(expected_source)
+                {
+                    return None;
+                }
+                // Preserve exact bytes; Brain checks the digest and source-specific schema.
+                event.insert(
+                    "source_archive".to_string(),
+                    serde_json::json!({
+                        "json": json, "sha256": sha256, "capture_kind": capture_kind,
+                    }),
+                );
             }
             if let Some(archive) = envelope
                 .get("browser_archive")
