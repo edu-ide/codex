@@ -599,6 +599,7 @@ sacp-conductor = { path = "../../symposium-acp/src/sacp-conductor" }
 sacp-derive = { path = "../../symposium-acp/src/sacp-derive" }
 sacp-tokio = { path = "../../symposium-acp/src/sacp-tokio" }
 sacp-trace-viewer = { path = "../../symposium-acp/src/sacp-trace-viewer" }
+work-rs = { path = "../../work-rs" }
 
 # DSRs is consumed by codex-ilhae as an external path dependency. Its
 # transitive path crates live outside this Cargo workspace, so declare them here

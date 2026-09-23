@@ -179,7 +179,7 @@ enum Subcommand {
     #[cfg(feature = "ilhae")]
     Profile(ProfileCommand),
 
-    /// Manage Ilhae identity authentication.
+    /// Manage the UGOT login shared with Office and Mail.
     #[cfg(feature = "ilhae")]
     Auth(IlhaeAuthCommand),
 
@@ -587,9 +587,9 @@ struct IlhaeAuthCommand {
 #[cfg(feature = "ilhae")]
 #[derive(Debug, clap::Subcommand)]
 enum IlhaeAuthSubcommand {
-    /// Sign in with the Ilhae identity server.
+    /// Sign in to UGOT for Ilhae, Office, and Mail on this device.
     Login {
-        /// Identity issuer URL. Defaults to https://auth.ugot.uk.
+        /// Identity issuer URL. Custom issuers use separate CLI credentials.
         #[arg(long)]
         issuer: Option<String>,
 
@@ -606,13 +606,13 @@ enum IlhaeAuthSubcommand {
         json: bool,
     },
 
-    /// Show Ilhae identity login status.
+    /// Verify the shared UGOT login and refresh it when needed.
     Status {
         #[arg(long)]
         json: bool,
     },
 
-    /// Remove stored Ilhae identity credentials.
+    /// Sign out of UGOT across Ilhae, Office, and Mail on this device.
     Logout {
         #[arg(long)]
         json: bool,
@@ -1390,7 +1390,7 @@ async fn run_ilhae_auth_command(cmd: IlhaeAuthCommand) -> anyhow::Result<()> {
             print_ilhae_auth_status(&status, json)?;
         }
         IlhaeAuthSubcommand::Status { json } => {
-            let status = codex_ilhae::auth::status()?;
+            let status = codex_ilhae::auth::status().await?;
             print_ilhae_auth_status(&status, json)?;
         }
         IlhaeAuthSubcommand::Logout { json } => {
@@ -1404,9 +1404,9 @@ async fn run_ilhae_auth_command(cmd: IlhaeAuthCommand) -> anyhow::Result<()> {
                     }))?
                 );
             } else if removed {
-                println!("Signed out of Ilhae identity.");
+                println!("Signed out of UGOT for Ilhae, Office, and Mail on this device.");
             } else {
-                println!("No Ilhae identity credentials were stored.");
+                println!("No UGOT or Ilhae identity credentials were stored.");
             }
         }
     }
@@ -1428,7 +1428,7 @@ async fn run_ilhae_login_compat_command(login_cli: LoginCommand) -> anyhow::Resu
 
     match login_cli.action {
         Some(LoginSubcommand::Status) => {
-            let status = codex_ilhae::auth::status()?;
+            let status = codex_ilhae::auth::status().await?;
             print_ilhae_auth_status(&status, /*json*/ false)?;
         }
         None => {
@@ -1487,8 +1487,11 @@ fn print_ilhae_auth_status(
         .issuer
         .as_deref()
         .unwrap_or(codex_ilhae::auth::DEFAULT_ISSUER);
-    let expired_suffix = if status.expired { " (expired)" } else { "" };
-    println!("Signed in to Ilhae identity as {account}{expired_suffix}");
+    if issuer == codex_ilhae::auth::DEFAULT_ISSUER {
+        println!("Signed in to UGOT as {account} (shared with Office and Mail)");
+    } else {
+        println!("Signed in to Ilhae identity as {account}");
+    }
     println!("Issuer: {issuer}");
     println!("Auth file: {}", status.auth_file.display());
 

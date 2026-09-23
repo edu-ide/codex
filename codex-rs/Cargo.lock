@@ -2120,12 +2120,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
+ "base64 0.22.1",
  "brain-artifact-rs",
  "brain-identity-rs",
  "brain-knowledge-rs",
  "brain-session-rs",
  "chrono",
- "cron-parser",
  "dirs 6.0.0",
  "flate2",
  "hyper 1.8.1",
@@ -2137,6 +2137,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tar",
  "thiserror 2.0.18",
  "tokio",
@@ -2146,6 +2147,7 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
+ "work-rs",
 ]
 
 [[package]]
@@ -4173,6 +4175,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "ugot-local-session",
  "url",
  "uuid",
  "walkdir",
@@ -7845,6 +7848,16 @@ dependencies = [
  "tracing",
  "twox-hash",
  "zstd",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -18091,6 +18104,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ugot-local-session"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "dirs 6.0.0",
+ "fs2",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "uname"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19590,6 +19617,19 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+]
+
+[[package]]
+name = "work-rs"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "cron-parser",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

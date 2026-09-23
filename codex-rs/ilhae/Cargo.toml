@@ -94,6 +94,7 @@ inventory = "0.3"
 async-trait = "0.1"
 
 # Internal
+ugot-local-session = { path = "../../../ugot-local-session" }
 ilhae-common = { path = "../../../ilhae-common" }
 brain-session-rs = { path = "../../../brain-session-rs" }
 brain-knowledge-rs = { path = "../../../brain-knowledge-rs", default-features = false }

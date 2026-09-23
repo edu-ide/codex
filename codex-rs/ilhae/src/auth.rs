@@ -12,14 +12,18 @@ use sha2::Sha256;
 use tiny_http::Header;
 use tiny_http::Response;
 use tiny_http::Server;
+use ugot_local_session::SessionLock;
+use ugot_local_session::auth::UserInfo;
 use url::Url;
 
-use crate::config::resolve_ilhae_config_dir;
+mod session;
 
-pub const DEFAULT_ISSUER: &str = "https://auth.ugot.uk";
+pub use session::logout;
+pub use session::status;
+
+pub const DEFAULT_ISSUER: &str = ugot_local_session::ISSUER;
 pub const DEFAULT_CLIENT_ID: &str = "ilhae-cli";
 
-const AUTH_FILE_NAME: &str = "identity-auth.json";
 const DEFAULT_CALLBACK_PORT: u16 = 14580;
 const FALLBACK_CALLBACK_PORT: u16 = 14581;
 const CALLBACK_PATH: &str = "/auth/callback";
@@ -108,6 +112,11 @@ struct TokenResponse {
 pub async fn login(options: IdentityLoginOptions) -> anyhow::Result<IdentityAuthStatus> {
     let issuer = normalize_issuer(&options.issuer)?;
     let client_id = non_empty_or_default(&options.client_id, DEFAULT_CLIENT_ID);
+    let generation = SessionLock::acquire_async()
+        .await
+        .map_err(anyhow::Error::msg)?
+        .generation()
+        .map_err(anyhow::Error::msg)?;
     let pkce = generate_pkce();
     let state = generate_state();
     let server = bind_callback_server()?;
@@ -130,82 +139,11 @@ pub async fn login(options: IdentityLoginOptions) -> anyhow::Result<IdentityAuth
 
     let callback = wait_for_callback(server, actual_port, state).await?;
     let token = exchange_code(&issuer, &client_id, &redirect_uri, &pkce, &callback.code).await?;
-    let auth = build_auth_file(issuer, client_id, token);
-    save_auth(&auth)?;
-    status()
-}
-
-pub fn status() -> anyhow::Result<IdentityAuthStatus> {
-    let auth_file = auth_file_path();
-    let Some(auth) = load_auth()? else {
-        return Ok(IdentityAuthStatus {
-            authenticated: false,
-            auth_file,
-            issuer: None,
-            client_id: None,
-            subject: None,
-            email: None,
-            name: None,
-            preferred_username: None,
-            expires_at: None,
-            expired: false,
-        });
-    };
-    let expires_at = auth
-        .claims
-        .as_ref()
-        .and_then(|claims| claims.expires_at)
-        .or(auth.expires_at);
-    Ok(IdentityAuthStatus {
-        authenticated: true,
-        auth_file,
-        issuer: Some(auth.issuer),
-        client_id: Some(auth.client_id),
-        subject: auth
-            .claims
-            .as_ref()
-            .and_then(|claims| claims.subject.clone()),
-        email: auth.claims.as_ref().and_then(|claims| claims.email.clone()),
-        name: auth.claims.as_ref().and_then(|claims| claims.name.clone()),
-        preferred_username: auth
-            .claims
-            .as_ref()
-            .and_then(|claims| claims.preferred_username.clone()),
-        expires_at,
-        expired: expires_at.is_some_and(|value| value <= Utc::now().timestamp()),
-    })
-}
-
-pub fn logout() -> anyhow::Result<bool> {
-    let path = auth_file_path();
-    if !path.exists() {
-        return Ok(false);
-    }
-    std::fs::remove_file(path)?;
-    Ok(true)
-}
-
-pub fn load_auth() -> anyhow::Result<Option<IdentityAuthFile>> {
-    let path = auth_file_path();
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = std::fs::read_to_string(path)?;
-    Ok(Some(serde_json::from_str(&content)?))
-}
-
-fn save_auth(auth: &IdentityAuthFile) -> anyhow::Result<()> {
-    let path = auth_file_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let content = serde_json::to_string_pretty(auth)?;
-    std::fs::write(path, content)?;
-    Ok(())
-}
-
-fn auth_file_path() -> PathBuf {
-    resolve_ilhae_config_dir().join(AUTH_FILE_NAME)
+    let identity = userinfo_for_issuer(&issuer, &token.access_token)
+        .await?
+        .context("identity server rejected the login token")?;
+    let auth = build_auth_file(issuer, client_id, token, identity)?;
+    session::finish_login(&auth, generation).await
 }
 
 fn normalize_issuer(raw: &str) -> anyhow::Result<String> {
@@ -375,7 +313,10 @@ async fn exchange_code(
     code: &str,
 ) -> anyhow::Result<TokenResponse> {
     let token_url = format!("{issuer}/oauth2/token");
-    let response = reqwest::Client::new()
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
         .post(token_url)
         .form(&[
             ("grant_type", "authorization_code"),
@@ -393,55 +334,80 @@ async fn exchange_code(
         .await
         .context("failed to read identity token response")?;
     if !status.is_success() {
-        anyhow::bail!("identity token exchange failed with HTTP {status}: {body}");
+        anyhow::bail!("identity token exchange failed with HTTP {status}");
     }
     serde_json::from_str(&body).context("failed to parse identity token response")
 }
 
-fn build_auth_file(issuer: String, client_id: String, token: TokenResponse) -> IdentityAuthFile {
+async fn userinfo_for_issuer(issuer: &str, access_token: &str) -> anyhow::Result<Option<UserInfo>> {
+    if issuer == DEFAULT_ISSUER {
+        return ugot_local_session::auth::userinfo(access_token)
+            .await
+            .map_err(anyhow::Error::msg);
+    }
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
+        .get(format!("{issuer}/userinfo"))
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .context("failed to verify identity login")?;
+    if matches!(response.status().as_u16(), 400 | 401 | 403) {
+        return Ok(None);
+    }
+    let identity: UserInfo = response.error_for_status()?.json().await?;
+    anyhow::ensure!(
+        !identity.sub.trim().is_empty(),
+        "identity subject is missing"
+    );
+    Ok(Some(identity))
+}
+
+fn build_auth_file(
+    issuer: String,
+    client_id: String,
+    token: TokenResponse,
+    identity: UserInfo,
+) -> anyhow::Result<IdentityAuthFile> {
     let now = Utc::now().timestamp();
-    let expires_at = token.expires_in.map(|seconds| now + seconds);
-    let claims = token
-        .id_token
-        .as_deref()
-        .and_then(parse_identity_claims_from_jwt)
-        .or_else(|| parse_identity_claims_from_jwt(&token.access_token));
-    IdentityAuthFile {
+    anyhow::ensure!(
+        !token.access_token.is_empty(),
+        "identity access token is missing"
+    );
+    let token_type = token.token_type.unwrap_or_else(|| "Bearer".to_string());
+    anyhow::ensure!(
+        token_type.eq_ignore_ascii_case("Bearer"),
+        "unsupported identity token type"
+    );
+    let lifetime = token
+        .expires_in
+        .context("identity token expiry is missing")?;
+    anyhow::ensure!(lifetime > 0, "identity token expiry must be positive");
+    let expires_at = now
+        .checked_add(lifetime)
+        .context("identity token expiry overflow")?;
+    Ok(IdentityAuthFile {
         version: 1,
         issuer,
         client_id,
-        token_type: token.token_type.unwrap_or_else(|| "Bearer".to_string()),
+        token_type,
         access_token: token.access_token,
         refresh_token: token.refresh_token,
         id_token: token.id_token,
         scope: token.scope,
-        expires_at,
-        claims,
+        expires_at: Some(expires_at),
+        claims: Some(IdentityClaims {
+            subject: Some(identity.sub),
+            email: identity.email,
+            name: identity.name,
+            preferred_username: identity.preferred_username,
+            expires_at: Some(expires_at),
+        }),
         created_at: now,
         updated_at: now,
-    }
-}
-
-fn parse_identity_claims_from_jwt(jwt: &str) -> Option<IdentityClaims> {
-    let payload = jwt.split('.').nth(1)?;
-    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload.as_bytes())
-        .ok()?;
-    let value = serde_json::from_slice::<serde_json::Value>(&decoded).ok()?;
-    Some(IdentityClaims {
-        subject: json_string(&value, "sub"),
-        email: json_string(&value, "email"),
-        name: json_string(&value, "name"),
-        preferred_username: json_string(&value, "preferred_username"),
-        expires_at: value.get("exp").and_then(serde_json::Value::as_i64),
     })
-}
-
-fn json_string(value: &serde_json::Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -475,29 +441,34 @@ mod tests {
     }
 
     #[test]
-    fn parse_identity_claims_from_jwt_payload() {
-        let claims = serde_json::json!({
-            "sub": "user-1",
-            "email": "user@example.com",
-            "name": "Test User",
-            "preferred_username": "test",
-            "exp": 123,
-        });
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(serde_json::to_vec(&claims).expect("claims json"));
-        let jwt = format!("header.{payload}.signature");
-
-        let parsed = parse_identity_claims_from_jwt(&jwt).expect("claims");
-
+    fn build_auth_uses_verified_userinfo_with_opaque_token() {
+        let token = TokenResponse {
+            access_token: "opaque-token".into(),
+            refresh_token: Some("refresh".into()),
+            id_token: None,
+            token_type: Some("Bearer".into()),
+            expires_in: Some(60),
+            scope: None,
+        };
+        let identity = UserInfo {
+            sub: "verified-user".into(),
+            email: Some("user@ugot.uk".into()),
+            name: None,
+            preferred_username: None,
+        };
+        let auth = build_auth_file(
+            DEFAULT_ISSUER.into(),
+            DEFAULT_CLIENT_ID.into(),
+            token,
+            identity,
+        )
+        .expect("verified auth");
         assert_eq!(
-            IdentityClaims {
-                subject: Some("user-1".to_string()),
-                email: Some("user@example.com".to_string()),
-                name: Some("Test User".to_string()),
-                preferred_username: Some("test".to_string()),
-                expires_at: Some(123),
-            },
-            parsed
+            auth.claims
+                .as_ref()
+                .and_then(|claims| claims.subject.as_deref()),
+            Some("verified-user")
         );
+        assert!(auth.expires_at.expect("expiry") > Utc::now().timestamp());
     }
 }
