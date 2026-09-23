@@ -50,6 +50,15 @@ mod app_cmd;
 mod desktop_app;
 mod doctor;
 mod exec_server_telemetry;
+#[cfg(feature = "ilhae")]
+mod ilhae_integration;
+#[cfg(feature = "ilhae")]
+use ilhae_integration::is_invoked_as_ilhae_cli;
+#[cfg(feature = "ilhae")]
+use ilhae_integration::ilhae_app_server_runtime_hooks;
+#[cfg(feature = "ilhae")]
+use ilhae_integration::prepare_ilhae_cli_environment_if_needed;
+
 mod marketplace_cmd;
 mod mcp_cmd;
 mod migrate_rollouts;
@@ -1117,194 +1126,6 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "ilhae")]
-fn is_invoked_as_ilhae_cli() -> bool {
-    if std::env::var("ILHAE_APP_SERVER").ok().as_deref() == Some("1")
-        || std::env::var("ILHAE_RUNTIME").ok().as_deref() == Some("1")
-    {
-        return true;
-    }
-
-    std::env::args_os()
-        .next()
-        .and_then(|arg0| {
-            std::path::Path::new(&arg0)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(str::to_owned)
-        })
-        .is_some_and(|name| is_ilhae_cli_binary_name(&name))
-}
-
-#[cfg(feature = "ilhae")]
-fn is_ilhae_cli_binary_name(name: &str) -> bool {
-    let name = name.strip_suffix(".exe").unwrap_or(name);
-    matches!(name, "ilhae" | "codex-ilhae" | "codex-ilhae-cli")
-}
-
-#[cfg(feature = "ilhae")]
-fn thread_goal_loop_event_from_ilhae_lifecycle(
-    notification: codex_ilhae::IlhaeLoopLifecycleNotification,
-) -> codex_state::ThreadGoalLoopEvent {
-    match notification {
-        codex_ilhae::IlhaeLoopLifecycleNotification::Started { item, .. }
-        | codex_ilhae::IlhaeLoopLifecycleNotification::Completed { item, .. }
-        | codex_ilhae::IlhaeLoopLifecycleNotification::Failed { item, .. } => {
-            thread_goal_loop_event_from_ilhae_item(item)
-        }
-        codex_ilhae::IlhaeLoopLifecycleNotification::Progress {
-            item_id,
-            kind,
-            summary,
-            detail,
-            ..
-        } => codex_state::ThreadGoalLoopEvent {
-            id: item_id.clone(),
-            phase: thread_goal_loop_phase_from_ilhae_parts(&item_id, "", kind),
-            status: codex_state::ThreadGoalLoopStatus::InProgress,
-            title: "Loop progress".to_string(),
-            summary,
-            detail,
-            error: None,
-        },
-    }
-}
-
-#[cfg(feature = "ilhae")]
-fn thread_goal_loop_event_from_ilhae_item(
-    item: codex_ilhae::LoopLifecycleItem,
-) -> codex_state::ThreadGoalLoopEvent {
-    codex_state::ThreadGoalLoopEvent {
-        id: item.id.clone(),
-        phase: thread_goal_loop_phase_from_ilhae_parts(&item.id, &item.title, item.kind),
-        status: thread_goal_loop_status_from_ilhae(item.status),
-        title: item.title,
-        summary: item.summary,
-        detail: item.detail,
-        error: item.error,
-    }
-}
-
-#[cfg(feature = "ilhae")]
-fn thread_goal_loop_phase_from_ilhae_parts(
-    id: &str,
-    title: &str,
-    kind: codex_ilhae::LoopLifecycleKind,
-) -> codex_state::ThreadGoalLoopPhase {
-    let id = id.to_ascii_lowercase();
-    let title = title.to_ascii_lowercase();
-    if id.contains("kairos") || title.contains("kairos") {
-        return codex_state::ThreadGoalLoopPhase::KairosLoop;
-    }
-    if id.contains("knowledge_loop") || title.contains("knowledge") {
-        return codex_state::ThreadGoalLoopPhase::KnowledgeLoop;
-    }
-    if id.contains("cleanup") || title.contains("cleanup") || title.contains("hygiene") {
-        return codex_state::ThreadGoalLoopPhase::CleanupLoop;
-    }
-    if id.contains("verification") || title.contains("verification") || title.contains("verify") {
-        return codex_state::ThreadGoalLoopPhase::VerificationLoop;
-    }
-    match kind {
-        codex_ilhae::LoopLifecycleKind::SuperLoop => codex_state::ThreadGoalLoopPhase::SuperLoop,
-        codex_ilhae::LoopLifecycleKind::ExecutionLoop => {
-            codex_state::ThreadGoalLoopPhase::ExecutionLoop
-        }
-        codex_ilhae::LoopLifecycleKind::ImprovementLoop => {
-            codex_state::ThreadGoalLoopPhase::ImprovementLoop
-        }
-        codex_ilhae::LoopLifecycleKind::CleanupLoop => {
-            codex_state::ThreadGoalLoopPhase::CleanupLoop
-        }
-        codex_ilhae::LoopLifecycleKind::ContextInjection => {
-            codex_state::ThreadGoalLoopPhase::ContextInjection
-        }
-    }
-}
-
-#[cfg(feature = "ilhae")]
-fn thread_goal_loop_status_from_ilhae(
-    status: codex_ilhae::LoopLifecycleStatus,
-) -> codex_state::ThreadGoalLoopStatus {
-    match status {
-        codex_ilhae::LoopLifecycleStatus::InProgress => {
-            codex_state::ThreadGoalLoopStatus::InProgress
-        }
-        codex_ilhae::LoopLifecycleStatus::Completed => codex_state::ThreadGoalLoopStatus::Completed,
-        codex_ilhae::LoopLifecycleStatus::Failed => codex_state::ThreadGoalLoopStatus::Failed,
-    }
-}
-
-#[cfg(feature = "ilhae")]
-async fn collect_ilhae_foreground_loop_events(
-    goal_continuation: bool,
-) -> Vec<codex_state::ThreadGoalLoopEvent> {
-    let result = if goal_continuation {
-        codex_ilhae::run_active_goal_foreground_loop_cycle_collecting_lifecycle().await
-    } else {
-        codex_ilhae::run_active_foreground_loop_cycle_collecting_lifecycle().await
-    };
-    match result {
-        Ok(notifications) => notifications
-            .into_iter()
-            .map(thread_goal_loop_event_from_ilhae_lifecycle)
-            .collect(),
-        Err(err) => {
-            let stage = if goal_continuation {
-                "goal continuation"
-            } else {
-                "app-server turn"
-            };
-            tracing::warn!(
-                error = ?err,
-                "ilhae foreground loop cycle failed before {stage}"
-            );
-            Vec::new()
-        }
-    }
-}
-
-#[cfg(feature = "ilhae")]
-fn ilhae_foreground_loop_hook(goal_continuation: bool) -> codex_app_server::AppServerTurnStartHook {
-    Arc::new(move || {
-        Box::pin(async move {
-            let thread_goal_loop_events =
-                collect_ilhae_foreground_loop_events(goal_continuation).await;
-            codex_app_server::AppServerTurnStartHookResult {
-                thread_goal_loop_events,
-            }
-        })
-    })
-}
-
-#[cfg(feature = "ilhae")]
-fn ilhae_app_server_runtime_hooks() -> codex_app_server::AppServerRuntimeHooks {
-    codex_app_server::AppServerRuntimeHooks {
-        before_turn_start: Some(ilhae_foreground_loop_hook(/*goal_continuation*/ false)),
-        before_goal_continuation: Some(ilhae_foreground_loop_hook(/*goal_continuation*/ true)),
-    }
-}
-
-#[cfg(feature = "ilhae")]
-fn prepare_ilhae_cli_environment_if_needed() -> anyhow::Result<Option<std::path::PathBuf>> {
-    if !is_invoked_as_ilhae_cli() {
-        return Ok(None);
-    }
-
-    let codex_home = codex_ilhae::config::prepare_ilhae_codex_home().map_err(anyhow::Error::msg)?;
-    Ok(Some(codex_home))
-}
-
-#[cfg(feature = "ilhae")]
-fn apply_ilhae_codex_home_loader_overrides(
-    _loader_overrides: &mut codex_config::LoaderOverrides,
-    _codex_home: &std::path::Path,
-) {
-    // Ilhae prepares an isolated CODEX_HOME and writes its generated runtime
-    // config directly to config.toml there. Avoid a managed_config.toml layer
-    // so stale generated state cannot override the active ~/.ilhae profile.
-}
-
-#[cfg(feature = "ilhae")]
 fn ilhae_profile_engine_id(profile: &codex_ilhae::config::IlhaeProfileConfig) -> String {
     profile
         .agent
@@ -1916,7 +1737,7 @@ async fn cli_main(
     remote_control_disabled: bool,
 ) -> anyhow::Result<()> {
     #[cfg(feature = "ilhae")]
-    let prepared_ilhae_codex_home = prepare_ilhae_cli_environment_if_needed()?;
+    prepare_ilhae_cli_environment_if_needed()?;
 
     let MultitoolCli {
         psp,
@@ -2153,7 +1974,7 @@ async fn cli_main(
                         listen
                     };
                     let auth = auth.try_into_settings()?;
-                    let mut loader_overrides = codex_config::LoaderOverrides::default();
+                    let loader_overrides = codex_config::LoaderOverrides::default();
                     #[cfg(feature = "ilhae")]
                     let is_ilhae_app_server = is_invoked_as_ilhae_cli();
                     #[cfg(feature = "ilhae")]
@@ -2174,12 +1995,6 @@ async fn cli_main(
                     let runtime_hooks = codex_app_server::AppServerRuntimeHooks::default();
                     #[cfg(feature = "ilhae")]
                     if is_ilhae_app_server {
-                        let codex_home = match prepared_ilhae_codex_home.as_ref() {
-                            Some(codex_home) => codex_home.clone(),
-                            None => codex_ilhae::config::prepare_ilhae_codex_home()
-                                .map_err(anyhow::Error::msg)?,
-                        };
-                        apply_ilhae_codex_home_loader_overrides(&mut loader_overrides, &codex_home);
                         codex_ilhae::ensure_native_runtime_for_cli(
                             interactive.config_profile_v2.as_deref(),
                         )
@@ -3690,12 +3505,10 @@ async fn run_interactive_tui(
     remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
 ) -> std::io::Result<AppExitInfo> {
-    let mut loader_overrides = codex_config::LoaderOverrides::default();
+    let loader_overrides = codex_config::LoaderOverrides::default();
     #[cfg(feature = "ilhae")]
     if remote.is_none() && is_invoked_as_ilhae_cli() {
-        let codex_home =
-            codex_ilhae::config::prepare_ilhae_codex_home().map_err(std::io::Error::other)?;
-        apply_ilhae_codex_home_loader_overrides(&mut loader_overrides, &codex_home);
+        codex_ilhae::config::prepare_ilhae_codex_home().map_err(std::io::Error::other)?;
 
         let _ = codex_ilhae::bootstrap_ilhae_runtime()
             .await
@@ -4282,19 +4095,6 @@ args = ["--ctx-size", "131072"]
         assert!(managed_toml.get("profile").is_none());
         assert!(managed.contains(r#"model = "Qwen3.6-27B-UD-Q4_K_XL""#));
 
-        let mut loader_overrides = codex_config::LoaderOverrides::default();
-        apply_ilhae_codex_home_loader_overrides(&mut loader_overrides, &codex_home);
-        assert_eq!(loader_overrides.managed_config_path, None);
-    }
-
-    #[cfg(feature = "ilhae")]
-    #[test]
-    fn ilhae_cli_binary_name_accepts_windows_exe_suffix() {
-        assert!(is_ilhae_cli_binary_name("ilhae"));
-        assert!(is_ilhae_cli_binary_name("ilhae.exe"));
-        assert!(is_ilhae_cli_binary_name("codex-ilhae.exe"));
-        assert!(is_ilhae_cli_binary_name("codex-ilhae-cli.exe"));
-        assert!(!is_ilhae_cli_binary_name("codex.exe"));
     }
 
     #[cfg(feature = "ilhae")]
@@ -4367,17 +4167,7 @@ args = ["--ctx-size", "131072"]
         assert!(profile_v2_for_args(&["codex", "--profile", "work", "features", "list"]).is_err());
     }
 
-    #[cfg(feature = "ilhae")]
-    #[test]
-    fn ilhae_goal_loop_phase_marks_kairos_as_kairos_loop() {
-        let phase = thread_goal_loop_phase_from_ilhae_parts(
-            "super_loop:kairos:1779027374405",
-            "Running Super Loop",
-            codex_ilhae::LoopLifecycleKind::SuperLoop,
-        );
 
-        assert_eq!(phase, codex_state::ThreadGoalLoopPhase::KairosLoop);
-    }
 
     #[test]
     fn import_remains_an_interactive_prompt() {
