@@ -108,6 +108,71 @@ pub(super) fn native_mcp_defaults(servers: &mut toml::value::Table, user_config:
         );
         servers.insert(name.to_owned(), server.into());
     }
+    // Explicit native MCP entries are common on development machines. They
+    // retain their command, arguments, account and environment, but still need
+    // the parent's graphical session when their launchers open the desktop.
+    for (_, server) in servers.iter_mut() {
+        let Some(table) = server.as_table_mut() else {
+            continue;
+        };
+        let Some(command) = table.get("command").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        let executable = Path::new(command)
+            .file_name()
+            .and_then(|name| name.to_str());
+        let product = match executable {
+            Some("brain") => Some("brain"),
+            Some("email") => Some("email"),
+            Some("ugot-work") => Some("ugot-work"),
+            Some("browser" | "ugot-browser") => Some("ugot-browser"),
+            Some("office-mcp" | "ugot-office-mcp") => Some("ugot-office-mcp"),
+            Some("node" | "node.exe")
+                if has_product_launcher(table, "office-mcp", "launcher.mjs") =>
+            {
+                Some("ugot-office-mcp")
+            }
+            Some("node" | "node.exe")
+                if has_product_launcher(table, "videoeditor-mcp", "launcher.mjs") =>
+            {
+                Some("ugot-videoeditor")
+            }
+            Some("python" | "python3" | "python.exe" | "python3.exe")
+                if has_product_launcher(table, "logo-generator", "mcp_launcher.py") =>
+            {
+                Some("ugot-logo")
+            }
+            _ => None,
+        };
+        let Some(product) = product else {
+            continue;
+        };
+        let names = table
+            .entry("env_vars")
+            .or_insert_with(|| toml::Value::Array(Vec::new()));
+        let Some(names) = names.as_array_mut() else {
+            continue;
+        };
+        for name in native_mcp_launchers::env_vars(product) {
+            if !names.iter().any(|existing| existing.as_str() == Some(name)) {
+                names.push(toml::Value::from(name));
+            }
+        }
+    }
+}
+
+fn has_product_launcher(table: &toml::value::Table, product: &str, launcher: &str) -> bool {
+    table
+        .get("args")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|args| {
+            args.iter().any(|arg| {
+                arg.as_str().is_some_and(|arg| {
+                    Path::new(arg).file_name().and_then(|name| name.to_str()) == Some(launcher)
+                        && arg.contains(product)
+                })
+            })
+        })
 }
 
 pub(super) fn mcp_server_transport_is_semantically_valid(

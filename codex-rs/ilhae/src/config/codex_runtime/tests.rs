@@ -368,7 +368,94 @@ UGOT_SESSION_PATH = "/profiles/work/ugot-session.json"
     let mut servers = user_mcp_servers_for_managed_config(&user);
     let before = servers.clone();
     native_mcp_defaults(&mut servers, &user);
-    assert_eq!(servers, before);
+    for name in ["browser", "email", "brain", "office"] {
+        for field in ["command", "args", "url", "enabled", "env"] {
+            assert_eq!(
+                servers[name].get(field),
+                before[name].get(field),
+                "explicit {name}.{field} changed"
+            );
+        }
+    }
+    assert!(servers["browser"].get("env_vars").is_none());
+    assert!(servers["email"].get("env_vars").is_none());
+    for name in ["brain", "office"] {
+        assert!(
+            servers[name]["env_vars"]
+                .as_array()
+                .unwrap()
+                .contains(&toml::Value::from("DISPLAY")),
+            "{name} must inherit the desktop session"
+        );
+    }
+}
+
+#[test]
+fn native_mcp_explicit_product_inherits_gui_without_losing_custom_vars() {
+    let user: toml::Value = r#"
+[mcp_servers.email]
+command = "/home/user/.cargo/bin/email"
+args = ["mcp"]
+env_vars = ["CUSTOM_MAIL_VAR", "DISPLAY"]
+[mcp_servers.email.env]
+MAIL_MCP_DB_PATH = "/profiles/personal/mail.db"
+[mcp_servers.work]
+command = "/opt/ugot-work"
+args = ["mcp"]
+"#
+    .parse()
+    .unwrap();
+    let mut servers = user_mcp_servers_for_managed_config(&user);
+    native_mcp_defaults(&mut servers, &user);
+    let email = &servers["email"];
+    let names = email["env_vars"].as_array().unwrap();
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.as_str() == Some("DISPLAY"))
+            .count(),
+        1
+    );
+    assert!(names.contains(&toml::Value::from("XAUTHORITY")));
+    assert!(names.contains(&toml::Value::from("CUSTOM_MAIL_VAR")));
+    assert_eq!(
+        email["env"]["MAIL_MCP_DB_PATH"].as_str(),
+        Some("/profiles/personal/mail.db")
+    );
+    assert!(
+        servers["work"]["env_vars"]
+            .as_array()
+            .unwrap()
+            .contains(&toml::Value::from("WAYLAND_DISPLAY"))
+    );
+}
+
+#[test]
+fn native_mcp_script_launchers_inherit_gui_session() {
+    let user: toml::Value = r#"
+[mcp_servers.browser]
+command = "/usr/local/bin/browser"
+args = ["mcp"]
+[mcp_servers.logo]
+command = "/opt/logo/.venv/bin/python"
+args = ["/opt/logo-generator/mcp_launcher.py"]
+[mcp_servers.video]
+command = "node"
+args = ["/opt/videoeditor-mcp/launcher.mjs"]
+"#
+    .parse()
+    .unwrap();
+    let mut servers = user_mcp_servers_for_managed_config(&user);
+    native_mcp_defaults(&mut servers, &user);
+    for name in ["browser", "logo", "video"] {
+        assert!(
+            servers[name]["env_vars"]
+                .as_array()
+                .unwrap()
+                .contains(&toml::Value::from("DISPLAY")),
+            "{name} must inherit the desktop session"
+        );
+    }
 }
 
 #[test]
@@ -386,7 +473,15 @@ UGOT_BROWSER_STATE_DIR = "/profiles/work/service"
     let mut servers = user_mcp_servers_for_managed_config(&user);
     let selected = servers["agent-browser"].clone();
     native_mcp_defaults(&mut servers, &user);
-    assert_eq!(servers["browser"], selected);
+    assert_eq!(servers["browser"]["command"], selected["command"]);
+    assert_eq!(servers["browser"]["args"], selected["args"]);
+    assert_eq!(servers["browser"]["env"], selected["env"]);
+    assert!(
+        servers["browser"]["env_vars"]
+            .as_array()
+            .unwrap()
+            .contains(&toml::Value::from("DISPLAY"))
+    );
     assert!(!servers.contains_key("agent-browser"));
     assert_eq!(user["mcp_servers"]["agent-browser"], selected);
 }
