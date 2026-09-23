@@ -1199,6 +1199,14 @@ fn copy_shape_from_original(original: &TomlValue, resolved: &TomlValue) -> TomlV
             }
             TomlValue::Array(items)
         }
+        // JSON metadata numbers can serialize as private wrapper tables when
+        // serde_json's arbitrary_precision feature is enabled by another crate.
+        // Resolving paths must not change the TOML value's original type.
+        (original_value, resolved_value)
+            if std::mem::discriminant(original_value) != std::mem::discriminant(resolved_value) =>
+        {
+            original_value.clone()
+        }
         (_, resolved_value) => resolved_value.clone(),
     }
 }
@@ -1610,6 +1618,48 @@ foo = "xyzzy"
         );
         expected_toml_value.insert("foo".to_string(), TomlValue::String("xyzzy".to_string()));
         assert_eq!(normalized_toml_value, TomlValue::Table(expected_toml_value));
+        Ok(())
+    }
+
+    #[test]
+    fn resolving_paths_preserves_numeric_desktop_metadata() -> anyhow::Result<()> {
+        let tmp = tempdir()?;
+        let original: TomlValue = toml::from_str(
+            r#"
+model_instructions_file = "./instructions.md"
+
+[desktop.ilhae_runtime_system2_projection]
+schema_version = 1
+ratio = 0.5
+counts = [1, 2]
+"#,
+        )?;
+        let resolved = resolve_relative_paths_in_config_toml(original.clone(), tmp.path())?;
+
+        assert_eq!(resolved.get("desktop"), original.get("desktop"));
+        assert_eq!(
+            resolved.get("model_instructions_file"),
+            Some(&TomlValue::String(
+                AbsolutePathBuf::resolve_path_against_base("./instructions.md", tmp.path())
+                    .as_path()
+                    .to_string_lossy()
+                    .to_string(),
+            )),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn copying_shape_preserves_numbers_against_json_private_wrappers() -> anyhow::Result<()> {
+        let original: TomlValue = toml::from_str("schema_version = 1\nratio = 0.5\n")?;
+        let resolved: TomlValue = toml::from_str(
+            r#"
+schema_version = { "$serde_json::private::Number" = "1" }
+ratio = { "$serde_json::private::Number" = "0.5" }
+"#,
+        )?;
+
+        assert_eq!(copy_shape_from_original(&original, &resolved), original);
         Ok(())
     }
 
