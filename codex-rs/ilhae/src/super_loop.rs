@@ -27,6 +27,10 @@ use std::time::UNIX_EPOCH;
 use tracing::info;
 use tracing::warn;
 
+#[path = "super_loop_work.rs"]
+mod work;
+use work::{maybe_run_followup_task, score_followup_tasks, upsert_followup_task};
+
 const DEFAULT_SUPER_LOOP_COOLDOWN_SECS: u64 = 180;
 const DEFAULT_SUPER_LOOP_POLL_INTERVAL_SECS: u64 = 90;
 const DEFAULT_GEPA_SIDECAR_TIMEOUT_SECS: u64 = 10;
@@ -677,116 +681,6 @@ fn first_preferred_role(preferred_roles: Option<&[&str]>) -> Option<String> {
     })
 }
 
-fn upsert_followup_task(
-    brain: &BrainService,
-    title: &str,
-    description: &str,
-    prompt: Option<&str>,
-    instructions: Option<&str>,
-    preferred_roles: Option<&[&str]>,
-    category: &str,
-    action_detail: &str,
-    outcome: &mut SuperLoopOutcome,
-) -> Result<SuperLoopAction, String> {
-    let preferred_agent = first_preferred_role(preferred_roles);
-    let instructions = append_preferred_roles_hint(instructions, preferred_roles);
-    if let Some(existing) = brain
-        .schedule_list()
-        .into_iter()
-        .find(|task| task.title == title)
-    {
-        let existing = if preferred_agent.is_some() || instructions.is_some() {
-            brain
-                .schedule_update_full(
-                    &existing.id,
-                    None,
-                    Some(description),
-                    None,
-                    None,
-                    None,
-                    Some(category),
-                    None,
-                    prompt,
-                    None,
-                    None,
-                    instructions.as_deref(),
-                    None,
-                    preferred_agent.as_deref(),
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap_or(existing)
-        } else {
-            existing
-        };
-        let _ = brain.schedule_add_history(
-            &existing.id,
-            "super_loop_refresh",
-            Some(action_detail),
-            None,
-        );
-        outcome.updated_tasks += 1;
-        return Ok(SuperLoopAction {
-            kind: SuperLoopActionKind::UpsertFollowupTask,
-            target: existing.id,
-            detail: action_detail.to_string(),
-            status: "updated".to_string(),
-            source_signature: None,
-        });
-    }
-
-    let created = brain
-        .schedule_create(
-            title,
-            Some(description),
-            None,
-            Some(category),
-            Vec::new(),
-            prompt,
-            None,
-            None,
-            instructions.as_deref(),
-            Some(true),
-        )
-        .map_err(|err| err.to_string())?;
-    let created = if preferred_agent.is_some() || instructions.is_some() {
-        brain
-            .schedule_update_full(
-                &created.id,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                instructions.as_deref(),
-                None,
-                preferred_agent.as_deref(),
-                None,
-                None,
-                None,
-            )
-            .unwrap_or(created)
-    } else {
-        created
-    };
-    let _ =
-        brain.schedule_add_history(&created.id, "super_loop_created", Some(action_detail), None);
-    outcome.created_tasks += 1;
-    Ok(SuperLoopAction {
-        kind: SuperLoopActionKind::UpsertFollowupTask,
-        target: created.id,
-        detail: action_detail.to_string(),
-        status: "created".to_string(),
-        source_signature: None,
-    })
-}
-
 fn evaluate_knowledge_findings(
     settings: &crate::settings_types::Settings,
 ) -> Vec<SuperLoopFinding> {
@@ -942,157 +836,6 @@ fn evaluate_findings(
     findings
 }
 
-fn maybe_run_followup_task(
-    driver: SuperLoopDriver,
-    brain: &BrainService,
-    action: &SuperLoopAction,
-) -> Result<Option<SuperLoopAction>, String> {
-    if driver != SuperLoopDriver::Worker {
-        return Ok(None);
-    }
-    if action.kind != SuperLoopActionKind::UpsertFollowupTask {
-        return Ok(None);
-    }
-    if action.target.trim().is_empty() {
-        return Ok(None);
-    }
-    let triggers = brain.schedule_run_with_scope(None, Some(action.target.as_str()));
-    let started = !triggers.is_empty();
-    Ok(Some(SuperLoopAction {
-        kind: SuperLoopActionKind::RunFollowupTask,
-        target: action.target.clone(),
-        detail: format!("execute follow-up task: {}", action.detail),
-        status: if started { "started" } else { "noop" }.to_string(),
-        source_signature: action.source_signature.clone(),
-    }))
-}
-
-fn previous_score_for_signature<'a>(
-    state: &'a SuperLoopState,
-    signature: &str,
-) -> Option<&'a SuperLoopTaskScore> {
-    state
-        .last_scores
-        .iter()
-        .find(|score| score.source_signature.as_deref() == Some(signature))
-}
-
-fn score_followup_tasks(
-    brain: &BrainService,
-    actions: &[SuperLoopAction],
-) -> Vec<SuperLoopTaskScore> {
-    let tasks = brain.schedule_list();
-    let task_ids = actions
-        .iter()
-        .filter(|action| {
-            matches!(
-                action.kind,
-                SuperLoopActionKind::UpsertFollowupTask | SuperLoopActionKind::RunFollowupTask
-            )
-        })
-        .map(|action| action.target.clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    let started_ids = actions
-        .iter()
-        .filter(|action| {
-            action.kind == SuperLoopActionKind::RunFollowupTask && action.status == "started"
-        })
-        .map(|action| action.target.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    let signature_by_task_id = actions
-        .iter()
-        .filter_map(|action| {
-            action
-                .source_signature
-                .as_ref()
-                .map(|signature| (action.target.clone(), signature.clone()))
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-
-    task_ids
-        .into_iter()
-        .map(|task_id| {
-            let source_signature = signature_by_task_id.get(&task_id).cloned();
-            let Some(task) = tasks.iter().find(|task| task.id == task_id) else {
-                return SuperLoopTaskScore {
-                    task_id,
-                    title: None,
-                    resolution: SuperLoopResolution::Stale,
-                    detail: "follow-up task missing from schedule store".to_string(),
-                    source_signature,
-                };
-            };
-
-            let last_run_status = task
-                .last_run_status
-                .clone()
-                .unwrap_or_default()
-                .to_lowercase();
-            let status = task.status.to_lowercase();
-            let done = task.done
-                || matches!(status.as_str(), "done" | "completed" | "complete")
-                || last_run_status.contains("success")
-                || last_run_status.contains("completed")
-                || last_run_status.contains("resolved");
-            if done {
-                return SuperLoopTaskScore {
-                    task_id,
-                    title: Some(task.title.clone()),
-                    resolution: SuperLoopResolution::Resolved,
-                    detail: format!(
-                        "status={}, last_run_status={}",
-                        task.status,
-                        task.last_run_status.as_deref().unwrap_or("none")
-                    ),
-                    source_signature,
-                };
-            }
-
-            let failed = last_run_status.contains("fail")
-                || last_run_status.contains("error")
-                || last_run_status.contains("blocked")
-                || matches!(status.as_str(), "failed" | "error" | "blocked");
-            if failed {
-                let resolution = if task.retry_count < task.max_retries {
-                    SuperLoopResolution::Retry
-                } else {
-                    SuperLoopResolution::Escalated
-                };
-                return SuperLoopTaskScore {
-                    task_id,
-                    title: Some(task.title.clone()),
-                    resolution,
-                    detail: format!(
-                        "status={}, last_run_status={}, retries={}/{}",
-                        task.status,
-                        task.last_run_status.as_deref().unwrap_or("none"),
-                        task.retry_count,
-                        task.max_retries
-                    ),
-                    source_signature,
-                };
-            }
-
-            let resolution = if started_ids.contains(task.id.as_str()) {
-                SuperLoopResolution::Running
-            } else {
-                SuperLoopResolution::Planned
-            };
-            SuperLoopTaskScore {
-                task_id,
-                title: Some(task.title.clone()),
-                resolution,
-                detail: format!(
-                    "status={}, last_run_status={}",
-                    task.status,
-                    task.last_run_status.as_deref().unwrap_or("none")
-                ),
-                source_signature,
-            }
-        })
-        .collect()
-}
-
 fn summarize_outcome(
     findings: &[SuperLoopFinding],
     actions: &[SuperLoopAction],
@@ -1221,7 +964,6 @@ fn execute_plan(
     driver: SuperLoopDriver,
     brain: Arc<BrainService>,
     settings: &crate::settings_types::Settings,
-    state: &SuperLoopState,
     findings: &[SuperLoopFinding],
 ) -> Result<Vec<SuperLoopAction>, String> {
     let mut actions = Vec::new();
@@ -1231,69 +973,9 @@ fn execute_plan(
     };
 
     for finding in findings {
-        if let Some(previous) = previous_score_for_signature(state, &finding.signature) {
-            match previous.resolution {
-                SuperLoopResolution::Running | SuperLoopResolution::Planned => {
-                    actions.push(SuperLoopAction {
-                        kind: SuperLoopActionKind::Noop,
-                        target: previous.task_id.clone(),
-                        detail: format!(
-                            "skip duplicate follow-up while existing task is {}",
-                            match previous.resolution {
-                                SuperLoopResolution::Running => "running",
-                                SuperLoopResolution::Planned => "planned",
-                                _ => "active",
-                            }
-                        ),
-                        status: "skipped".to_string(),
-                        source_signature: Some(finding.signature.clone()),
-                    });
-                    continue;
-                }
-                SuperLoopResolution::Escalated => {
-                    actions.push(SuperLoopAction {
-                        kind: SuperLoopActionKind::Noop,
-                        target: previous.task_id.clone(),
-                        detail: "skip duplicate follow-up while escalated review is pending"
-                            .to_string(),
-                        status: "skipped".to_string(),
-                        source_signature: Some(finding.signature.clone()),
-                    });
-                    continue;
-                }
-                SuperLoopResolution::Retry => {
-                    let title = make_followup_title("advisor", &finding.subject);
-                    let description = format!(
-                        "Repeated super-loop follow-up retry for `{}`.\n\nCurrent issue: {}\nPrevious outcome: {}",
-                        finding.subject, finding.detail, previous.detail
-                    );
-                    let prompt = "Review the repeated super-loop failure, decide whether to change approach, reassign work, or stop safely.";
-                    let instructions = "Inspect the prior follow-up task history and propose the next safe action. Prefer explanation and escalation over repeating the same step.";
-                    let followup = upsert_followup_task(
-                        &brain,
-                        &title,
-                        &description,
-                        Some(prompt),
-                        Some(instructions),
-                        Some(&["reviewer", "planner", "leader"]),
-                        "advisor",
-                        &finding.detail,
-                        &mut outcome,
-                    )?;
-                    let followup = SuperLoopAction {
-                        source_signature: Some(finding.signature.clone()),
-                        ..followup
-                    };
-                    if let Some(run_action) = maybe_run_followup_task(driver, &brain, &followup)? {
-                        actions.push(run_action);
-                    }
-                    actions.push(followup);
-                    continue;
-                }
-                SuperLoopResolution::Resolved | SuperLoopResolution::Stale => {}
-            }
-        }
-
+        // Work owns deduplication, queueing and retries. Refresh the intent even
+        // when the CLI's last local snapshot was planned or running; the shared
+        // store preserves the actual host result and never reopens a terminal job.
         match finding.kind {
             SuperLoopFindingKind::KnowledgeGap | SuperLoopFindingKind::KnowledgeLoopError => {
                 actions.push(SuperLoopAction {
@@ -1570,7 +1252,7 @@ fn run_cycle_blocking(
         });
     }
 
-    match execute_plan(driver, brain.clone(), &settings, &state, &findings) {
+    match execute_plan(driver, brain.clone(), &settings, &findings) {
         Ok(mut actions) => {
             let hygiene_driver = match driver {
                 SuperLoopDriver::Worker => crate::hygiene_loop::HygieneLoopDriver::Worker,
@@ -1684,7 +1366,7 @@ fn run_cycle_blocking(
             state.last_driver = Some(driver.as_str().to_string());
             state.last_signature = Some(signature);
             state.last_findings = findings.clone();
-            let scores = score_followup_tasks(&brain, &actions);
+            let scores = score_followup_tasks(&brain, &actions)?;
             let cleanup_actions = apply_resolved_cleanup(
                 driver,
                 &scores,

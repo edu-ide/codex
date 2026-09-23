@@ -350,6 +350,7 @@ macro_rules! register_admin_task_handlers {
                                                     priority: brain_rs::schedule::default_priority(),
                                                     retry_count: 0,
                                                     max_retries: brain_rs::schedule::default_max_retries(),
+                                                    super_loop: None,
                                                 });
                                             }
                                         }
@@ -420,6 +421,7 @@ macro_rules! register_admin_task_handlers {
                         priority: brain_rs::schedule::default_priority(),
                         retry_count: 0,
                         max_retries: brain_rs::schedule::default_max_retries(),
+                        super_loop: None,
                     };
                     responder.respond(CreateTaskResponse { task: Some(serde_json::to_value(task).unwrap()), error: None })
                 }
@@ -490,6 +492,7 @@ macro_rules! register_admin_task_handlers {
                                             priority: brain_rs::schedule::default_priority(),
                                             retry_count: 0,
                                             max_retries: brain_rs::schedule::default_max_retries(),
+                                            super_loop: None,
                                         };
                                         return responder.respond(UpdateTaskResponse { task: Some(serde_json::to_value(task).unwrap()), error: None });
                                     }
