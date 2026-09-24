@@ -92,8 +92,11 @@ pub mod a2a_persistence;
 
 // ── Native CLI entry point ──
 mod app_server_notifications;
+pub mod profile_sidecars;
 pub mod startup_main;
 pub use app_server_notifications::spawn_app_server_external_notification_bridge;
+pub use profile_sidecars::forget_runtime_client;
+pub use profile_sidecars::release_runtime_client;
 pub use startup_main::BootstrappedIlhaeRuntime;
 pub use startup_main::NativeRuntimeStatusSnapshot;
 pub use startup_main::bootstrap_ilhae_runtime;
@@ -102,6 +105,7 @@ pub use startup_main::current_native_backend_engine;
 pub use startup_main::emit_native_loop_lifecycle;
 pub use startup_main::ensure_native_runtime_for_cli;
 pub use startup_main::ensure_native_runtime_for_config;
+pub use startup_main::ensure_native_runtime_without_client_lease;
 pub use startup_main::find_native_runtime_pids;
 pub use startup_main::native_runtime_context;
 pub use startup_main::native_runtime_healthcheck;

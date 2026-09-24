@@ -1500,31 +1500,145 @@ pub(crate) async fn ensure_native_runtime_for_proxy_with_thinking_mode(
     }
 }
 
+/// Starts everything the profile needs for a CLI or app-server session: its own
+/// native runtime, the native runtime of its `backend_profile`, and its sidecars.
+/// With `stop_when_unused`, this process first registers as a runtime client, so
+/// the services stop once the last client exits.
 pub async fn ensure_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Result<()> {
-    let Some((profile_id, config)) = crate::config::get_native_runtime_config(profile_id) else {
-        return Ok(());
-    };
+    ensure_profile_services(profile_id, /*take_client_lease*/ true).await
+}
 
-    if crate::native_runtime_endpoint::uses_runtime_proxy(&config) {
-        crate::native_runtime_proxy::ensure_remote_native_runtime(&profile_id, &config).await?;
-    } else if config.enabled {
+/// Like [`ensure_native_runtime_for_cli`] without a client lease, for commands that
+/// start services on purpose and then exit (`local-server start`, profile switch).
+pub async fn ensure_native_runtime_without_client_lease(
+    profile_id: Option<&str>,
+) -> anyhow::Result<()> {
+    ensure_profile_services(profile_id, /*take_client_lease*/ false).await
+}
+
+fn resolve_profile<'a>(
+    config: &'a crate::config::IlhaeTomlConfig,
+    profile_id: Option<&str>,
+) -> Option<(String, &'a crate::config::IlhaeProfileConfig)> {
+    let profile_id = profile_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .or_else(|| config.profile.active.clone())?;
+    let profile = config.profiles.get(&profile_id)?;
+    Some((profile_id, profile))
+}
+
+fn backend_profile_id(profile: &crate::config::IlhaeProfileConfig) -> Option<&str> {
+    profile
+        .backend_profile
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+}
+
+/// Native runtimes a profile brings up: its own (when managed) and its backend's.
+fn profile_runtime_specs(
+    config: &crate::config::IlhaeTomlConfig,
+    profile_id: &str,
+    profile: &crate::config::IlhaeProfileConfig,
+) -> anyhow::Result<Vec<(String, crate::config::IlhaeProfileNativeRuntimeConfig)>> {
+    let mut specs = Vec::new();
+    let managed = |runtime: &crate::config::IlhaeProfileNativeRuntimeConfig| {
+        runtime.enabled || crate::native_runtime_endpoint::uses_runtime_proxy(runtime)
+    };
+    if managed(&profile.native_runtime) {
+        specs.push((profile_id.to_string(), profile.native_runtime.clone()));
+    }
+    if let Some(backend_id) = backend_profile_id(profile) {
+        let backend = config.profiles.get(backend_id).ok_or_else(|| {
+            anyhow::anyhow!("profile `{profile_id}` names unknown backend_profile `{backend_id}`")
+        })?;
+        if !managed(&backend.native_runtime) {
+            anyhow::bail!(
+                "backend_profile `{backend_id}` of profile `{profile_id}` has no managed native runtime"
+            );
+        }
+        specs.push((backend_id.to_string(), backend.native_runtime.clone()));
+    }
+    Ok(specs)
+}
+
+/// Runtimes of `previous` that `next` does not bring up in an equivalent form.
+fn runtimes_to_stop(
+    previous: &[(String, crate::config::IlhaeProfileNativeRuntimeConfig)],
+    next: &[(String, crate::config::IlhaeProfileNativeRuntimeConfig)],
+) -> Vec<(String, crate::config::IlhaeProfileNativeRuntimeConfig)> {
+    previous
+        .iter()
+        .filter(|(_, runtime)| {
+            !next
+                .iter()
+                .any(|(_, candidate)| native_runtime_configs_equivalent(runtime, candidate))
+        })
+        .cloned()
+        .collect()
+}
+
+async fn ensure_native_runtime_spec(
+    profile_id: &str,
+    config: &crate::config::IlhaeProfileNativeRuntimeConfig,
+) -> anyhow::Result<()> {
+    if crate::native_runtime_endpoint::uses_runtime_proxy(config) {
+        crate::native_runtime_proxy::ensure_remote_native_runtime(profile_id, config).await?;
+        Ok(())
+    } else {
         let thinking_mode = crate::config::current_thinking_mode();
         ensure_native_runtime_for_config_with_policy(
-            &profile_id,
-            &config,
+            profile_id,
+            config,
             &thinking_mode,
             NativeRuntimeReusePolicy::AllowExactUnmanaged,
         )
-        .await?;
-    } else {
+        .await
+    }
+}
+
+async fn ensure_profile_services(
+    profile_id: Option<&str>,
+    take_client_lease: bool,
+) -> anyhow::Result<()> {
+    let config = crate::config::load_ilhae_toml_config();
+    let Some((profile_id, profile)) = resolve_profile(&config, profile_id) else {
         return Ok(());
+    };
+    // Register before starting anything so a client exiting concurrently sees us.
+    if take_client_lease && profile.stop_when_unused {
+        crate::profile_sidecars::register_runtime_client(&profile_id)?;
     }
 
-    let base_url = crate::config::native_runtime_effective_base_url(&config);
-    if !base_url.trim().is_empty() {
+    for (runtime_profile_id, runtime) in profile_runtime_specs(&config, &profile_id, profile)? {
+        ensure_native_runtime_spec(&runtime_profile_id, &runtime).await?;
+    }
+
+    // Codex talks to the profile's own runtime directly; a backend runtime sits
+    // behind the profile's engine instead.
+    let base_url = crate::config::native_runtime_effective_base_url(&profile.native_runtime);
+    if (profile.native_runtime.enabled
+        || crate::native_runtime_endpoint::uses_runtime_proxy(&profile.native_runtime))
+        && !base_url.trim().is_empty()
+    {
         unsafe {
             std::env::set_var("CODEX_OSS_BASE_URL", &base_url);
         }
+    }
+
+    crate::profile_sidecars::ensure_profile_sidecars(&profile_id, profile).await
+}
+
+/// Stops the native runtimes a profile brings up (its own and its backend's).
+pub(crate) async fn stop_profile_runtimes(
+    config: &crate::config::IlhaeTomlConfig,
+    profile_id: &str,
+    profile: &crate::config::IlhaeProfileConfig,
+) -> anyhow::Result<()> {
+    for (runtime_profile_id, runtime) in profile_runtime_specs(config, profile_id, profile)? {
+        stop_configured_native_runtime(&runtime_profile_id, &runtime).await?;
     }
     Ok(())
 }
@@ -1533,27 +1647,26 @@ pub async fn switch_native_runtime_for_cli(
     previous_profile_id: Option<&str>,
     next_profile_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    let previous =
-        previous_profile_id.and_then(|id| crate::config::get_native_runtime_config(Some(id)));
-    let next = next_profile_id.and_then(|id| crate::config::get_native_runtime_config(Some(id)));
+    let config = crate::config::load_ilhae_toml_config();
+    let previous = previous_profile_id.and_then(|id| resolve_profile(&config, Some(id)));
+    let next = next_profile_id.and_then(|id| resolve_profile(&config, Some(id)));
 
-    if let Some((previous_id, previous_config)) = previous.as_ref()
-        && (previous_config.enabled
-            || crate::native_runtime_endpoint::uses_runtime_proxy(previous_config))
-    {
-        let should_stop_previous = next
-            .as_ref()
-            .map(|(_, next_config)| {
-                !native_runtime_configs_equivalent(previous_config, next_config)
-            })
-            .unwrap_or(true);
-        if should_stop_previous {
-            stop_configured_native_runtime(previous_id, previous_config).await?;
+    if let Some((previous_id, previous_profile)) = previous.as_ref() {
+        let previous_runtimes = profile_runtime_specs(&config, previous_id, previous_profile)?;
+        let next_runtimes = match next.as_ref() {
+            Some((next_id, next_profile)) => profile_runtime_specs(&config, next_id, next_profile)?,
+            None => Vec::new(),
+        };
+        if next.as_ref().map(|(next_id, _)| next_id) != Some(previous_id) {
+            crate::profile_sidecars::stop_profile_sidecars(previous_id).await?;
+        }
+        for (runtime_profile_id, runtime) in runtimes_to_stop(&previous_runtimes, &next_runtimes) {
+            stop_configured_native_runtime(&runtime_profile_id, &runtime).await?;
         }
     }
 
     if let Some((next_id, _)) = next {
-        ensure_native_runtime_for_cli(Some(&next_id)).await?;
+        ensure_native_runtime_without_client_lease(Some(&next_id)).await?;
     } else {
         unsafe {
             std::env::remove_var("CODEX_OSS_BASE_URL");
@@ -1564,6 +1677,20 @@ pub async fn switch_native_runtime_for_cli(
 }
 
 pub async fn stop_native_runtime_for_cli(profile_id: Option<&str>) -> anyhow::Result<()> {
+    let toml_config = crate::config::load_ilhae_toml_config();
+    if let Some((id, profile)) = resolve_profile(&toml_config, profile_id) {
+        if !profile.sidecars.is_empty() {
+            println!("Stopping sidecars of profile: {id}");
+            crate::profile_sidecars::stop_profile_sidecars(&id).await?;
+        }
+        if let Some(backend_id) = backend_profile_id(profile)
+            && let Some(backend) = toml_config.profiles.get(backend_id)
+        {
+            println!("Stopping backend runtime profile: {backend_id}");
+            stop_configured_native_runtime(backend_id, &backend.native_runtime).await?;
+        }
+    }
+
     let Some((profile_id, config)) = crate::config::get_native_runtime_config(profile_id) else {
         println!("No active native runtime profile found.");
         return Ok(());
@@ -3521,5 +3648,67 @@ mod tests {
                 "off".to_string(),
             ]
         );
+    }
+    fn llama_runtime(model: &str) -> crate::config::IlhaeProfileNativeRuntimeConfig {
+        crate::config::IlhaeProfileNativeRuntimeConfig {
+            enabled: true,
+            provider: Some("llama-server".to_string()),
+            server_bin: "/opt/llama/llama-server".to_string(),
+            model_path: format!("/models/{model}.gguf"),
+            args: vec![
+                "-m".to_string(),
+                format!("/models/{model}.gguf"),
+                "--port".to_string(),
+                "8081".to_string(),
+            ],
+            ..Default::default()
+        }
+    }
+
+    fn runtime_ids(
+        specs: &[(String, crate::config::IlhaeProfileNativeRuntimeConfig)],
+    ) -> Vec<&str> {
+        specs.iter().map(|(id, _)| id.as_str()).collect()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn backend_profile_runtime_follows_profile_switches() {
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let _data_dir = EnvVarGuard::set("ILHAE_DATA_DIR", data_dir.path());
+        let mut config = crate::config::IlhaeTomlConfig::default();
+        for (id, model) in [("bonsai", "bonsai"), ("qwen", "qwen")] {
+            config.profiles.insert(
+                id.to_string(),
+                crate::config::IlhaeProfileConfig {
+                    native_runtime: llama_runtime(model),
+                    ..Default::default()
+                },
+            );
+        }
+        config.profiles.insert(
+            "laya".to_string(),
+            crate::config::IlhaeProfileConfig {
+                backend_profile: Some("bonsai".to_string()),
+                ..Default::default()
+            },
+        );
+        let specs =
+            |id: &str| profile_runtime_specs(&config, id, &config.profiles[id]).expect("specs");
+
+        // The router profile brings up its backend, never a runtime of its own.
+        assert_eq!(runtime_ids(&specs("laya")), ["bonsai"]);
+        // Switching to the backend's own profile keeps the running model.
+        assert!(runtimes_to_stop(&specs("laya"), &specs("bonsai")).is_empty());
+        // Switching to another local model stops the backend.
+        assert_eq!(
+            runtime_ids(&runtimes_to_stop(&specs("laya"), &specs("qwen"))),
+            ["bonsai"]
+        );
+
+        let mut broken = config.profiles["laya"].clone();
+        broken.backend_profile = Some("missing".to_string());
+        let error = profile_runtime_specs(&config, "laya", &broken).expect_err("unknown backend");
+        assert!(format!("{error}").contains("missing"));
     }
 }

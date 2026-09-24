@@ -44,6 +44,55 @@ pub struct IlhaeProfileConfig {
     pub knowledge: Option<IlhaeProfileKnowledgeConfig>,
     pub system2: IlhaeProfileSystem2Config,
     pub native_runtime: IlhaeProfileNativeRuntimeConfig,
+    /// Another profile whose native runtime backs this profile's engine (e.g. the
+    /// local model behind a router). Ilhae starts and stops it with this profile,
+    /// while Codex keeps talking to this profile's own engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_profile: Option<String>,
+    /// Helper services this profile needs while an Ilhae client uses it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sidecars: Vec<IlhaeProfileSidecarConfig>,
+    /// Stop the sidecars and native runtimes once the last Ilhae client exits.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub stop_when_unused: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn default_sidecar_startup_timeout_secs() -> u64 {
+    180
+}
+
+/// A process Ilhae starts on demand and keeps running while the profile is in use.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct IlhaeProfileSidecarConfig {
+    pub name: String,
+    /// Program followed by its arguments; no shell is involved.
+    pub command: Vec<String>,
+    pub cwd: String,
+    pub env: BTreeMap<String, String>,
+    /// Must answer 2xx once the sidecar is ready.
+    pub health_url: String,
+    #[serde(default = "default_sidecar_startup_timeout_secs")]
+    pub startup_timeout_secs: u64,
+    pub log_file: String,
+}
+
+impl Default for IlhaeProfileSidecarConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            command: Vec::new(),
+            cwd: String::new(),
+            env: BTreeMap::new(),
+            health_url: String::new(),
+            startup_timeout_secs: default_sidecar_startup_timeout_secs(),
+            log_file: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]

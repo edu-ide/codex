@@ -909,6 +909,10 @@ fn handle_app_exit(exit_info: AppExitInfo) -> anyhow::Result<()> {
     }
     if is_fatal {
         std::io::stdout().flush()?;
+        // process::exit skips the release in main(); at least drop the lease so the
+        // next client to exit can stop the profile services.
+        #[cfg(feature = "ilhae")]
+        codex_ilhae::forget_runtime_client();
         std::process::exit(1);
     }
     if let Some(action) = update_action {
@@ -1120,7 +1124,11 @@ fn stage_str(stage: Stage) -> &'static str {
 fn main() -> anyhow::Result<()> {
     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
-        cli_main(arg0_paths, remote_control_disabled).await?;
+        let result = cli_main(arg0_paths, remote_control_disabled).await;
+        // The last Ilhae client out stops profile services only needed while it runs.
+        #[cfg(feature = "ilhae")]
+        codex_ilhae::release_runtime_client().await;
+        result?;
         Ok(())
     })
 }
@@ -2258,7 +2266,8 @@ async fn cli_main(
         #[cfg(feature = "ilhae")]
         Some(Subcommand::LocalServer(local_cmd)) => match local_cmd {
             LocalServerCommand::Start => {
-                codex_ilhae::ensure_native_runtime_for_cli(
+                // Started on purpose and left running: no client lease.
+                codex_ilhae::ensure_native_runtime_without_client_lease(
                     interactive.config_profile_v2.as_deref(),
                 )
                 .await?;

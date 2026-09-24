@@ -18,6 +18,7 @@ pub use profiles::IlhaeProfileKnowledgeConfig;
 pub use profiles::IlhaeProfileNativeRuntimeConfig;
 pub use profiles::IlhaeProfilePermissionsConfig;
 pub use profiles::IlhaeProfileScopeConfig;
+pub use profiles::IlhaeProfileSidecarConfig;
 pub use profiles::IlhaeProfileSystem2Config;
 pub use profiles::IlhaeProjectConfig;
 pub use profiles::IlhaeTomlConfig;
@@ -471,6 +472,10 @@ pub fn dto_to_profile(dto: &crate::IlhaeAppProfileDto) -> IlhaeProfileConfig {
             enabled: dto.agent.native_runtime_enabled,
             ..Default::default()
         },
+        // Not part of the app DTO; `upsert_ilhae_profile` keeps the stored values.
+        backend_profile: None,
+        sidecars: Vec::new(),
+        stop_when_unused: false,
     }
 }
 
@@ -525,6 +530,11 @@ pub fn upsert_ilhae_profile(
     let mut persisted = dto_to_profile(&profile);
     persisted.native_runtime = existing_native_runtime;
     persisted.native_runtime.enabled = profile.agent.native_runtime_enabled;
+    if let Some(existing) = config.profiles.get(&profile_id) {
+        persisted.backend_profile = existing.backend_profile.clone();
+        persisted.sidecars = existing.sidecars.clone();
+        persisted.stop_when_unused = existing.stop_when_unused;
+    }
     persisted.knowledge = profile
         .knowledge
         .as_ref()
