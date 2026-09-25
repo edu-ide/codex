@@ -948,6 +948,8 @@ mod tests {
             from_model: "gpt-5.3-codex".to_string(),
             to_model: "gpt-5.2".to_string(),
             reason: ModelRerouteReason::HighRiskCyberActivity,
+            backend_address: None,
+            routing_reason: None,
         });
 
         assert_eq!(
@@ -959,6 +961,8 @@ mod tests {
                     "fromModel": "gpt-5.3-codex",
                     "toModel": "gpt-5.2",
                     "reason": "highRiskCyberActivity",
+                    "backendAddress": null,
+                    "routingReason": null,
                 },
             }),
             serde_json::to_value(notification)
@@ -1218,6 +1222,8 @@ mod tests {
                         from_model: "gpt-5.3-codex".to_string(),
                         to_model: "gpt-5.2".to_string(),
                         reason: ModelRerouteReason::HighRiskCyberActivity,
+                        backend_address: None,
+                        routing_reason: None,
                     }),
                 )
                 .await

@@ -561,6 +561,11 @@ pub(crate) struct ChatWidget {
     model_catalog: Arc<ModelCatalog>,
     session_telemetry: SessionTelemetry,
     session_header: SessionHeader,
+    /// Model reported by the Laya router for the current turn.
+    laya_backend_model: Option<String>,
+    laya_backend_address: Option<String>,
+    laya_routing_reason: Option<String>,
+    laya_route_turn_id: Option<String>,
     initial_user_message: Option<UserMessage>,
     status_account_display: Option<StatusAccountDisplay>,
     runtime_model_provider_base_url: Option<String>,

@@ -63,6 +63,13 @@ impl ChatWidget {
             ServerNotification::TurnStarted(notification) => {
                 self.turn_lifecycle.last_turn_id = Some(notification.turn.id);
                 self.last_non_retry_error = None;
+                if self.current_model().eq_ignore_ascii_case("laya-router") {
+                    self.laya_backend_model = None;
+                    self.laya_backend_address = None;
+                    self.laya_routing_reason = None;
+                    self.laya_route_turn_id = None;
+                    self.refresh_status_surfaces();
+                }
                 if !matches!(replay_kind, Some(ReplayKind::ResumeInitialMessages)) {
                     self.on_task_started();
                 }
@@ -146,7 +153,36 @@ impl ChatWidget {
             ServerNotification::SkillsChanged(_) => {
                 self.refresh_skills_for_current_cwd(/*force_reload*/ true);
             }
-            ServerNotification::ModelRerouted(_) => {}
+            ServerNotification::ModelRerouted(notification) => {
+                if notification.reason == codex_app_server_protocol::ModelRerouteReason::LayaBackend
+                    && self.current_model().eq_ignore_ascii_case("laya-router")
+                {
+                    let route_changed = self.laya_backend_model.as_deref()
+                        != Some(notification.to_model.as_str())
+                        || self.laya_backend_address != notification.backend_address
+                        || self.laya_routing_reason != notification.routing_reason
+                        || self.laya_route_turn_id.as_deref()
+                            != Some(notification.turn_id.as_str());
+                    if route_changed {
+                        self.laya_backend_model = Some(notification.to_model.clone());
+                        self.laya_backend_address = notification.backend_address.clone();
+                        self.laya_routing_reason = notification.routing_reason.clone();
+                        self.laya_route_turn_id = Some(notification.turn_id.clone());
+                        self.refresh_status_surfaces();
+                        let mut details = format!(
+                            "Response model: {} (via laya-router)",
+                            notification.to_model
+                        );
+                        if let Some(address) = notification.backend_address {
+                            details.push_str(&format!("\nServer: {address}"));
+                        }
+                        if let Some(reason) = notification.routing_reason {
+                            details.push_str(&format!("\nRouting reason: {reason}"));
+                        }
+                        self.add_info_message(details, /*hint*/ None);
+                    }
+                }
+            }
             ServerNotification::ModelVerification(notification) => {
                 self.on_app_server_model_verification(&notification.verifications)
             }

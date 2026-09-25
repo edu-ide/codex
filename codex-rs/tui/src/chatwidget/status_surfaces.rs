@@ -650,7 +650,7 @@ impl ChatWidget {
     /// git metadata.
     pub(super) fn status_line_value_for_item(&mut self, item: StatusLineItem) -> Option<String> {
         match item {
-            StatusLineItem::ModelName => Some(self.model_display_name().to_string()),
+            StatusLineItem::ModelName => Some(self.routed_model_display_name()),
             StatusLineItem::ModelWithReasoning => Some(self.model_with_reasoning_display_name()),
             StatusLineItem::Reasoning => Some(self.reasoning_display_name()),
             StatusLineItem::CurrentDir => {
@@ -850,7 +850,7 @@ impl ChatWidget {
                 .status_line_value_for_item(StatusLineItem::FastMode)
                 .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
             TerminalTitleItem::Model => Some(Self::truncate_terminal_title_part(
-                self.model_display_name().to_string(),
+                self.routed_model_display_name(),
                 /*max_chars*/ 32,
             )),
             TerminalTitleItem::ModelWithReasoning => Some(Self::truncate_terminal_title_part(
@@ -883,7 +883,24 @@ impl ChatWidget {
             .filter(|_| self.has_chatgpt_account)
             .map(|tier| format!(" {tier}"))
             .unwrap_or_default();
-        format!("{} {label}{service_tier_label}", self.model_display_name())
+        format!(
+            "{} {label}{service_tier_label}",
+            self.routed_model_display_name()
+        )
+    }
+
+    pub(super) fn routed_model_display_name(&self) -> String {
+        if self.current_model().eq_ignore_ascii_case("laya-router") {
+            match self.laya_backend_model.as_deref() {
+                Some(model) => match self.laya_backend_address.as_deref() {
+                    Some(address) => format!("{model} @ {address} (via laya-router)"),
+                    None => format!("{model} (via laya-router)"),
+                },
+                None => "laya-router (backend pending)".to_string(),
+            }
+        } else {
+            self.model_display_name().to_string()
+        }
     }
 
     /// Computes the compact runtime status label used by word-based status items.

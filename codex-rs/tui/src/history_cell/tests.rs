@@ -1703,6 +1703,70 @@ fn session_header_includes_reasoning_level_when_present() {
 }
 
 #[test]
+fn laya_session_header_shows_router_and_advisor_separately() {
+    let cell = SessionHeaderHistoryCell::new_with_product_title(
+        "OpenAI Codex",
+        "laya-router".to_string(),
+        ratatui::style::Style::default(),
+        /*reasoning_effort*/ None,
+        /*show_fast_status*/ false,
+        PathBuf::from("project"),
+        "test",
+    )
+    .with_laya_advisor("Qwen3.8-Flash-Next", "192.168.219.113:8080");
+
+    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+    insta::assert_snapshot!(rendered, @r"
+╭───────────────────────────────────────────╮
+│ >_ OpenAI Codex (vtest)                   │
+│                                           │
+│ system 1:  laya-router   /model to change │
+│ system 2:  Qwen3.8-Flash-Next (advisor)   │
+│ server:    192.168.219.113:8080           │
+│ response:  model selected per request     │
+│ directory: project                        │
+╰───────────────────────────────────────────╯
+");
+    assert!(rendered.contains("system 1:  laya-router"), "{rendered}");
+    assert!(
+        rendered.contains("system 2:  Qwen3.8-Flash-Next (advisor)"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("server:    192.168.219.113:8080"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("response:  model selected per request"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn laya_route_card_fits_narrow_terminal() {
+    const WIDTH: u16 = 44;
+    let cell = LayaRoutesHistoryCell::new(vec![
+        "System 1: Laya router @ 127.0.0.1:8900".to_string(),
+        "  default → Ternary-Bonsai-2-27B-PQ2_0".to_string(),
+    ]);
+
+    let lines = cell.display_lines(WIDTH);
+    insta::assert_snapshot!(render_lines(&lines).join("\n"), @r"
+╭────────────────────────────────────────╮
+│ System 1: Laya router @ 127.0.0.1:8900 │
+│   default → Ternary-Bonsai-2-27B-PQ2_0 │
+╰────────────────────────────────────────╯
+");
+    assert!(
+        lines
+            .iter()
+            .all(|line| line_width(line) <= usize::from(WIDTH))
+    );
+    let raw = render_lines(&cell.raw_lines()).join("\n");
+    assert!(raw.contains("Ternary-Bonsai-2-27B-PQ2_0"));
+}
+
+#[test]
 fn session_header_hides_fast_status_when_disabled() {
     let cell = SessionHeaderHistoryCell::new(
         "gpt-4o".to_string(),

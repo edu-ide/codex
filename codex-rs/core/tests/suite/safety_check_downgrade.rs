@@ -107,6 +107,51 @@ async fn openai_model_header_mismatch_emits_warning_event() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn laya_model_header_reports_backend_without_cyber_warning() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let response = sse_response(sse_completed("resp-1"))
+        .insert_header("OpenAI-Model", "Ternary-Bonsai-2-27B-PQ2_0")
+        .insert_header("X-Laya-Backend-Address", "127.0.0.1:8081")
+        .insert_header("X-Laya-Reason", "laya domain=chitchat -> local Bonsai2");
+    let _mock = mount_response_once(&server, response).await;
+
+    let mut builder = test_codex().with_model("laya-router");
+    let test = builder.build(&server).await?;
+    test.codex
+        .submit(disabled_text_turn(&test, "identify backend"))
+        .await?;
+
+    let reroute = wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::ModelReroute(_))
+    })
+    .await;
+    let EventMsg::ModelReroute(reroute) = reroute else {
+        panic!("expected Laya backend event");
+    };
+    assert_eq!(reroute.from_model, "laya-router");
+    assert_eq!(reroute.to_model, "Ternary-Bonsai-2-27B-PQ2_0");
+    assert_eq!(reroute.reason, ModelRerouteReason::LayaBackend);
+    assert_eq!(reroute.backend_address.as_deref(), Some("127.0.0.1:8081"));
+    assert_eq!(
+        reroute.routing_reason.as_deref(),
+        Some("laya domain=chitchat -> local Bonsai2")
+    );
+
+    loop {
+        let event = test.codex.next_event().await?;
+        match event.msg {
+            EventMsg::Warning(warning) => panic!("unexpected warning: {}", warning.message),
+            EventMsg::TurnComplete(_) => break,
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cyber_policy_response_emits_typed_error_without_retry() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

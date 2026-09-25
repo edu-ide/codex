@@ -3,17 +3,30 @@
   "definitions": {
     "ModelRerouteReason": {
       "enum": [
-        "highRiskCyberActivity"
+        "highRiskCyberActivity",
+        "layaBackend"
       ],
       "type": "string"
     }
   },
   "properties": {
+    "backendAddress": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "fromModel": {
       "type": "string"
     },
     "reason": {
       "$ref": "#/definitions/ModelRerouteReason"
+    },
+    "routingReason": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "threadId": {
       "type": "string"

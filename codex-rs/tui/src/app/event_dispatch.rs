@@ -34,6 +34,9 @@ impl App {
                 self.handle_startup_thread_started(app_server, result)
                     .await?;
             }
+            AppEvent::LayaRoutesLoaded { thread_id, lines } => {
+                self.chat_widget.show_laya_route_map(thread_id, lines);
+            }
             AppEvent::RequestOlderScrollbackHistory { thread_id } => {
                 if self.chat_widget.thread_id() == Some(thread_id)
                     && self.overlay.is_none()

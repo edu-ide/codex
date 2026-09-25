@@ -1956,6 +1956,7 @@ pub struct WarningEvent {
 #[ts(rename_all = "snake_case")]
 pub enum ModelRerouteReason {
     HighRiskCyberActivity,
+    LayaBackend,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
@@ -1963,6 +1964,8 @@ pub struct ModelRerouteEvent {
     pub from_model: String,
     pub to_model: String,
     pub reason: ModelRerouteReason,
+    pub backend_address: Option<String>,
+    pub routing_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]

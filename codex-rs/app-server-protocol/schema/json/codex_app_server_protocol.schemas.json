@@ -13935,18 +13935,31 @@
       },
       "ModelRerouteReason": {
         "enum": [
-          "highRiskCyberActivity"
+          "highRiskCyberActivity",
+          "layaBackend"
         ],
         "type": "string"
       },
       "ModelReroutedNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
+          "backendAddress": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "fromModel": {
             "type": "string"
           },
           "reason": {
             "$ref": "#/definitions/v2/ModelRerouteReason"
+          },
+          "routingReason": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "threadId": {
             "type": "string"

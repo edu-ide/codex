@@ -357,6 +357,8 @@ pub(crate) async fn apply_bespoke_event_handling(
                 from_model: event.from_model,
                 to_model: event.to_model,
                 reason: event.reason.into(),
+                backend_address: event.backend_address,
+                routing_reason: event.routing_reason,
             };
             outgoing
                 .send_server_notification(ServerNotification::ModelRerouted(notification))

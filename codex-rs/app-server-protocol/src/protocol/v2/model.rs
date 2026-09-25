@@ -14,7 +14,8 @@ use serde_json::Value as JsonValue;
 
 v2_enum_from_core!(
     pub enum ModelRerouteReason from CoreModelRerouteReason {
-        HighRiskCyberActivity
+        HighRiskCyberActivity,
+        LayaBackend
     }
 );
 
@@ -157,6 +158,8 @@ pub struct ModelReroutedNotification {
     pub from_model: String,
     pub to_model: String,
     pub reason: ModelRerouteReason,
+    pub backend_address: Option<String>,
+    pub routing_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]

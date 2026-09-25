@@ -83,6 +83,8 @@ async fn openai_model_header_mismatch_emits_model_rerouted_notification_v2() -> 
             from_model: REQUESTED_MODEL.to_string(),
             to_model: SERVER_MODEL.to_string(),
             reason: ModelRerouteReason::HighRiskCyberActivity,
+            backend_address: None,
+            routing_reason: None,
         }
     );
 
@@ -209,6 +211,8 @@ async fn response_model_field_mismatch_emits_model_rerouted_notification_v2_when
             from_model: REQUESTED_MODEL.to_string(),
             to_model: SERVER_MODEL.to_string(),
             reason: ModelRerouteReason::HighRiskCyberActivity,
+            backend_address: None,
+            routing_reason: None,
         }
     );
 

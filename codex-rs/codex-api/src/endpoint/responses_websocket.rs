@@ -3,6 +3,7 @@ use crate::common::ResponseEvent;
 use crate::common::ResponseStream;
 use crate::common::ResponsesWsRequest;
 use crate::common::SafetyBufferingTreatment;
+use crate::common::ServerModelInfo;
 use crate::common::WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY;
 use crate::error::ApiError;
 use crate::provider::Provider;
@@ -280,7 +281,9 @@ impl ResponsesWebsocketConnection {
             )]
             async move {
                 if let Some(model) = server_model {
-                    let _ = tx_event.send(Ok(ResponseEvent::ServerModel(model))).await;
+                    let _ = tx_event
+                        .send(Ok(ResponseEvent::ServerModel(ServerModelInfo::new(model))))
+                        .await;
                 }
                 if let Some(etag) = models_etag {
                     let _ = tx_event.send(Ok(ResponseEvent::ModelsEtag(etag))).await;
@@ -755,7 +758,9 @@ async fn run_websocket_response_stream(
                     && last_server_model.as_deref() != Some(model.as_str())
                 {
                     let _ = tx_event
-                        .send(Ok(ResponseEvent::ServerModel(model.clone())))
+                        .send(Ok(ResponseEvent::ServerModel(ServerModelInfo::new(
+                            model.clone(),
+                        ))))
                         .await;
                     last_server_model = Some(model);
                 }

@@ -122,6 +122,37 @@ impl HistoryCell for SessionInfoCell {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct LayaRoutesHistoryCell {
+    lines: Vec<String>,
+}
+
+impl LayaRoutesHistoryCell {
+    pub(crate) fn new(lines: Vec<String>) -> Self {
+        Self { lines }
+    }
+}
+
+impl HistoryCell for LayaRoutesHistoryCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let Some(inner_width) = card_inner_width(width, SESSION_HEADER_MAX_INNER_WIDTH) else {
+            return Vec::new();
+        };
+        let lines = self
+            .lines
+            .iter()
+            .map(|line| {
+                truncate_line_with_ellipsis_if_overflow(Line::from(line.clone()), inner_width)
+            })
+            .collect();
+        with_border(lines)
+    }
+
+    fn raw_lines(&self) -> Vec<Line<'static>> {
+        self.lines.iter().cloned().map(Line::from).collect()
+    }
+}
+
 pub(crate) fn new_session_info(
     config: &Config,
     requested_model: &str,
@@ -232,6 +263,7 @@ pub(crate) struct SessionHeaderHistoryCell {
     show_fast_status: bool,
     directory: PathBuf,
     yolo_mode: bool,
+    laya_advisor: Option<(String, String)>,
 }
 
 impl SessionHeaderHistoryCell {
@@ -283,6 +315,24 @@ impl SessionHeaderHistoryCell {
         Self {
             product_title,
             version,
+            laya_advisor: (model.eq_ignore_ascii_case("laya-router")
+                && std::env::var("ILHAE_SYSTEM2_ENABLED").ok().as_deref() == Some("1")
+                && std::env::var("ILHAE_SYSTEM2_SOURCE_PROFILE")
+                    .ok()
+                    .as_deref()
+                    == Some("laya-router"))
+            .then(|| {
+                let model = std::env::var("ILHAE_SYSTEM2_MODEL").ok()?;
+                let base_url = std::env::var("ILHAE_SYSTEM2_BASE_URL").ok()?;
+                let url = url::Url::parse(&base_url).ok()?;
+                let host = url.host_str()?;
+                let address = match url.port_or_known_default() {
+                    Some(port) => format!("{host}:{port}"),
+                    None => host.to_string(),
+                };
+                Some((model, address))
+            })
+            .flatten(),
             model,
             model_style,
             reasoning_effort,
@@ -294,6 +344,12 @@ impl SessionHeaderHistoryCell {
 
     pub(crate) fn with_yolo_mode(mut self, yolo_mode: bool) -> Self {
         self.yolo_mode = yolo_mode;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_laya_advisor(mut self, model: &str, address: &str) -> Self {
+        self.laya_advisor = Some((model.to_string(), address.to_string()));
         self
     }
 
@@ -357,9 +413,14 @@ impl HistoryCell for SessionHeaderHistoryCell {
             DIR_LABEL.len()
         };
 
+        let is_laya_router = self.model.eq_ignore_ascii_case("laya-router");
         let model_label = format!(
             "{model_label:<label_width$}",
-            model_label = "model:",
+            model_label = if is_laya_router {
+                "system 1:"
+            } else {
+                "model:"
+            },
             label_width = label_width
         );
         let reasoning_label = self.reasoning_label();
@@ -393,8 +454,29 @@ impl HistoryCell for SessionHeaderHistoryCell {
             make_row(title_spans),
             make_row(Vec::new()),
             make_row(model_spans),
-            make_row(dir_spans),
         ];
+        if is_laya_router {
+            let advisor = self
+                .laya_advisor
+                .as_ref()
+                .map(|(model, _)| format!("{model} (advisor)"))
+                .unwrap_or_else(|| "not configured".to_string());
+            lines.push(make_row(vec![
+                Span::from(format!("{:<label_width$} ", "system 2:")).dim(),
+                Span::from(advisor),
+            ]));
+            if let Some((_, address)) = &self.laya_advisor {
+                lines.push(make_row(vec![
+                    Span::from(format!("{:<label_width$} ", "server:")).dim(),
+                    Span::from(address.clone()),
+                ]));
+            }
+            lines.push(make_row(vec![
+                Span::from(format!("{:<label_width$} ", "response:")).dim(),
+                Span::from("model selected per request"),
+            ]));
+        }
+        lines.push(make_row(dir_spans));
 
         if self.yolo_mode {
             let permissions_label = format!("{PERMISSIONS_LABEL:<label_width$}");
@@ -415,17 +497,32 @@ impl HistoryCell for SessionHeaderHistoryCell {
         let mut lines = vec![
             Line::from(format!("{} (v{})", self.product_title, self.version)),
             Line::from(format!(
-                "model: {}{}",
+                "{}: {}{}",
+                if self.model.eq_ignore_ascii_case("laya-router") {
+                    "system 1"
+                } else {
+                    "model"
+                },
                 self.model,
                 self.reasoning_label()
                     .map(|reasoning| format!(" {reasoning}"))
                     .unwrap_or_default()
             )),
-            Line::from(format!(
-                "directory: {}",
-                self.format_directory(/*max_width*/ None)
-            )),
         ];
+        if self.model.eq_ignore_ascii_case("laya-router") {
+            match &self.laya_advisor {
+                Some((model, address)) => {
+                    lines.push(Line::from(format!("system 2: {model} (advisor)")));
+                    lines.push(Line::from(format!("server: {address}")));
+                }
+                None => lines.push(Line::from("system 2: not configured")),
+            }
+            lines.push(Line::from("response: model selected per request"));
+        }
+        lines.push(Line::from(format!(
+            "directory: {}",
+            self.format_directory(/*max_width*/ None)
+        )));
         if self.yolo_mode {
             lines.push(Line::from("permissions: YOLO mode"));
         }

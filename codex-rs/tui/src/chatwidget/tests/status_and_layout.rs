@@ -7,6 +7,61 @@ use pretty_assertions::assert_eq;
 use ratatui::backend::TestBackend;
 use serial_test::serial;
 
+#[tokio::test]
+async fn laya_router_displays_actual_response_model() {
+    use codex_app_server_protocol::ModelRerouteReason;
+    use codex_app_server_protocol::ModelReroutedNotification;
+
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("laya-router")).await;
+    chat.config.tui_status_line = Some(vec!["model-name".to_string()]);
+    chat.config.tui_terminal_title = Some(vec!["model".to_string()]);
+    chat.refresh_status_surfaces();
+    assert_eq!(
+        status_line_text(&chat),
+        Some("laya-router (backend pending)".to_string())
+    );
+
+    for (model, address, reason) in [
+        (
+            "Ternary-Bonsai-2-27B-PQ2_0",
+            "127.0.0.1:8081",
+            "laya domain=chitchat diff=0.1 -> local Bonsai2 (default)",
+        ),
+        (
+            "Qwen3.8-Flash-Next",
+            "192.168.219.113:8080",
+            "runtime struggling -> switch to Flash-Next: runtime: 2 recent msgs with errors",
+        ),
+    ] {
+        chat.handle_server_notification(
+            ServerNotification::ModelRerouted(ModelReroutedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                from_model: "laya-router".to_string(),
+                to_model: model.to_string(),
+                reason: ModelRerouteReason::LayaBackend,
+                backend_address: Some(address.to_string()),
+                routing_reason: Some(reason.to_string()),
+            }),
+            /*replay_kind*/ None,
+        );
+        let display = format!("{model} @ {address} (via laya-router)");
+        assert_eq!(status_line_text(&chat), Some(display));
+        assert_eq!(chat.laya_routing_reason.as_deref(), Some(reason));
+    }
+    assert_eq!(
+        chat.last_terminal_title,
+        Some("Qwen3.8-Flash-Next @ 192.168....".to_string())
+    );
+    insta::assert_snapshot!(
+        status_line_text(&chat).expect("model status line"),
+        @"Qwen3.8-Flash-Next @ 192.168.219.113:8080 (via laya-router)"
+    );
+
+    chat.set_model("gpt-5.2");
+    assert_eq!(status_line_text(&chat), Some("gpt-5.2".to_string()));
+}
+
 fn enable_test_ambient_pet(chat: &mut ChatWidget) {
     chat.set_pet_image_support_for_tests(crate::pets::PetImageSupport::Supported(
         crate::pets::ImageProtocol::Kitty,

@@ -80,7 +80,7 @@ pub enum ResponseEvent {
     OutputItemAdded(ResponseItem),
     /// Emitted when the server includes `OpenAI-Model` on the stream response.
     /// This can differ from the requested model when backend safety routing applies.
-    ServerModel(String),
+    ServerModel(ServerModelInfo),
     /// Emitted when the server recommends additional account verification.
     ModelVerifications(Vec<ModelVerification>),
     /// Emitted when the server includes moderation metadata for first-party turn presentation.
@@ -120,6 +120,23 @@ pub enum ResponseEvent {
     },
     RateLimits(RateLimitSnapshot),
     ModelsEtag(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerModelInfo {
+    pub model: String,
+    pub backend_address: Option<String>,
+    pub routing_reason: Option<String>,
+}
+
+impl ServerModelInfo {
+    pub fn new(model: String) -> Self {
+        Self {
+            model,
+            backend_address: None,
+            routing_reason: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

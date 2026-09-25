@@ -3244,13 +3244,34 @@ impl Session {
     async fn maybe_warn_on_server_model_mismatch(
         self: &Arc<Self>,
         turn_context: &Arc<TurnContext>,
-        server_model: String,
+        server_model_info: codex_api::ServerModelInfo,
     ) -> bool {
+        let codex_api::ServerModelInfo {
+            model: server_model,
+            backend_address,
+            routing_reason,
+        } = server_model_info;
         let requested_model = turn_context.model_info.slug.clone();
         let server_model_normalized = server_model.to_ascii_lowercase();
         let requested_model_normalized = requested_model.to_ascii_lowercase();
         if server_model_normalized == requested_model_normalized {
             info!("server reported model {server_model} (matches requested model)");
+            return false;
+        }
+
+        if requested_model.eq_ignore_ascii_case("laya-router") {
+            self.send_event(
+                turn_context,
+                EventMsg::ModelReroute(ModelRerouteEvent {
+                    from_model: requested_model,
+                    to_model: server_model,
+                    reason: ModelRerouteReason::LayaBackend,
+                    backend_address,
+                    routing_reason,
+                }),
+            )
+            .await;
+            // Laya may choose a different backend for each request in the same turn.
             return false;
         }
 
@@ -3266,6 +3287,8 @@ impl Session {
                 from_model: requested_model.clone(),
                 to_model: server_model.clone(),
                 reason: ModelRerouteReason::HighRiskCyberActivity,
+                backend_address: None,
+                routing_reason: None,
             }),
         )
         .await;

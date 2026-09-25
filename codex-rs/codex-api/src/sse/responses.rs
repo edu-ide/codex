@@ -2,6 +2,7 @@ use crate::common::ResponseEvent;
 use crate::common::ResponseStream;
 use crate::common::SafetyBuffering;
 use crate::common::SafetyBufferingTreatment;
+use crate::common::ServerModelInfo;
 use crate::error::ApiError;
 use crate::rate_limits::parse_all_rate_limits;
 use crate::safety_buffering::treatment_from_headers;
@@ -47,7 +48,19 @@ pub fn spawn_response_stream(
         .headers
         .get(OPENAI_MODEL_HEADER)
         .and_then(|v| v.to_str().ok())
-        .map(ToString::to_string);
+        .map(|model| ServerModelInfo {
+            model: model.to_string(),
+            backend_address: stream_response
+                .headers
+                .get("x-laya-backend-address")
+                .and_then(|v| v.to_str().ok())
+                .map(ToString::to_string),
+            routing_reason: stream_response
+                .headers
+                .get("x-laya-reason")
+                .and_then(|v| v.to_str().ok())
+                .map(ToString::to_string),
+        });
     let reasoning_included = stream_response
         .headers
         .get(X_REASONING_INCLUDED_HEADER)
@@ -69,8 +82,9 @@ pub fn spawn_response_stream(
     }
     let (tx_event, rx_event) = mpsc::channel::<Result<ResponseEvent, ApiError>>(1600);
     tokio::spawn(async move {
-        if let Some(model) = server_model {
-            let _ = tx_event.send(Ok(ResponseEvent::ServerModel(model))).await;
+        let last_server_model = server_model.as_ref().map(|info| info.model.clone());
+        if let Some(info) = server_model {
+            let _ = tx_event.send(Ok(ResponseEvent::ServerModel(info))).await;
         }
         for snapshot in rate_limit_snapshots {
             let _ = tx_event.send(Ok(ResponseEvent::RateLimits(snapshot))).await;
@@ -89,6 +103,7 @@ pub fn spawn_response_stream(
             idle_timeout,
             telemetry,
             safety_buffering_treatment,
+            last_server_model,
         )
         .await;
     });
@@ -513,6 +528,7 @@ pub async fn process_sse(
         idle_timeout,
         telemetry,
         SafetyBufferingTreatment::default(),
+        None,
     )
     .await;
 }
@@ -523,10 +539,10 @@ async fn process_sse_with_treatment(
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn SseTelemetry>>,
     safety_buffering_treatment: SafetyBufferingTreatment,
+    mut last_server_model: Option<String>,
 ) {
     let mut stream = stream.eventsource();
     let mut response_error: Option<ApiError> = None;
-    let mut last_server_model: Option<String> = None;
 
     loop {
         let start = Instant::now();
@@ -579,7 +595,9 @@ async fn process_sse_with_treatment(
             && last_server_model.as_deref() != Some(model.as_str())
         {
             if tx_event
-                .send(Ok(ResponseEvent::ServerModel(model.clone())))
+                .send(Ok(ResponseEvent::ServerModel(ServerModelInfo::new(
+                    model.clone(),
+                ))))
                 .await
                 .is_err()
             {
@@ -1344,7 +1362,7 @@ mod tests {
             .expect("expected ok event");
         match event {
             ResponseEvent::ServerModel(model) => {
-                assert_eq!(model, CYBER_RESTRICTED_MODEL_FOR_TESTS);
+                assert_eq!(model.model, CYBER_RESTRICTED_MODEL_FOR_TESTS);
             }
             other => panic!("expected server model event, got {other:?}"),
         }
@@ -1443,7 +1461,7 @@ mod tests {
         assert_eq!(events.len(), 3);
         assert_matches!(
             &events[0],
-            ResponseEvent::ServerModel(model) if model == CYBER_RESTRICTED_MODEL_FOR_TESTS
+            ResponseEvent::ServerModel(model) if model.model == CYBER_RESTRICTED_MODEL_FOR_TESTS
         );
         assert_matches!(&events[1], ResponseEvent::Created);
         assert_matches!(

@@ -287,6 +287,12 @@ pub(crate) enum AppEvent {
         result: Result<AppServerStartedThread, String>,
     },
 
+    /// The Laya router's configured answer models and servers for this thread.
+    LayaRoutesLoaded {
+        thread_id: ThreadId,
+        lines: Vec<String>,
+    },
+
     /// Clear the terminal UI (screen + scrollback), start a fresh session, and keep the
     /// previous chat resumable.
     ClearUi {

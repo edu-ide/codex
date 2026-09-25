@@ -1666,6 +1666,8 @@ fn model_reroute_surfaces_as_error_item() {
             from_model: "gpt-5".to_string(),
             to_model: "gpt-5-mini".to_string(),
             reason: codex_app_server_protocol::ModelRerouteReason::HighRiskCyberActivity,
+            backend_address: None,
+            routing_reason: None,
         },
     ));
 

@@ -1,6 +1,39 @@
 //! Session configuration and thread-header orchestration for `ChatWidget`.
 
 use super::*;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct LayaRoutesResponse {
+    mode: Option<String>,
+    backends: Vec<LayaRouteBackend>,
+}
+
+#[derive(Deserialize)]
+struct LayaRouteBackend {
+    role: String,
+    model: String,
+    address: String,
+}
+
+fn laya_route_lines(routes: LayaRoutesResponse, router_address: &str) -> Vec<String> {
+    let mut lines = vec![format!("System 1: Laya router @ {router_address}")];
+    lines.push(if routes.mode.as_deref() == Some("advisor") {
+        "  Executor and advisor endpoints (configured)".to_string()
+    } else {
+        "  Answer routes (configured; selection is per request)".to_string()
+    });
+    for route in routes.backends.into_iter().take(8) {
+        lines.push(format!("  {} → {}", route.role, route.model));
+        lines.push(format!("      {}", route.address));
+    }
+    lines.push("  Response model appears after routing.".to_string());
+    lines
+}
+
+#[cfg(test)]
+#[path = "session_flow_tests.rs"]
+mod tests;
 
 impl ChatWidget {
     fn on_session_configured_with_display_and_fork_parent_title(
@@ -131,6 +164,9 @@ impl ChatWidget {
                 show_fast_status,
             );
             self.apply_session_info_cell(session_info_cell);
+            if display == SessionConfiguredDisplay::Normal {
+                self.request_laya_route_map(session.thread_id);
+            }
         } else if self
             .transcript
             .active_cell
@@ -154,6 +190,60 @@ impl ChatWidget {
         if !self.suppress_session_configured_redraw {
             self.request_redraw();
         }
+    }
+
+    fn request_laya_route_map(&self, thread_id: ThreadId) {
+        if !self.current_model().eq_ignore_ascii_case("laya-router")
+            || self.config.model_provider_id != "laya-router"
+        {
+            return;
+        }
+        let Some(base_url) = self.config.model_provider.base_url.as_deref() else {
+            return;
+        };
+        let router_address = url::Url::parse(base_url)
+            .ok()
+            .and_then(|url| {
+                let host = url.host_str()?.to_string();
+                Some(match url.port_or_known_default() {
+                    Some(port) => format!("{host}:{port}"),
+                    None => host,
+                })
+            })
+            .unwrap_or_else(|| "unknown server".to_string());
+        let route_url = format!("{}/routes", base_url.trim_end_matches('/'));
+        let client = self.pet_http_client.clone();
+        let tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            let lines = match client
+                .get(route_url)
+                .timeout(Duration::from_secs(2))
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => {
+                    match response.json::<LayaRoutesResponse>().await {
+                        Ok(routes) if !routes.backends.is_empty() => {
+                            laya_route_lines(routes, &router_address)
+                        }
+                        _ => {
+                            vec!["Laya answer routes: router returned no route details".to_string()]
+                        }
+                    }
+                }
+                _ => vec!["Laya answer routes: router is unavailable".to_string()],
+            };
+            tx.send(AppEvent::LayaRoutesLoaded { thread_id, lines });
+        });
+    }
+
+    pub(crate) fn show_laya_route_map(&mut self, thread_id: ThreadId, lines: Vec<String>) {
+        if self.thread_id != Some(thread_id)
+            || !self.current_model().eq_ignore_ascii_case("laya-router")
+        {
+            return;
+        }
+        self.add_boxed_history(Box::new(history_cell::LayaRoutesHistoryCell::new(lines)));
     }
 
     pub(crate) fn handle_thread_session(&mut self, session: ThreadSessionState) {
