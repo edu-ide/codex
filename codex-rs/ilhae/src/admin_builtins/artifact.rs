@@ -3,6 +3,108 @@ macro_rules! register_admin_artifact_handlers {
     ($builder:expr, $state:expr) => {{
         let s = $state.clone();
         $builder
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let artifact_store = s.infra.brain.artifacts().clone();
+                    async move |req: crate::IlhaeAppTaskVersionSaveRequest,
+                                responder: Responder<crate::IlhaeAppTaskVersionResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        let request = req.into_revision_request();
+                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                            Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
+                            Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                            Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                        }
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let artifact_store = s.infra.brain.artifacts().clone();
+                    async move |req: crate::IlhaeAppTaskVersionListRequest,
+                                responder: Responder<crate::IlhaeAppTaskVersionResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        let request = req.into_revision_request();
+                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                            Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
+                            Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                            Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                        }
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let artifact_store = s.infra.brain.artifacts().clone();
+                    async move |req: crate::IlhaeAppTaskVersionGetRequest,
+                                responder: Responder<crate::IlhaeAppTaskVersionResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        let request = req.into_revision_request();
+                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                            Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
+                            Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                            Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                        }
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let artifact_store = s.infra.brain.artifacts().clone();
+                    async move |req: crate::IlhaeAppTaskVersionCompareRequest,
+                                responder: Responder<crate::IlhaeAppTaskVersionResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        let request = req.into_revision_request();
+                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                            Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
+                            Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                            Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                        }
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let artifact_store = s.infra.brain.artifacts().clone();
+                    async move |req: crate::IlhaeAppTaskVersionRestoreRequest,
+                                responder: Responder<crate::IlhaeAppTaskVersionResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        let request = req.into_revision_request();
+                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                            Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
+                            Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                            Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                        }
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
+            .on_receive_request_from(
+                sacp::Client,
+                {
+                    let artifact_store = s.infra.brain.artifacts().clone();
+                    async move |req: crate::IlhaeAppTaskVersionAssetRequest,
+                                responder: Responder<crate::IlhaeAppTaskVersionResponse>,
+                                _cx: ConnectionTo<Conductor>| {
+                        let request = req.into_revision_request();
+                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                            Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
+                            Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                            Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
+                        }
+                    }
+                },
+                sacp::on_receive_request!(),
+            )
             // ═══ Workflow Artifact List ═══
             .on_receive_request_from(
                 sacp::Client,

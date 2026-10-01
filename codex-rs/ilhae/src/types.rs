@@ -260,6 +260,168 @@ pub struct IlhaeAppArtifactGetResponse {
     pub artifact: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcResponse)]
+pub struct IlhaeAppTaskVersionResponse {
+    #[serde(flatten)]
+    pub result: serde_json::Value,
+}
+
+pub const REQ_APP_TASK_VERSION_SAVE: &str = "ilhae/app/task-version/save";
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task-version/save", response = IlhaeAppTaskVersionResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct IlhaeAppTaskVersionSaveRequest {
+    pub task_id: String,
+    #[serde(default)] pub case_id: Option<String>,
+    #[serde(default)] pub session_id: Option<String>,
+    #[serde(default)] pub version: Option<i64>,
+    #[serde(default)] pub from_version: Option<i64>,
+    #[serde(default)] pub to_version: Option<i64>,
+    #[serde(default)] pub expected_version: Option<i64>,
+    #[serde(default)] pub bundle: Option<serde_json::Value>,
+    #[serde(default)] pub asset_id: Option<String>,
+}
+impl IlhaeAppTaskVersionSaveRequest {
+    pub fn into_revision_request(self) -> brain_artifact_rs::task_revision::RevisionRequest {
+        brain_artifact_rs::task_revision::RevisionRequest {
+            action: "save".into(), task_id: self.task_id, case_id: self.case_id,
+            session_id: self.session_id, version: self.version, from_version: self.from_version,
+            to_version: self.to_version, expected_version: self.expected_version,
+            bundle: self.bundle, asset_id: self.asset_id,
+        }
+    }
+}
+
+pub const REQ_APP_TASK_VERSION_LIST: &str = "ilhae/app/task-version/list";
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task-version/list", response = IlhaeAppTaskVersionResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct IlhaeAppTaskVersionListRequest {
+    pub task_id: String,
+    #[serde(default)] pub case_id: Option<String>,
+    #[serde(default)] pub session_id: Option<String>,
+    #[serde(default)] pub version: Option<i64>,
+    #[serde(default)] pub from_version: Option<i64>,
+    #[serde(default)] pub to_version: Option<i64>,
+    #[serde(default)] pub expected_version: Option<i64>,
+    #[serde(default)] pub bundle: Option<serde_json::Value>,
+    #[serde(default)] pub asset_id: Option<String>,
+}
+impl IlhaeAppTaskVersionListRequest {
+    pub fn into_revision_request(self) -> brain_artifact_rs::task_revision::RevisionRequest {
+        brain_artifact_rs::task_revision::RevisionRequest {
+            action: "list".into(), task_id: self.task_id, case_id: self.case_id,
+            session_id: self.session_id, version: self.version, from_version: self.from_version,
+            to_version: self.to_version, expected_version: self.expected_version,
+            bundle: self.bundle, asset_id: self.asset_id,
+        }
+    }
+}
+
+pub const REQ_APP_TASK_VERSION_GET: &str = "ilhae/app/task-version/get";
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task-version/get", response = IlhaeAppTaskVersionResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct IlhaeAppTaskVersionGetRequest {
+    pub task_id: String,
+    #[serde(default)] pub case_id: Option<String>,
+    #[serde(default)] pub session_id: Option<String>,
+    #[serde(default)] pub version: Option<i64>,
+    #[serde(default)] pub from_version: Option<i64>,
+    #[serde(default)] pub to_version: Option<i64>,
+    #[serde(default)] pub expected_version: Option<i64>,
+    #[serde(default)] pub bundle: Option<serde_json::Value>,
+    #[serde(default)] pub asset_id: Option<String>,
+}
+impl IlhaeAppTaskVersionGetRequest {
+    pub fn into_revision_request(self) -> brain_artifact_rs::task_revision::RevisionRequest {
+        brain_artifact_rs::task_revision::RevisionRequest {
+            action: "get".into(), task_id: self.task_id, case_id: self.case_id,
+            session_id: self.session_id, version: self.version, from_version: self.from_version,
+            to_version: self.to_version, expected_version: self.expected_version,
+            bundle: self.bundle, asset_id: self.asset_id,
+        }
+    }
+}
+
+pub const REQ_APP_TASK_VERSION_COMPARE: &str = "ilhae/app/task-version/compare";
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task-version/compare", response = IlhaeAppTaskVersionResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct IlhaeAppTaskVersionCompareRequest {
+    pub task_id: String,
+    #[serde(default)] pub case_id: Option<String>,
+    #[serde(default)] pub session_id: Option<String>,
+    #[serde(default)] pub version: Option<i64>,
+    #[serde(default)] pub from_version: Option<i64>,
+    #[serde(default)] pub to_version: Option<i64>,
+    #[serde(default)] pub expected_version: Option<i64>,
+    #[serde(default)] pub bundle: Option<serde_json::Value>,
+    #[serde(default)] pub asset_id: Option<String>,
+}
+impl IlhaeAppTaskVersionCompareRequest {
+    pub fn into_revision_request(self) -> brain_artifact_rs::task_revision::RevisionRequest {
+        brain_artifact_rs::task_revision::RevisionRequest {
+            action: "compare".into(), task_id: self.task_id, case_id: self.case_id,
+            session_id: self.session_id, version: self.version, from_version: self.from_version,
+            to_version: self.to_version, expected_version: self.expected_version,
+            bundle: self.bundle, asset_id: self.asset_id,
+        }
+    }
+}
+
+pub const REQ_APP_TASK_VERSION_RESTORE: &str = "ilhae/app/task-version/restore";
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task-version/restore", response = IlhaeAppTaskVersionResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct IlhaeAppTaskVersionRestoreRequest {
+    pub task_id: String,
+    #[serde(default)] pub case_id: Option<String>,
+    #[serde(default)] pub session_id: Option<String>,
+    #[serde(default)] pub version: Option<i64>,
+    #[serde(default)] pub from_version: Option<i64>,
+    #[serde(default)] pub to_version: Option<i64>,
+    #[serde(default)] pub expected_version: Option<i64>,
+    #[serde(default)] pub bundle: Option<serde_json::Value>,
+    #[serde(default)] pub asset_id: Option<String>,
+}
+impl IlhaeAppTaskVersionRestoreRequest {
+    pub fn into_revision_request(self) -> brain_artifact_rs::task_revision::RevisionRequest {
+        brain_artifact_rs::task_revision::RevisionRequest {
+            action: "restore".into(), task_id: self.task_id, case_id: self.case_id,
+            session_id: self.session_id, version: self.version, from_version: self.from_version,
+            to_version: self.to_version, expected_version: self.expected_version,
+            bundle: self.bundle, asset_id: self.asset_id,
+        }
+    }
+}
+
+pub const REQ_APP_TASK_VERSION_ASSET: &str = "ilhae/app/task-version/asset";
+#[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
+#[request(method = "ilhae/app/task-version/asset", response = IlhaeAppTaskVersionResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct IlhaeAppTaskVersionAssetRequest {
+    pub task_id: String,
+    #[serde(default)] pub case_id: Option<String>,
+    #[serde(default)] pub session_id: Option<String>,
+    #[serde(default)] pub version: Option<i64>,
+    #[serde(default)] pub from_version: Option<i64>,
+    #[serde(default)] pub to_version: Option<i64>,
+    #[serde(default)] pub expected_version: Option<i64>,
+    #[serde(default)] pub bundle: Option<serde_json::Value>,
+    #[serde(default)] pub asset_id: Option<String>,
+}
+impl IlhaeAppTaskVersionAssetRequest {
+    pub fn into_revision_request(self) -> brain_artifact_rs::task_revision::RevisionRequest {
+        brain_artifact_rs::task_revision::RevisionRequest {
+            action: "asset".into(), task_id: self.task_id, case_id: self.case_id,
+            session_id: self.session_id, version: self.version, from_version: self.from_version,
+            to_version: self.to_version, expected_version: self.expected_version,
+            bundle: self.bundle, asset_id: self.asset_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sacp::JsonRpcRequest)]
 #[request(method = "ilhae/app/workflow/list", response = IlhaeAppWorkflowListResponse)]
 pub struct IlhaeAppWorkflowListRequest {

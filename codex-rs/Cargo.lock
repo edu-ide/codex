@@ -2071,13 +2071,16 @@ name = "brain-artifact-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "dirs 6.0.0",
+ "ilhae-common",
  "regex",
  "rusqlite",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.10.9",
  "walkdir",
 ]
 
@@ -2100,6 +2103,7 @@ dependencies = [
  "ilhae-common",
  "regex",
  "rusqlite",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2137,6 +2141,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2 0.10.9",
  "tar",
  "thiserror 2.0.18",
@@ -9959,6 +9964,7 @@ dependencies = [
 name = "ilhae-common"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "dirs 6.0.0",
  "keyring",
@@ -19626,11 +19632,13 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cron-parser",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "url",
  "uuid",
 ]
 
