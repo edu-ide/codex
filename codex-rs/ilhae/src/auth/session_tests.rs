@@ -79,6 +79,7 @@ fn shared_session_preserves_issuing_client_and_converts_expiry_to_milliseconds()
             refresh_token: "test-refresh-token".into(),
             client_id: DEFAULT_CLIENT_ID.into(),
             expires_at: auth.expires_at.expect("expiry") * 1000,
+            refresh_attempt: String::new(),
         }
     );
 }
