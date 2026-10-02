@@ -347,6 +347,14 @@ pub fn prepare_ilhae_codex_home() -> Result<PathBuf, String> {
     Ok(codex_home)
 }
 
+pub(crate) fn calendar_browser_mcp_config_path() -> Result<PathBuf, String> {
+    let home = resolve_non_aliasing_ilhae_codex_home_dir()?;
+    if home.join("config.toml").is_file() {
+        return Ok(home.join("config.toml"));
+    }
+    Ok(prepare_ilhae_codex_home()?.join("config.toml"))
+}
+
 #[cfg(test)]
 mod model_tests;
 #[cfg(test)]

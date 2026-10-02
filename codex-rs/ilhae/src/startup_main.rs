@@ -2583,6 +2583,7 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
             loop {
                 interval.tick().await;
 
+                crate::calendar_dispatch::poll(brain_for_kairos.schedules().clone()).await;
                 let settings_snapshot = settings_for_kairos.get();
                 let run_task_kairos = settings_snapshot.agent.kairos_enabled;
                 let run_kb_kairos = crate::config::knowledge_mode_includes_kairos(
@@ -2625,6 +2626,8 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                 if triggered.is_empty() {
                     continue;
                 }
+
+                crate::calendar_dispatch::poll(brain_for_kairos.schedules().clone()).await;
 
                 let preview = triggered
                     .iter()

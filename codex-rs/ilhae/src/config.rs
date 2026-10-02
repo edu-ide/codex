@@ -10,6 +10,7 @@ mod profiles;
 
 pub use codex_runtime::ILHAE_CODEX_RUNTIME_CONFIG_LKG_FILE;
 pub use codex_runtime::ILHAE_CODEX_RUNTIME_CONFIG_LOCK_FILE;
+pub(crate) use codex_runtime::calendar_browser_mcp_config_path;
 pub use codex_runtime::prepare_ilhae_codex_home;
 pub use profiles::IlhaeActiveProfileConfig;
 pub use profiles::IlhaeProfileAgentConfig;
