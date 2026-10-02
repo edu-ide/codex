@@ -1271,9 +1271,19 @@ pub fn find_native_runtime_pids(
         .collect()
 }
 
-fn send_native_runtime_signal(pid: u32, signal: i32) -> anyhow::Result<()> {
+#[derive(Clone, Copy, Debug)]
+enum NativeRuntimeSignal {
+    Terminate,
+    Kill,
+}
+
+fn send_native_runtime_signal(pid: u32, signal: NativeRuntimeSignal) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
+        let signal = match signal {
+            NativeRuntimeSignal::Terminate => libc::SIGTERM,
+            NativeRuntimeSignal::Kill => libc::SIGKILL,
+        };
         // SAFETY: PID and signal are validated scalar values; ownership is
         // attested immediately before this helper is called.
         let result = unsafe { libc::kill(pid as libc::pid_t, signal) };
@@ -1300,7 +1310,7 @@ async fn stop_managed_native_runtime_record_locked(
         pid = record.pid,
         "[NativeRuntime] terminating owned local model server"
     );
-    send_native_runtime_signal(record.pid, libc::SIGTERM)?;
+    send_native_runtime_signal(record.pid, NativeRuntimeSignal::Terminate)?;
 
     let graceful_deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
@@ -1317,7 +1327,7 @@ async fn stop_managed_native_runtime_record_locked(
             }
             Some(_) if tokio::time::Instant::now() >= graceful_deadline => {
                 attest_native_runtime_process(&record)?;
-                send_native_runtime_signal(record.pid, libc::SIGKILL)?;
+                send_native_runtime_signal(record.pid, NativeRuntimeSignal::Kill)?;
                 let kill_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
                 loop {
                     match process_start_ticks(record.pid) {

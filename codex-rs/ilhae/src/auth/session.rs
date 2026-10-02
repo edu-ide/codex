@@ -161,6 +161,8 @@ fn shared_session(auth: &IdentityAuthFile) -> anyhow::Result<UgotSession> {
         refresh_token: auth.refresh_token.clone().unwrap_or_default(),
         client_id: auth.client_id.clone(),
         expires_at,
+        // A fresh sign-in has no refresh in flight.
+        refresh_attempt: String::new(),
     })
 }
 

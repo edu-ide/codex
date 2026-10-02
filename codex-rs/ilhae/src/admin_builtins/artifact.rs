@@ -11,7 +11,8 @@ macro_rules! register_admin_artifact_handlers {
                                 responder: Responder<crate::IlhaeAppTaskVersionResponse>,
                                 _cx: ConnectionTo<Conductor>| {
                         let request = req.into_revision_request();
-                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                        let store = artifact_store.clone();
+                        match tokio::task::spawn_blocking(move || store.task_revision_ops(request)).await {
                             Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
                             Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
                             Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
@@ -28,7 +29,8 @@ macro_rules! register_admin_artifact_handlers {
                                 responder: Responder<crate::IlhaeAppTaskVersionResponse>,
                                 _cx: ConnectionTo<Conductor>| {
                         let request = req.into_revision_request();
-                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                        let store = artifact_store.clone();
+                        match tokio::task::spawn_blocking(move || store.task_revision_ops(request)).await {
                             Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
                             Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
                             Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
@@ -45,7 +47,8 @@ macro_rules! register_admin_artifact_handlers {
                                 responder: Responder<crate::IlhaeAppTaskVersionResponse>,
                                 _cx: ConnectionTo<Conductor>| {
                         let request = req.into_revision_request();
-                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                        let store = artifact_store.clone();
+                        match tokio::task::spawn_blocking(move || store.task_revision_ops(request)).await {
                             Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
                             Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
                             Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
@@ -62,7 +65,8 @@ macro_rules! register_admin_artifact_handlers {
                                 responder: Responder<crate::IlhaeAppTaskVersionResponse>,
                                 _cx: ConnectionTo<Conductor>| {
                         let request = req.into_revision_request();
-                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                        let store = artifact_store.clone();
+                        match tokio::task::spawn_blocking(move || store.task_revision_ops(request)).await {
                             Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
                             Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
                             Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
@@ -79,7 +83,8 @@ macro_rules! register_admin_artifact_handlers {
                                 responder: Responder<crate::IlhaeAppTaskVersionResponse>,
                                 _cx: ConnectionTo<Conductor>| {
                         let request = req.into_revision_request();
-                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                        let store = artifact_store.clone();
+                        match tokio::task::spawn_blocking(move || store.task_revision_ops(request)).await {
                             Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
                             Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
                             Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
@@ -96,7 +101,8 @@ macro_rules! register_admin_artifact_handlers {
                                 responder: Responder<crate::IlhaeAppTaskVersionResponse>,
                                 _cx: ConnectionTo<Conductor>| {
                         let request = req.into_revision_request();
-                        match tokio::task::spawn_blocking(move || artifact_store.task_revision_ops(request)).await {
+                        let store = artifact_store.clone();
+                        match tokio::task::spawn_blocking(move || store.task_revision_ops(request)).await {
                             Ok(Ok(result)) => responder.respond(crate::IlhaeAppTaskVersionResponse { result }),
                             Ok(Err(error)) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
                             Err(error) => responder.respond_with_error(sacp::util::internal_error(error.to_string())),
