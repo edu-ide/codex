@@ -586,14 +586,13 @@ opt-level = 0
 # direct and transitive path dependencies from Cargo metadata.
 a2a-acp-adapter = { path = "../../a2a-acp-adapter" }
 a2a-rs = { path = "../../a2a-rs" }
-action-browser-rs = { path = "../../action-browser-rs" }
 brain-artifact-rs = { path = "../../brain-artifact-rs" }
 brain-identity-rs = { path = "../../brain-identity-rs" }
 brain-knowledge-rs = { path = "../../brain-knowledge-rs" }
 brain-rs = { path = "../../brain-rs" }
 brain-session-rs = { path = "../../brain-session-rs" }
 ilhae-common = { path = "../../ilhae-common" }
-playwright-rs = { path = "../../playwright-rs/crates/playwright" }
+ugot-browser-service = { path = "../../../browser-bridge-mcp/native" }
 sacp = { path = "../../symposium-acp/src/sacp" }
 sacp-conductor = { path = "../../symposium-acp/src/sacp-conductor" }
 sacp-derive = { path = "../../symposium-acp/src/sacp-derive" }

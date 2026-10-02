@@ -383,11 +383,6 @@ crate.annotation(
 )
 
 crate.annotation(
-    crate = "playwright-rs",
-    workspace_cargo_toml = "../../Cargo.toml",
-)
-
-crate.annotation(
     crate = "sacp",
     workspace_cargo_toml = "../../Cargo.toml",
 )

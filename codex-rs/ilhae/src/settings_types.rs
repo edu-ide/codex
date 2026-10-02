@@ -65,9 +65,7 @@ pub struct BrowserSettings {
     pub headless: bool,
     pub persistent: bool,
     pub server_url: String,
-    /// Browser engine to use: "auto" (prefer BotBrowser → system Chrome),
-    /// "botbrowser" (force BotBrowser, lazy-download if absent),
-    /// "chrome" (system Chrome only).
+    /// Shared provider: auto, cef, chrome, firefox, camoufox or webkit.
     pub browser_type: String,
     pub cdp_port: u16,
 }

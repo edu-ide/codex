@@ -265,13 +265,12 @@ macro_rules! register_admin_settings_handlers {
                                     let _ = settings.set_value("browser.enabled", req.value.clone());
                                 }
 
-                                if req.key.starts_with("browser.") {
+                                if req.key.starts_with("browser.") || req.key == "plugins.browser" {
                                     let cfg = settings.get();
                                     let browser_cfg = cfg.browser.clone();
-                                    let browser_mgr_bg = browser_mgr_ws.clone();
-                                    let _ = tokio::task::spawn_blocking(move || {
-                                        browser_mgr_bg.react_to_settings(&browser_cfg);
-                                    });
+                                    if let Err(error) = browser_mgr_ws.react_to_settings(&browser_cfg).await {
+                                        return responder.respond_with_error(sacp::util::internal_error(error));
+                                    }
                                     instr_version.fetch_add(1, Ordering::Relaxed);
                                 }
                                 if req.key.starts_with("plugins.") {

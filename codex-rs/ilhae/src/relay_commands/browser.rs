@@ -1,27 +1,34 @@
-// commands
-
 use crate::SharedState;
+
 pub async fn handle_browser_launch(
     ctx: &SharedState,
-    _cmd: &crate::relay_server::RelayCommand,
+    cmd: &crate::relay_server::RelayCommand,
     _client_id: u32,
-    _maybe_respond: impl Fn(Option<&str>, serde_json::Value, Option<String>),
+    maybe_respond: impl Fn(Option<&str>, serde_json::Value, Option<String>),
 ) {
-    let s = ctx.infra.settings_store.get();
-    let _ = ctx.infra.browser_mgr.launch(
-        &s.browser.browser_type,
-        s.browser.cdp_port,
-        s.browser.headless,
-        s.browser.persistent,
-        &s.browser.server_url,
-    );
+    let settings = ctx.infra.settings_store.get();
+    match ctx.infra.browser_mgr.launch(&settings.browser).await {
+        Ok(status) => maybe_respond(cmd.request_id.as_deref(), serde_json::json!(status), None),
+        Err(error) => maybe_respond(
+            cmd.request_id.as_deref(),
+            serde_json::Value::Null,
+            Some(error),
+        ),
+    }
 }
 
 pub async fn handle_browser_stop(
     ctx: &SharedState,
-    _cmd: &crate::relay_server::RelayCommand,
+    cmd: &crate::relay_server::RelayCommand,
     _client_id: u32,
-    _maybe_respond: impl Fn(Option<&str>, serde_json::Value, Option<String>),
+    maybe_respond: impl Fn(Option<&str>, serde_json::Value, Option<String>),
 ) {
-    let _ = ctx.infra.browser_mgr.stop();
+    match ctx.infra.browser_mgr.stop().await {
+        Ok(status) => maybe_respond(cmd.request_id.as_deref(), serde_json::json!(status), None),
+        Err(error) => maybe_respond(
+            cmd.request_id.as_deref(),
+            serde_json::Value::Null,
+            Some(error),
+        ),
+    }
 }

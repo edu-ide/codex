@@ -1,7 +1,7 @@
 //! ToolsProxy — MCP Tool Registration (Built-in + Browser tools).
 //!
 //! Contains `with_mcp_server` registrations for ilhae-tools (20 tools)
-//! and browser-tools (19 tools via browser-use-rs), and team-tools (3 tools).
+//! and the common browser service's runtime catalog, and team-tools (3 tools).
 
 use sacp::Agent;
 use sacp::Conductor;
@@ -68,7 +68,6 @@ use crate::TeamDelegateInput;
 use crate::TeamProposeInput;
 #[allow(unused_imports)]
 use crate::UiNotifyInput;
-use crate::register_browser_tools;
 #[allow(unused_imports)]
 use crate::tool_to_plugin_id;
 
@@ -185,15 +184,13 @@ impl ConnectTo<Conductor> for ToolsProxy {
             final_builder.connect_with(conductor, connect_handler).await
         } else {
             // Normal mode: browser tools + team servers
-            let b_builder = base_builder.with_mcp_server({
-                let session_handle = s.infra.browser_mgr.get_session();
-                let bmgr = s.infra.browser_mgr.clone();
-                let bsettings = s.infra.settings_store.clone();
-                let b = sacp::mcp_server::McpServer::<Conductor, _>::builder("browser-tools".to_string())
-                    .instructions("Browser automation tools for web navigation, interaction, and content extraction via CDP.");
-                let b = register_browser_tools!(b, session_handle, bmgr, bsettings);
-                b.build()
-            });
+            let b_builder = base_builder.with_mcp_server(sacp::mcp_server::McpServer::new(
+                crate::browser_tools::BrowserTools {
+                    manager: s.infra.browser_mgr.clone(),
+                    settings: s.infra.settings_store.clone(),
+                },
+                sacp::NullRun,
+            ));
 
             let final_builder = crate::with_team_server!(b_builder, s);
             final_builder.connect_with(conductor, connect_handler).await

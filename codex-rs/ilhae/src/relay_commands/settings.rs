@@ -77,9 +77,16 @@ pub async fn handle_settings_set(
         }
 
         // Dynamic browser launch/stop when browser.* settings change via relay
-        if key.starts_with("browser.") {
+        if key.starts_with("browser.") || key == "plugins.browser" {
             let cfg = ctx.infra.settings_store.get();
-            ctx.infra.browser_mgr.react_to_settings(&cfg.browser);
+            if let Err(error) = ctx.infra.browser_mgr.react_to_settings(&cfg.browser).await {
+                maybe_respond(
+                    cmd.request_id.as_deref(),
+                    serde_json::Value::Null,
+                    Some(error),
+                );
+                return;
+            }
             ctx.sessions
                 .instructions_version
                 .fetch_add(1, Ordering::Relaxed);
