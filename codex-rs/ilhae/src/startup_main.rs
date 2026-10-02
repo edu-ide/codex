@@ -3600,6 +3600,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn native_runtime_fingerprint_tracks_execution_spec_but_not_proxy_request_options() {
+        let _dirs = crate::config::test_env::empty_ilhae_dirs();
         let _thinking_mode = EnvVarGuard::set(ILHAE_NATIVE_THINKING_MODE_ENV, "on");
         let mut config = crate::config::IlhaeProfileNativeRuntimeConfig {
             provider: Some("llama-server".to_string()),

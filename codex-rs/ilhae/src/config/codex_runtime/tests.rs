@@ -1,4 +1,5 @@
 use super::super::*;
+use super::super::test_env::empty_home;
 use super::mcp::native_mcp_defaults;
 use super::mcp::native_mcp_launchers;
 use super::mcp::user_mcp_servers_for_managed_config;
@@ -102,6 +103,7 @@ fn preserve_runtime_environment() -> Vec<EnvVarGuard> {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_uses_explicit_runtime_home() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let config_dir = tmp.path().join("human");
     let data_dir = tmp.path().join("data");
@@ -129,6 +131,7 @@ fn prepare_ilhae_codex_home_uses_explicit_runtime_home() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_separates_an_aliased_human_config_directory() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let config_dir = tmp.path().join("shared");
     let data_dir = tmp.path().join("data");
@@ -158,6 +161,7 @@ fn prepare_ilhae_codex_home_separates_an_aliased_human_config_directory() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_separates_an_empty_aliased_human_config_directory() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let config_dir = tmp.path().join("shared");
     let data_dir = tmp.path().join("data");
@@ -190,6 +194,7 @@ fn prepare_ilhae_codex_home_separates_an_empty_aliased_human_config_directory() 
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_separates_symlink_and_hardlink_aliases() {
+    let _home = empty_home();
     use std::os::unix::fs::symlink;
 
     let tmp = tempdir().expect("tempdir");
@@ -233,6 +238,7 @@ fn prepare_ilhae_codex_home_separates_symlink_and_hardlink_aliases() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_filters_reserved_and_poisoned_mcp_entries() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let config_dir = tmp.path().join("human");
     let data_dir = tmp.path().join("data");
@@ -346,8 +352,6 @@ fn native_mcp_defaults_preserve_explicit_transports_and_profile_environments() {
 [mcp_servers.browser]
 url = "http://127.0.0.1:18709/mcp"
 enabled = false
-[mcp_servers.browser.env]
-AGENT_BROWSER_PROFILE = "work"
 [mcp_servers.email]
 command = "/opt/mail/custom-email"
 args = ["mcp", "--account", "work"]
@@ -358,7 +362,7 @@ command = "/opt/brain"
 args = ["mcp"]
 [mcp_servers.office]
 command = "node"
-args = ["/opt/ugot-office/launcher.mjs", "mcp"]
+args = ["/opt/office-mcp/launcher.mjs", "mcp"]
 [mcp_servers.office.env]
 UGOT_OFFICE_DATA_DIR = "/profiles/work/uk.ugot.office"
 UGOT_SESSION_PATH = "/profiles/work/ugot-session.json"
@@ -391,7 +395,9 @@ UGOT_SESSION_PATH = "/profiles/work/ugot-session.json"
 }
 
 #[test]
+#[serial_test::serial]
 fn native_mcp_explicit_product_inherits_gui_without_losing_custom_vars() {
+    let _home = empty_home();
     let user: toml::Value = r#"
 [mcp_servers.email]
 command = "/home/user/.cargo/bin/email"
@@ -431,7 +437,9 @@ args = ["mcp"]
 }
 
 #[test]
+#[serial_test::serial]
 fn native_mcp_script_launchers_inherit_gui_session() {
+    let _home = empty_home();
     let user: toml::Value = r#"
 [mcp_servers.browser]
 command = "/usr/local/bin/browser"
@@ -459,7 +467,9 @@ args = ["/opt/videoeditor-mcp/launcher.mjs"]
 }
 
 #[test]
+#[serial_test::serial]
 fn native_mcp_alias_projection_preserves_profile_without_duplicate_defaults() {
+    let _home = empty_home();
     let user: toml::Value = r#"
 [mcp_servers.agent-browser]
 command = "/opt/ugot-browser"
@@ -487,7 +497,9 @@ UGOT_BROWSER_STATE_DIR = "/profiles/work/service"
 }
 
 #[test]
+#[serial_test::serial]
 fn native_mcp_defaults_do_not_pick_between_multiple_profiles() {
+    let _home = empty_home();
     let user: toml::Value = r#"
 [mcp_servers.agent-browser]
 url = "http://127.0.0.1:18701/mcp"
@@ -507,7 +519,9 @@ url = "http://127.0.0.1:18703/mcp"
 }
 
 #[test]
+#[serial_test::serial]
 fn native_mcp_invalid_explicit_browser_never_launches_a_default_profile() {
+    let _home = empty_home();
     for name in ["browser", "agent-browser"] {
         let mut browser = toml::value::Table::new();
         browser.insert("url".into(), "file:///not-an-mcp-endpoint".into());
@@ -524,7 +538,9 @@ fn native_mcp_invalid_explicit_browser_never_launches_a_default_profile() {
 }
 
 #[test]
+#[serial_test::serial]
 fn native_mcp_office_default_uses_desktop_launcher_and_workspace_environment() {
+    let _home = empty_home();
     let user = toml::Value::Table(toml::value::Table::new());
     let mut servers = toml::value::Table::new();
     native_mcp_defaults(&mut servers, &user);
@@ -548,6 +564,7 @@ fn native_mcp_office_default_uses_desktop_launcher_and_workspace_environment() {
 #[test]
 #[serial_test::serial]
 fn invalid_human_config_preserves_active_and_lkg_without_diagnostic_leaks() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let config_dir = tmp.path().join("human");
     let data_dir = tmp.path().join("data");
@@ -626,6 +643,7 @@ fn invalid_human_config_preserves_active_and_lkg_without_diagnostic_leaks() {
 #[test]
 #[serial_test::serial]
 fn invalid_first_start_override_bootstraps_valid_runtime_snapshot() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let config_dir = tmp.path().join("human");
     let data_dir = tmp.path().join("data");
@@ -670,7 +688,9 @@ fn invalid_first_start_override_bootstraps_valid_runtime_snapshot() {
 }
 
 #[test]
+#[serial_test::serial]
 fn rejected_candidate_cannot_replace_valid_active_or_lkg_snapshot() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let runtime_home = tmp.path().join("runtime");
     let valid = render_ilhae_codex_runtime_candidate(
@@ -715,7 +735,9 @@ fn atomic_runtime_file_writer_replaces_existing_contents() {
 }
 
 #[test]
+#[serial_test::serial]
 fn valid_dynamic_active_does_not_replace_base_lkg_and_invalid_active_restores_base() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let runtime_home = tmp.path().join("runtime");
     let candidate_a = render_ilhae_codex_runtime_candidate(
@@ -777,7 +799,9 @@ fn valid_dynamic_active_does_not_replace_base_lkg_and_invalid_active_restores_ba
 }
 
 #[test]
+#[serial_test::serial]
 fn concurrent_runtime_snapshot_writers_do_not_tear_active_or_lkg() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let runtime_home = tmp.path().join("runtime");
     std::fs::create_dir_all(&runtime_home).expect("create runtime home");
@@ -843,6 +867,7 @@ fn concurrent_runtime_snapshot_writers_do_not_tear_active_or_lkg() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_projects_named_profiles_into_managed_config() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1031,6 +1056,7 @@ requires_openai_auth = false
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_projects_foreground_loop_instructions_into_managed_config() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1072,6 +1098,7 @@ fn prepare_ilhae_codex_home_projects_foreground_loop_instructions_into_managed_c
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_defaults_self_improvement_foreground_loop() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1150,6 +1177,7 @@ fn get_native_runtime_config_accepts_non_ilhae_engine_profiles() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_scopes_static_catalog_to_native_profiles() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1263,6 +1291,7 @@ fn native_runtime_effective_urls_fall_back_to_url_alias() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_projects_non_ilhae_native_profiles_into_managed_config() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1327,6 +1356,7 @@ fn prepare_ilhae_codex_home_projects_non_ilhae_native_profiles_into_managed_conf
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_projects_external_runtime_into_root_model_config() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1413,7 +1443,9 @@ fn prepare_ilhae_codex_home_projects_external_runtime_into_root_model_config() {
 }
 
 #[test]
+#[serial_test::serial]
 fn prepare_ilhae_codex_home_keeps_runtime_args_out_of_request_query_params() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1455,7 +1487,9 @@ fn prepare_ilhae_codex_home_keeps_runtime_args_out_of_request_query_params() {
 }
 
 #[test]
+#[serial_test::serial]
 fn prepare_ilhae_codex_home_remote_runtime_context_size_from_query_params() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1515,7 +1549,9 @@ fn prepare_ilhae_codex_home_remote_runtime_context_size_from_query_params() {
 }
 
 #[test]
+#[serial_test::serial]
 fn prepare_ilhae_codex_home_keeps_context_window_out_of_request_query_params() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1563,7 +1599,9 @@ fn prepare_ilhae_codex_home_keeps_context_window_out_of_request_query_params() {
 }
 
 #[test]
+#[serial_test::serial]
 fn prepare_ilhae_codex_home_remote_turboquant_query_params() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1649,7 +1687,9 @@ fn prepare_ilhae_codex_home_remote_turboquant_query_params() {
 }
 
 #[test]
+#[serial_test::serial]
 fn prepare_ilhae_codex_home_derives_remote_runtime_urls_from_proxy_origin() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1723,6 +1763,7 @@ fn prepare_ilhae_codex_home_derives_remote_runtime_urls_from_proxy_origin() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_preserves_sglang_directory_model_names() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1836,6 +1877,7 @@ fn current_thinking_mode_reads_persisted_setting() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_preserves_oauth_credentials() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1870,6 +1912,7 @@ fn prepare_ilhae_codex_home_preserves_oauth_credentials() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_disables_duplicate_legacy_fortune_server() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1951,6 +1994,7 @@ fn prepare_ilhae_codex_home_seeds_auth_from_codex_home_fallback() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_preserves_existing_codex_home_oauth_credentials() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -1976,6 +2020,7 @@ fn prepare_ilhae_codex_home_preserves_existing_codex_home_oauth_credentials() {
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_removes_stale_runtime_overrides() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -2027,6 +2072,7 @@ trust_level = "trusted"
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_carries_project_trust_into_managed_config() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -2080,6 +2126,7 @@ trust_level = "untrusted"
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_carries_web_search_into_managed_config() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -2132,6 +2179,7 @@ command = "ilhae"
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_carries_features_into_managed_config() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());
@@ -2180,6 +2228,7 @@ command = "ilhae"
 #[test]
 #[serial_test::serial]
 fn prepare_ilhae_codex_home_persists_and_recovers_system2_projection() {
+    let _home = empty_home();
     let tmp = tempdir().expect("tempdir");
     let _config_dir_guard = EnvVarGuard::set("ILHAE_CONFIG_DIR", tmp.path());
     let _data_dir_guard = EnvVarGuard::set("ILHAE_DATA_DIR", tmp.path().join("data").as_path());

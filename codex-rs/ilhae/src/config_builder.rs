@@ -158,7 +158,9 @@ mod tests {
     use super::build_dynamic_instructions;
 
     #[test]
+    #[serial_test::serial]
     fn build_dynamic_instructions_includes_kb_routing_guardrails() {
+        let _dirs = crate::config::test_env::empty_ilhae_dirs();
         let settings = crate::settings_store::Settings::default();
         let instructions = build_dynamic_instructions(&settings);
 
@@ -171,7 +173,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn build_dynamic_instructions_includes_browser_mcp_routing_guardrails() {
+        let _dirs = crate::config::test_env::empty_ilhae_dirs();
         let settings = crate::settings_store::Settings::default();
         let instructions = build_dynamic_instructions(&settings);
 
@@ -184,7 +188,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn build_dynamic_instructions_includes_mcp_tool_discovery_guardrails() {
+        let _dirs = crate::config::test_env::empty_ilhae_dirs();
         let settings = crate::settings_store::Settings::default();
         let instructions = build_dynamic_instructions(&settings);
 

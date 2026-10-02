@@ -93,6 +93,78 @@ pub fn resolve_ilhae_codex_home_dir() -> PathBuf {
     resolve_ilhae_config_dir().join("codex-home")
 }
 
+/// Test-only guards that keep tests off the developer's real directories. The
+/// environment is process-wide, so tests holding a guard must be
+/// `#[serial_test::serial]`.
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    /// Restores the variables it changed when dropped.
+    struct SavedEnv(Vec<(&'static str, Option<OsString>)>);
+
+    impl SavedEnv {
+        fn set(variables: &[(&'static str, &Path)]) -> Self {
+            let mut saved = Vec::new();
+            for (key, value) in variables {
+                saved.push((*key, std::env::var_os(key)));
+                // SAFETY: serial tests own the process environment while they run.
+                unsafe { std::env::set_var(key, value) };
+            }
+            Self(saved)
+        }
+    }
+
+    impl Drop for SavedEnv {
+        fn drop(&mut self) {
+            for (key, value) in &self.0 {
+                // SAFETY: as in `set`; the guard is dropped before its test ends.
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fields drop in order, so the environment is restored before the
+    /// directory is removed.
+    pub(crate) struct TempEnv {
+        _saved: SavedEnv,
+        _directory: tempfile::TempDir,
+    }
+
+    /// HOME on an empty directory: `~/.codex` auth and config and the native MCP
+    /// launcher search in `~/.cargo/bin` and `~/.local/bin` never see the
+    /// developer's home.
+    pub(crate) fn empty_home() -> TempEnv {
+        let directory = tempfile::tempdir().expect("temporary home");
+        TempEnv {
+            _saved: SavedEnv::set(&[("HOME", directory.path())]),
+            _directory: directory,
+        }
+    }
+
+    /// ILHAE_DATA_DIR and ILHAE_CONFIG_DIR on an empty directory: resolving the
+    /// data directory never runs the legacy `~/ilhae` migration and never reads
+    /// the developer's Brain memory notes.
+    pub(crate) fn empty_ilhae_dirs() -> TempEnv {
+        let directory = tempfile::tempdir().expect("temporary ilhae directories");
+        let data = directory.path().join("data");
+        let config = directory.path().join("config");
+        TempEnv {
+            _saved: SavedEnv::set(&[
+                ("ILHAE_DATA_DIR", data.as_path()),
+                ("ILHAE_CONFIG_DIR", config.as_path()),
+            ]),
+            _directory: directory,
+        }
+    }
+}
+
 pub fn normalize_knowledge_mode(mode: &str) -> String {
     match mode.trim().to_ascii_lowercase().as_str() {
         "worker" => "worker".to_string(),

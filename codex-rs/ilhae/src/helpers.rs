@@ -937,7 +937,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn browser_plugin_does_not_inject_browser_priority_prompt() {
+        let _dirs = crate::config::test_env::empty_ilhae_dirs();
         let mut settings = settings_store::Settings::default();
         settings.plugins.insert("browser".to_string(), true);
 

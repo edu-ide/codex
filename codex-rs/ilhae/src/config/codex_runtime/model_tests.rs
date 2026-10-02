@@ -1,4 +1,5 @@
 use super::super::*;
+use super::super::test_env::empty_home;
 use super::catalog::native_model_catalog;
 use super::projection::default_ilhae_codex_home_table;
 use super::providers::codex_profile_table_for_ilhae_profile;
@@ -24,7 +25,9 @@ fn custom_router_model_does_not_inherit_codex_cloud_model() {
 }
 
 #[test]
+#[serial_test::serial]
 fn router_projection_lists_local_models_without_openai_catalog() {
+    let _home = empty_home();
     let mut config = IlhaeTomlConfig::default();
     config.profile.active = Some("laya-router".to_string());
     let mut router = IlhaeProfileConfig::default();
