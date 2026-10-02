@@ -27,7 +27,6 @@ pub use profiles::ResolvedSystem2TargetConfig;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
-use tracing::info;
 use tracing::warn;
 
 use crate::settings_store::SettingsStore;
@@ -58,9 +57,9 @@ pub fn resolve_ilhae_data_dir() -> PathBuf {
     let data_dir = resolve_ilhae_config_dir();
     let legacy_dir = home.join("ilhae");
 
-    if legacy_dir.exists() {
-        migrate_legacy_data_dir(&legacy_dir, &data_dir);
-    }
+    // 옛 `~/ilhae` 1회 이전은 ilhae-common 한 곳에만 둔다. 여기 있던 사본이 SQLite
+    // 사이드카(`memory.db-wal`)를 파일 단위로 다시 복사해 memory.db 를 깨뜨렸다.
+    ilhae_common::env::migrate_legacy_data_dir(&legacy_dir, &data_dir);
 
     data_dir
 }
@@ -92,76 +91,6 @@ pub fn resolve_ilhae_codex_home_dir() -> PathBuf {
     }
 
     resolve_ilhae_config_dir().join("codex-home")
-}
-
-fn migrate_legacy_data_dir(legacy_dir: &Path, data_dir: &Path) {
-    let _ = std::fs::create_dir_all(data_dir);
-    for name in LEGACY_MIGRATION_ENTRIES {
-        let source = legacy_dir.join(name);
-        let dest = data_dir.join(name);
-        if !source.exists() || dest.exists() {
-            continue;
-        }
-        if source.is_dir() {
-            if copy_dir_missing(&source, &dest).is_ok() {
-                info!("Migrated legacy Ilhae directory {:?} -> {:?}", source, dest);
-            }
-        } else if source.is_file() {
-            if let Some(parent) = dest.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if std::fs::copy(&source, &dest).is_ok() {
-                info!("Migrated legacy Ilhae file {:?} -> {:?}", source, dest);
-            }
-        }
-    }
-}
-
-const LEGACY_MIGRATION_ENTRIES: &[&str] = &[
-    "brain",
-    "vault",
-    "workspace",
-    "ws",
-    "autonomy-state",
-    "settings.json",
-    "team.json",
-    "tasks.json",
-    "schedules.json",
-    "kb_workspaces.json",
-    "sessions.db",
-    "sessions.db-shm",
-    "sessions.db-wal",
-    "memory.db",
-    "memory.db-shm",
-    "memory.db-wal",
-    "artifacts.db",
-    "artifacts.db-shm",
-    "artifacts.db-wal",
-    "notifications.db",
-    "notifications.db-shm",
-    "notifications.db-wal",
-];
-
-fn copy_dir_missing(source: &Path, dest: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dest)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let source_path = entry.path();
-        let dest_path = dest.join(entry.file_name());
-        if dest_path.exists() {
-            continue;
-        }
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            copy_dir_missing(&source_path, &dest_path)?;
-        } else if file_type.is_file() {
-            if let Some(parent) = dest_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let _ = std::fs::copy(&source_path, &dest_path)?;
-        }
-    }
-    Ok(())
 }
 
 pub fn normalize_knowledge_mode(mode: &str) -> String {
