@@ -576,7 +576,7 @@ pub use crate::config_builder::write_codex_runtime_option;
 
 /// Patterns that uniquely identify browser automation tools.
 /// Uses prefix match for "browser_" and contains for patterns unlikely to appear in non-browser tools.
-const BROWSER_TOOL_PREFIXES: &[&str] = &["browser_"];
+const BROWSER_TOOL_PREFIXES: &[&str] = &["browser_", "mcp__browser__"];
 const BROWSER_TOOL_EXACT_PATTERNS: &[&str] = &[
     "screenshot",
     "select_option",

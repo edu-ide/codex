@@ -137,9 +137,19 @@ pub async fn handle_plugin_toggle(
                 .infra
                 .settings_store
                 .set_value("browser.enabled", serde_json::Value::Bool(enabled));
-            ctx.infra
+            if let Err(error) = ctx
+                .infra
                 .browser_mgr
-                .react_to_settings(&ctx.infra.settings_store.get().browser);
+                .react_to_settings(&ctx.infra.settings_store.get().browser)
+                .await
+            {
+                maybe_respond(
+                    cmd.request_id.as_deref(),
+                    serde_json::Value::Null,
+                    Some(error),
+                );
+                return;
+            }
         }
     } else {
         let _ = ctx.infra.brain.preset_toggle(plugin_id, enabled);

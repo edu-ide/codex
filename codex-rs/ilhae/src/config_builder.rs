@@ -80,8 +80,8 @@ pub fn build_dynamic_instructions(settings: &settings_store::Settings) -> String
         "<dynamic_instructions>\n",
         "## Browser MCP 라우팅 규칙\n",
         "사용자가 웹 페이지 열기, 이동, 탐색, 검사, 스크린샷, 클릭, 입력, 스크롤, 페이지 내용 추출을 요청하면 shell 명령보다 Browser MCP 도구를 우선하세요.\n",
-        "Browser MCP 서버는 `mcp__browser__` namespace로 노출됩니다. 우선 사용할 도구 예: `mcp__browser__.browser_navigate`, `mcp__browser__.browser_snapshot`, `mcp__browser__.browser_get_text`, `mcp__browser__.browser_click`, `mcp__browser__.browser_input_fill`, `mcp__browser__.browser_screenshot`, `mcp__browser__.browser_tab_ops`, `mcp__browser__.browser_session_ops`.\n",
-        "클라이언트가 flat tool name으로 표시하는 경우 같은 도구는 `mcp__browser__browser_navigate`, `mcp__browser__browser_snapshot`, `mcp__browser__browser_screenshot`처럼 보입니다.\n",
+        "Browser MCP 서버는 `mcp__browser__` namespace로 노출됩니다. 공통 서비스의 `tools/list`에 나온 현재 도구 이름과 `inputSchema`를 그대로 사용하세요. 이름을 추측하거나 과거 도구 목록을 사용하지 마세요.\n",
+        "사용자 Stop과 승인 거부를 존중하세요. 도구 실패나 실행 결과가 불확실한 경우 동작을 자동 재실행하거나 브라우저를 바꾸지 말고 먼저 페이지 상태를 확인하세요.\n",
         "일반적인 데스크탑 브라우저 패널 작업에서는 `xdg-open`, `open`, `firefox`, `chromium`, `google-chrome`, `browser` CLI 같은 shell 명령으로 fallback하지 마세요.\n",
         "Browser MCP가 없거나 실패하면 browser CLI를 실행하지 말고 MCP 연결 문제를 보고하거나 MCP discovery를 재시도하세요. 사용자가 명시적으로 CLI fallback을 요청한 경우에만 browser CLI를 사용하세요.\n",
         "</dynamic_instructions>",
@@ -180,10 +180,10 @@ mod tests {
         let instructions = build_dynamic_instructions(&settings);
 
         assert!(instructions.contains("Browser MCP 라우팅 규칙"));
-        assert!(instructions.contains("`mcp__browser__.browser_navigate`"));
-        assert!(instructions.contains("`mcp__browser__.browser_snapshot`"));
-        assert!(instructions.contains("`mcp__browser__.browser_screenshot`"));
-        assert!(instructions.contains("`mcp__browser__browser_navigate`"));
+        assert!(instructions.contains("`mcp__browser__`"));
+        assert!(instructions.contains("`tools/list`"));
+        assert!(instructions.contains("`inputSchema`"));
+        assert!(instructions.contains("사용자 Stop과 승인 거부를 존중하세요"));
         assert!(instructions.contains("`xdg-open`"));
     }
 

@@ -79,10 +79,9 @@ macro_rules! register_admin_plugin_handlers {
                             if req.plugin_id == "browser" {
                                 let _ = settings.set_value("browser.enabled", serde_json::Value::Bool(req.enabled));
                                 let browser_cfg = settings.get().browser;
-                                let browser_bg = browser.clone();
-                                let _ = tokio::task::spawn_blocking(move || {
-                                    browser_bg.react_to_settings(&browser_cfg);
-                                });
+                                if let Err(error) = browser.react_to_settings(&browser_cfg).await {
+                                    return responder.respond_with_error(sacp::util::internal_error(error));
+                                }
                             }
                         } else {
                             let _ = brain.preset_toggle(&req.plugin_id, req.enabled);
