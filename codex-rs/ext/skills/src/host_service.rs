@@ -350,10 +350,21 @@ impl HostSkillsService {
     }
 
     fn extra_roots(&self) -> Vec<AbsolutePathBuf> {
-        match self.extra_roots.read() {
+        let mut roots = match self.extra_roots.read() {
             Ok(roots) => roots.clone(),
             Err(err) => err.into_inner().clone(),
+        };
+        if let Some(path) = std::env::var_os("ILHAE_AGENT_SKILLS_DIR") {
+            match AbsolutePathBuf::try_from(std::path::PathBuf::from(path)) {
+                Ok(path) => {
+                    if !roots.contains(&path) {
+                        roots.push(path);
+                    }
+                }
+                Err(_) => tracing::error!("ILHAE_AGENT_SKILLS_DIR must be an absolute path"),
+            }
         }
+        roots
     }
 
     fn ensure_system_skills_installed(&self) {

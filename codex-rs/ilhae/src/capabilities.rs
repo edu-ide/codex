@@ -135,6 +135,13 @@ pub fn toggle_skill(name: &str, disabled: bool, agent_id: Option<&str>) -> Resul
     }
 
     if let Some(agent) = agent_id {
+        let store = ilhae_common::agent_profiles::AgentProfileStore::new(
+            crate::config::resolve_ilhae_data_dir(),
+        );
+        if store.resolve(agent)?.is_some() {
+            store.set_capability(agent, "skill", name, !disabled)?;
+            return Ok(());
+        }
         // Team mode per-agent override
         let mut disabled_list: Vec<String> = val
             .pointer(&format!(
@@ -229,6 +236,13 @@ pub fn toggle_mcp(name: &str, disabled: bool, agent_id: Option<&str>) -> Result<
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
 
     if let Some(agent) = agent_id {
+        let store = ilhae_common::agent_profiles::AgentProfileStore::new(
+            crate::config::resolve_ilhae_data_dir(),
+        );
+        if store.resolve(agent)?.is_some() {
+            store.set_capability(agent, "mcp", name, !disabled)?;
+            return Ok(());
+        }
         // Team mode per-agent override
         let settings_path = crate::config::resolve_ilhae_data_dir()
             .join("brain")
@@ -356,6 +370,21 @@ pub fn read_gemini_capabilities() -> (Vec<Value>, Vec<Value>) {
         }
     }
 
+    let modern_settings = PathBuf::from(&home).join(".gemini/settings.json");
+    if let Ok(content) = fs::read_to_string(modern_settings)
+        && let Ok(settings) = serde_json::from_str::<Value>(&content)
+        && let Some(servers) = settings.get("mcpServers").and_then(Value::as_object)
+    {
+        for (name, config) in servers {
+            if !mcps
+                .iter()
+                .any(|server| server.get("name").and_then(Value::as_str) == Some(name))
+            {
+                mcps.push(json!({ "name": name, "description": config.get("description").and_then(Value::as_str).unwrap_or("MCP Server"), "disabled": false }));
+            }
+        }
+    }
+
     // Read mcp-server-enablement.json
     let mcp_enable_path = PathBuf::from(&home)
         .join(".gemini")
@@ -371,6 +400,25 @@ pub fn read_gemini_capabilities() -> (Vec<Value>, Vec<Value>) {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    let codex_settings = PathBuf::from(&home).join(".codex/config.toml");
+    if let Ok(content) = fs::read_to_string(codex_settings)
+        && let Ok(settings) = toml::from_str::<toml::Value>(&content)
+        && let Some(servers) = settings.get("mcp_servers").and_then(toml::Value::as_table)
+    {
+        for (name, config) in servers {
+            if !mcps
+                .iter()
+                .any(|server| server.get("name").and_then(Value::as_str) == Some(name))
+            {
+                mcps.push(json!({
+                    "name": name,
+                    "description": config.get("description").and_then(toml::Value::as_str).unwrap_or("MCP Server"),
+                    "disabled": config.get("enabled").and_then(toml::Value::as_bool) == Some(false)
+                }));
             }
         }
     }
@@ -392,11 +440,13 @@ pub fn read_gemini_capabilities() -> (Vec<Value>, Vec<Value>) {
             continue;
         }
 
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let name = match ilhae_common::agent_profiles::skill_name(&md_path) {
+            Ok(name) => name,
+            Err(error) => {
+                tracing::warn!("Cannot read skill identity from {:?}: {}", md_path, error);
+                continue;
+            }
+        };
         if seen_names.contains(&name) {
             continue;
         }

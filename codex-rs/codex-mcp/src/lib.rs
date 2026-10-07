@@ -1,3 +1,4 @@
+mod agent_profile;
 pub use binding::McpBinding;
 pub use binding::PreparedMcpCall;
 pub use client_capabilities::client_mcp_extensions;

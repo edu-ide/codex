@@ -7,6 +7,9 @@ use crate::context_proxy::routing::*;
 #[allow(unused_imports)]
 use crate::context_proxy::team_a2a::*;
 
+#[path = "team_capabilities.rs"]
+pub mod team_capabilities;
+
 fn resolve_team_mcp_server_bin() -> String {
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(target_dir) = exe_path.parent() {
@@ -151,7 +154,13 @@ pub fn generate_peer_registration_files(
 
     let source_gemini_dir = std::path::PathBuf::from(&home).join(".gemini");
     for agent in &team.agents {
-        let my_name = agent.role.to_lowercase();
+        let my_name = match ilhae_common::agent_profiles::normalize_role(&agent.role) {
+            Ok(role) => role,
+            Err(error) => {
+                warn!("[PeerGen] Invalid role workspace name: {}", error);
+                continue;
+            }
+        };
         // Each agent gets its own workspace: ~/ilhae/team-workspaces/{role}/
         let workspace = base_dir.join(&my_name);
         let gemini_dir = workspace.join(".gemini");
@@ -167,6 +176,7 @@ pub fn generate_peer_registration_files(
             "settings.json",
             "trustedFolders.json",
             "mcp-server-enablement.json",
+            "mcp-oauth-tokens.json",
         ] {
             let src = source_gemini_dir.join(file_name);
             let dst = gemini_dir.join(file_name);
@@ -184,97 +194,40 @@ pub fn generate_peer_registration_files(
             }
         }
 
-        // Provision Superpowers skill files into brain/skills/ if not already present
-        crate::superpowers_skills::provision_superpowers_skills();
-
-        // Copy .agents/skills only for sub-agents.
-        // The main Leader should not see peer role skills or generic global agent skills;
-        // team delegation must go through `team-tools` MCP surface.
-        let source_agents_dir = std::path::PathBuf::from(&home).join(".agents");
         let dest_agents_dir = workspace.join(".agents");
-        if is_main {
-            let _ = std::fs::remove_dir_all(&dest_agents_dir);
-            let _ = std::fs::remove_dir_all(&agents_dir);
-            let _ = std::fs::create_dir_all(&agents_dir);
-        } else if source_agents_dir.exists() && !dest_agents_dir.exists() {
-            let _ = std::process::Command::new("cp")
-                .args([
-                    "-r",
-                    source_agents_dir.to_string_lossy().as_ref(),
-                    dest_agents_dir.to_string_lossy().as_ref(),
-                ])
-                .output();
-        }
-
-        // Inject ilhae-tools MCP server into settings.json, except for user_agent.
-        // user_agent must return plain-text next directives only; giving it tool surface
-        // causes it to delegate instead of steering.
-        let settings_path = gemini_dir.join("settings.json");
-        let settings_str =
-            std::fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".to_string());
-
-        let mut settings = match serde_json::from_str::<serde_json::Value>(&settings_str) {
-            Ok(s) => {
-                if s.is_object() {
-                    s
-                } else {
-                    serde_json::json!({})
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "[PeerGen] Invalid JSON in settings.json, resetting for injection: {}",
-                    e
-                );
-                serde_json::json!({})
+        let capabilities = match team_capabilities::prepare_agent_capabilities(
+            &ilhae_dir,
+            std::path::Path::new(&home),
+            &workspace,
+            agent,
+            &resolve_team_mcp_server_bin(),
+        ) {
+            Ok(capabilities) => capabilities,
+            Err(error) => {
+                warn!("[PeerGen] Refusing {} launch: {}", agent.role, error);
+                continue;
             }
         };
-
-        let mcp_servers = settings
-            .as_object_mut()
-            .and_then(|o| {
-                o.entry("mcpServers")
-                    .or_insert_with(|| serde_json::json!({}));
-                o.get_mut("mcpServers")
-            })
-            .and_then(|v| v.as_object_mut());
-
-        if let Some(servers) = mcp_servers {
-            servers.clear();
-
-            if my_name != "user_agent" {
-                let mcp_bin = resolve_team_mcp_server_bin();
-                servers.insert(
-                    "ilhae-tools".to_string(),
-                    serde_json::json!({
-                        "command": mcp_bin,
-                        "args": [],
-                        "trust": true,
-                        "env": {
-                            "ILHAE_DIR": ilhae_dir.to_string_lossy().to_string(),
-                        }
-                    }),
-                );
-                tracing::info!(
-                    "[PeerGen] {} -> injected ilhae-tools (orch-team-mcp-server) into settings.json",
-                    my_name
-                );
-            } else {
-                tracing::info!(
-                    "[PeerGen] {} -> cleared MCP servers for plain-text autonomous directives",
-                    my_name
-                );
-            }
-
-            if let Ok(updated) = serde_json::to_string_pretty(&settings) {
-                if let Err(e) = std::fs::write(&settings_path, updated) {
-                    tracing::error!(
-                        "[PeerGen] Failed to write settings to {:?}: {}",
-                        settings_path,
-                        e
-                    );
-                }
-            }
+        // Clear peer registrations so deleted roles never survive a regenerated workspace.
+        if let Err(error) =
+            std::fs::remove_dir_all(&agents_dir).and_then(|_| std::fs::create_dir_all(&agents_dir))
+        {
+            warn!(
+                "[PeerGen] Cannot rebuild peers for {}: {}",
+                agent.role, error
+            );
+            continue;
+        }
+        let manifest = serde_json::json!({ "skills": capabilities.skills, "mcp_servers": capabilities.mcp_servers });
+        if let Err(error) = std::fs::write(
+            workspace.join("agent-capabilities.json"),
+            manifest.to_string(),
+        ) {
+            warn!(
+                "[PeerGen] Cannot write capabilities for {}: {}",
+                agent.role, error
+            );
+            continue;
         }
 
         // Create individual peer files only for sub-agents.
@@ -282,7 +235,9 @@ pub fn generate_peer_registration_files(
         let mut peer_specs: Vec<(String, String, String, String)> = Vec::new();
         if !is_main && my_name != "user_agent" {
             for peer in &team.agents {
-                let peer_name = peer.role.to_lowercase();
+                let Ok(peer_name) = ilhae_common::agent_profiles::normalize_role(&peer.role) else {
+                    continue;
+                };
                 if peer_name == my_name {
                     continue; // Skip self
                 }
@@ -294,7 +249,7 @@ pub fn generate_peer_registration_files(
                         .unwrap_or(&peer.system_prompt)
                         .trim();
                     if first_line.len() > 100 {
-                        format!("{}…", &first_line[..100])
+                        format!("{}…", first_line.chars().take(100).collect::<String>())
                     } else {
                         first_line.to_string()
                     }
@@ -357,12 +312,13 @@ agent_card_url: "{card_url}"
                 Err(e) => warn!("[PeerGen] Failed to write {:?}: {}", peer_file, e),
             }
 
-            // Also generate a SKILL.md for Codex compatibility
-            let codex_skill_dir = dest_agents_dir.join("skills").join(&peer_name);
-            let _ = std::fs::create_dir_all(&codex_skill_dir);
-            let codex_skill_file = codex_skill_dir.join("SKILL.md");
-            let codex_content = format!(
-                r#"---
+            if capabilities.skills.is_none() {
+                // Also generate a SKILL.md for Codex compatibility
+                let codex_skill_dir = dest_agents_dir.join("skills").join(&peer_name);
+                let _ = std::fs::create_dir_all(&codex_skill_dir);
+                let codex_skill_file = codex_skill_dir.join("SKILL.md");
+                let codex_content = format!(
+                    r#"---
 name: {name}
 kind: remote
 agent_card_url: "{card_url}"
@@ -381,16 +337,17 @@ interface:
 - 이 에이전트는 A2A 프로토콜로 연결된 팀원입니다.
 - 필요한 경우 이 에이전트를 tool로 직접 호출하여 작업을 위임하세요.
 "#,
-                name = peer_name,
-                desc = peer_desc,
-                card_url = peer_card_url
-            );
-            match std::fs::write(&codex_skill_file, &codex_content) {
-                Ok(()) => info!(
-                    "[PeerGen] {} -> codex skill file {:?}",
-                    my_name, codex_skill_file
-                ),
-                Err(e) => warn!("[PeerGen] Failed to write {:?}: {}", codex_skill_file, e),
+                    name = peer_name,
+                    desc = peer_desc,
+                    card_url = peer_card_url
+                );
+                match std::fs::write(&codex_skill_file, &codex_content) {
+                    Ok(()) => info!(
+                        "[PeerGen] {} -> codex skill file {:?}",
+                        my_name, codex_skill_file
+                    ),
+                    Err(e) => warn!("[PeerGen] Failed to write {:?}: {}", codex_skill_file, e),
+                }
             }
         }
 

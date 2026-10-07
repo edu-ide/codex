@@ -83,63 +83,16 @@ pub async fn handle_capabilities_request(
 ) -> Result<(), sacp::Error> {
     info!("Intercepted CapabilitiesRequest");
 
-    let settings_snapshot = state.infra.settings_store.get();
-    let enabled_engines = settings_snapshot.agent.enabled_engines;
-    let team_disabled = settings_snapshot.agent.team_agent_disabled_capabilities;
-
-    let mut skills = Vec::new();
-    let mut mcps = Vec::new();
-
-    if enabled_engines.contains(&"gemini".to_string()) {
-        let (g_skills, g_mcps) = crate::capabilities::read_gemini_capabilities();
-        skills.extend(g_skills);
-        mcps.extend(g_mcps);
-    }
-
-    if enabled_engines.contains(&"codex".to_string()) {
-        skills.push(json!({
-            "name": "codex",
-            "description": "Codex default coding skill",
-            "isBuiltin": true,
-            "disabled": false
-        }));
-    }
-
-    if let Some(agent) = req.agent_id.as_deref().filter(|s| {
-        let ilhae_dir = dirs::home_dir()
-            .map(|h| h.join(crate::helpers::ILHAE_DIR_NAME))
-            .unwrap_or_default();
-        !crate::context_proxy::load_team_runtime_config(&ilhae_dir)
-            .map(|cfg| {
-                cfg.agents
-                    .iter()
-                    .any(|a| a.role.to_lowercase() == s.to_lowercase() && a.is_main)
-            })
-            .unwrap_or(false)
-    }) && let Some(overrides) = team_disabled.get(agent)
-    {
-        for skill in &mut skills {
-            if let Some(name) = skill.get("name").and_then(|v| v.as_str())
-                && overrides.skills.contains(&name.to_string())
-            {
-                skill["disabled"] = json!(true);
-            }
-        }
-        for mcp in &mut mcps {
-            if let Some(name) = mcp.get("name").and_then(|v| v.as_str())
-                && overrides.mcps.contains(&name.to_string())
-            {
-                mcp["disabled"] = json!(true);
-            }
-        }
-    }
+    // Brain skills and configured MCP servers are shared across engines and profiles.
+    let (mut skills, mut mcps) = crate::capabilities::read_gemini_capabilities();
 
     // Sync all discovered skills into ~/ilhae/brain/skills/ for persistence
     crate::capabilities::sync_acp_skills_to_brain(&skills);
     // Also sync Gemini CLI built-in skills from source tree
     crate::capabilities::sync_gemini_builtin_skills_from_source();
 
-    if let Some(session_id) = req.session_id.as_deref()
+    if req.agent_id.is_none()
+        && let Some(session_id) = req.session_id.as_deref()
         && let Ok(Some(session)) = state.infra.brain.session_get_raw(session_id)
     {
         let override_obj: serde_json::Value =
@@ -178,6 +131,68 @@ pub async fn handle_capabilities_request(
         }
     }
 
+    if let Some(role) = req.agent_id.as_deref() {
+        let data_dir = crate::config::resolve_ilhae_data_dir();
+        let target = crate::context_proxy::load_team_runtime_config(&data_dir)
+            .and_then(|team| {
+                team.agents
+                    .into_iter()
+                    .find(|agent| agent.role.eq_ignore_ascii_case(role))
+            })
+            .unwrap_or_else(|| crate::context_proxy::TeamRoleTarget {
+                role: role.to_owned(),
+                endpoint: String::new(),
+                system_prompt: String::new(),
+                engine: String::new(),
+                model: String::new(),
+                skills: Vec::new(),
+                mcp_servers: Vec::new(),
+                is_main: false,
+            });
+        match crate::context_proxy::role_parser::team_capabilities::resolve_agent_capabilities(
+            &data_dir, &target,
+        ) {
+            Ok(selected) => {
+                for skill in &mut skills {
+                    if let Some(name) = skill.get("name").and_then(serde_json::Value::as_str) {
+                        let excluded = selected
+                            .skills
+                            .as_ref()
+                            .is_some_and(|names| !names.iter().any(|allowed| allowed == name))
+                            || selected
+                                .disabled_skills
+                                .iter()
+                                .any(|disabled| disabled == name);
+                        if selected.skills.is_some() || excluded {
+                            skill["disabled"] = json!(excluded);
+                        }
+                    }
+                }
+                for mcp in &mut mcps {
+                    if let Some(name) = mcp.get("name").and_then(serde_json::Value::as_str) {
+                        let excluded = selected
+                            .mcp_servers
+                            .as_ref()
+                            .is_some_and(|names| !names.iter().any(|allowed| allowed == name))
+                            || selected
+                                .disabled_mcps
+                                .iter()
+                                .any(|disabled| disabled == name);
+                        if selected.mcp_servers.is_some() || excluded {
+                            mcp["disabled"] = json!(excluded);
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!("Cannot resolve {} capabilities: {}", role, error);
+                for capability in skills.iter_mut().chain(mcps.iter_mut()) {
+                    capability["disabled"] = json!(true);
+                }
+            }
+        }
+    }
+
     responder.respond(CapabilitiesResponse {
         skills,
         mcps,
@@ -191,7 +206,8 @@ pub async fn handle_toggle_skill_request(
     _cx: ConnectionTo<Conductor>,
     state: Arc<SharedState>,
 ) -> Result<(), sacp::Error> {
-    if let Some(session_id) = req.session_id.as_deref()
+    if req.agent_id.is_none()
+        && let Some(session_id) = req.session_id.as_deref()
         && let Ok(Some(session)) = state.infra.brain.session_get_raw(session_id)
     {
         let mut override_obj: serde_json::Value =
@@ -238,22 +254,10 @@ pub async fn handle_toggle_skill_request(
         });
     }
 
-    let agent = req.agent_id.as_deref().filter(|s| {
-        let ilhae_dir = dirs::home_dir()
-            .map(|h| h.join(crate::helpers::ILHAE_DIR_NAME))
-            .unwrap_or_default();
-        !crate::context_proxy::load_team_runtime_config(&ilhae_dir)
-            .map(|cfg| {
-                cfg.agents
-                    .iter()
-                    .any(|a| a.role.to_lowercase() == s.to_lowercase() && a.is_main)
-            })
-            .unwrap_or(false)
-    });
-    let _ = crate::capabilities::toggle_skill(&req.name, !req.enable, agent);
+    let result = crate::capabilities::toggle_skill(&req.name, !req.enable, req.agent_id.as_deref());
     responder.respond(ToggleSkillResponse {
-        success: true,
-        error: None,
+        success: result.is_ok(),
+        error: result.err(),
     })
 }
 
@@ -263,7 +267,8 @@ pub async fn handle_toggle_mcp_request(
     _cx: ConnectionTo<Conductor>,
     state: Arc<SharedState>,
 ) -> Result<(), sacp::Error> {
-    if let Some(session_id) = req.session_id.as_deref()
+    if req.agent_id.is_none()
+        && let Some(session_id) = req.session_id.as_deref()
         && let Ok(Some(session)) = state.infra.brain.session_get_raw(session_id)
     {
         let mut override_obj: serde_json::Value =
@@ -292,22 +297,10 @@ pub async fn handle_toggle_mcp_request(
         });
     }
 
-    let agent = req.agent_id.as_deref().filter(|s| {
-        let ilhae_dir = dirs::home_dir()
-            .map(|h| h.join(crate::helpers::ILHAE_DIR_NAME))
-            .unwrap_or_default();
-        !crate::context_proxy::load_team_runtime_config(&ilhae_dir)
-            .map(|cfg| {
-                cfg.agents
-                    .iter()
-                    .any(|a| a.role.to_lowercase() == s.to_lowercase() && a.is_main)
-            })
-            .unwrap_or(false)
-    });
-    let _ = crate::capabilities::toggle_mcp(&req.name, !req.enable, agent);
+    let result = crate::capabilities::toggle_mcp(&req.name, !req.enable, req.agent_id.as_deref());
     responder.respond(ToggleMcpResponse {
-        success: true,
-        error: None,
+        success: result.is_ok(),
+        error: result.err(),
     })
 }
 

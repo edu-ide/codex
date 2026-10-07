@@ -1,3 +1,4 @@
+mod agent_profile;
 mod aliases;
 pub mod catalog;
 mod catalog_prompt;

@@ -335,7 +335,7 @@ pub fn effective_mcp_servers_from_configured(
     if !host_owned_codex_apps_enabled(config, auth) {
         servers.remove(CODEX_APPS_MCP_SERVER_NAME);
     }
-    servers
+    crate::agent_profile::filter_servers(servers)
 }
 
 pub fn tool_plugin_provenance(config: &McpConfig) -> ToolPluginProvenance {

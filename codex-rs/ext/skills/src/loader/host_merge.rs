@@ -149,12 +149,12 @@ pub(crate) async fn load_and_merge_host_skill_roots(
         });
     }
 
-    merge_host_skill_root_snapshots(
+    crate::agent_profile::apply_to_outcome(merge_host_skill_root_snapshots(
         indexed_snapshots
             .into_iter()
             .map(|(_, _, snapshot)| snapshot)
             .collect(),
-    )
+    ))
 }
 
 fn merge_host_skill_root_snapshots(snapshots: Vec<HostSkillRootSnapshot>) -> SkillLoadOutcome {

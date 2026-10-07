@@ -138,7 +138,7 @@ impl SkillProviders {
             catalog.extend(source_catalog);
         }
 
-        Ok(catalog)
+        Ok(crate::agent_profile::apply_to_catalog(catalog))
     }
 
     pub(crate) async fn list_executor_for_turn(&self, query: SkillListQuery) -> SkillCatalog {
@@ -166,7 +166,7 @@ impl SkillProviders {
             );
         }
 
-        catalog
+        crate::agent_profile::apply_to_catalog(catalog)
     }
 
     pub(crate) async fn read(

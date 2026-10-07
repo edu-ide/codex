@@ -208,6 +208,7 @@ impl McpConnectionSet {
             elicitation_reviewer,
             elicitation_lifecycle,
         } = input;
+        let mcp_servers = crate::agent_profile::filter_servers(mcp_servers);
         let store_mode = config.mcp_oauth_credentials_store_mode;
         let keyring_backend_kind = config.auth_keyring_backend_kind;
         let approval_policy = &config.approval_policy;

@@ -64,6 +64,10 @@ pub struct TeamAgentConfig {
     /// Specific model override (e.g. "gemini-2.5-pro")
     #[serde(default)]
     pub model: String,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub mcp_servers: Vec<String>,
     /// True if this agent is the main entry point (receives user messages first)
     #[serde(default)]
     pub is_main: bool,
@@ -295,8 +299,8 @@ pub fn load_team_runtime_config(ilhae_dir: &Path) -> Option<TeamRuntimeConfig> {
                     agent_cfg.engine.trim().to_lowercase()
                 },
                 model: agent_cfg.model.trim().to_string(),
-                skills: Vec::new(),
-                mcp_servers: Vec::new(),
+                skills: agent_cfg.skills.clone(),
+                mcp_servers: agent_cfg.mcp_servers.clone(),
                 is_main: agent_cfg.is_main,
             });
         }
@@ -664,6 +668,33 @@ pub async fn spawn_team_a2a_servers(
         let session_id = session_id.to_string();
 
         async move {
+            let caller_role = match ilhae_common::agent_profiles::normalize_role(&role) {
+                Ok(role) => role,
+                Err(error) => {
+                    warn!("[TeamSpawn] Refusing invalid role: {}", error);
+                    return None;
+                }
+            };
+            let Some(workspace) = workspace_map.get(&caller_role) else {
+                warn!(
+                    "[TeamSpawn] Refusing {} launch without validated capabilities",
+                    role
+                );
+                return None;
+            };
+            let manifest = match std::fs::read_to_string(workspace.join("agent-capabilities.json"))
+                .ok()
+                .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            {
+                Some(manifest) => manifest,
+                None => {
+                    warn!(
+                        "[TeamSpawn] Refusing {} launch with missing capability manifest",
+                        role
+                    );
+                    return None;
+                }
+            };
             let port = match extract_port_from_endpoint(&endpoint) {
                 Some(p) => p,
                 None => {
@@ -728,7 +759,19 @@ pub async fn spawn_team_a2a_servers(
                 info!("[TeamSpawn] {} using model: {}", role, model);
             }
 
-            let caller_role = role.to_lowercase();
+            if let Some(skills) = manifest.get("skills").filter(|skills| !skills.is_null()) {
+                cmd.env("ILHAE_AGENT_SKILLS", skills.to_string());
+            } else {
+                cmd.env_remove("ILHAE_AGENT_SKILLS");
+            }
+            let Some(mcps) = manifest.get("mcp_servers").filter(|mcps| mcps.is_array()) else {
+                warn!(
+                    "[TeamSpawn] Refusing {} launch with invalid MCP manifest",
+                    role
+                );
+                return None;
+            };
+            cmd.env("ILHAE_AGENT_MCP_SERVERS", mcps.to_string());
             cmd.env("CODER_AGENT_NAME", caller_role.clone());
             cmd.env("A2A_CONTEXT_ID", &session_id);
             cmd.env(
@@ -771,6 +814,7 @@ pub async fn spawn_team_a2a_servers(
 
                 cmd.env("GEMINI_CLI_HOME", workspace.to_string_lossy().as_ref());
                 cmd.env("CODEX_HOME", workspace.to_string_lossy().as_ref());
+                cmd.env("ILHAE_AGENT_SKILLS_DIR", workspace.join(".agents/skills"));
             }
 
             // Brain directory access
@@ -803,10 +847,10 @@ pub async fn spawn_team_a2a_servers(
             }
 
             let log_dir = workspace_map
-                .get(&role.to_lowercase())
+                .get(&caller_role)
                 .cloned()
                 .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-            let log_path = log_dir.join(format!("a2a-server-{}.log", role.to_lowercase()));
+            let log_path = log_dir.join(format!("a2a-server-{caller_role}.log"));
             let log_file = match std::fs::File::create(&log_path) {
                 Ok(f) => f,
                 Err(e) => {
