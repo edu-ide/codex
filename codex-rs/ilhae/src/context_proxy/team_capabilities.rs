@@ -122,6 +122,9 @@ fn copy_skill(source: &Path, target: &Path) -> Result<(), String> {
             fs::copy(entry.path(), &destination).map_err(|error| error.to_string())?;
         }
     }
+    let definition =
+        ilhae_common::agent_profiles::normalized_skill_document(&source.join("SKILL.md"))?;
+    fs::write(target.join("SKILL.md"), definition).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -294,7 +297,7 @@ pub fn prepare_agent_capabilities(
         }
         codex_servers.insert(
             name,
-            toml::Value::try_from(&config).map_err(|error| error.to_string())?,
+            serde_json::from_value::<toml::Value>(config).map_err(|error| error.to_string())?,
         );
     }
     table.insert("mcp_servers".to_owned(), toml::Value::Table(codex_servers));

@@ -252,3 +252,25 @@ fn frontmatter_names_are_canonical_even_when_folders_differ() {
         prepare_agent_capabilities(&data, &home, &workspace, &legacy, "team-tools").unwrap();
     assert_eq!(selected.skills, Some(vec!["actual-research".to_owned()]));
 }
+
+#[test]
+fn numeric_mcp_timeouts_remain_loadable_toml() {
+    let (temp, data, home) = fixture();
+    fs::write(home.join(".gemini/settings.json"), r#"{"mcpServers":{"docs":{"command":"docs","startup_timeout_sec":30,"tool_timeout_sec":60.5}}}"#).unwrap();
+    let store = AgentProfileStore::new(&data);
+    store.save(profile("researcher", &[], &["docs"])).unwrap();
+    store.assign("Researcher", "researcher").unwrap();
+    let workspace = temp.path().join("workspace");
+    fs::create_dir_all(workspace.join(".gemini")).unwrap();
+    prepare_agent_capabilities(&data, &home, &workspace, &agent("Researcher"), "team-mcp").unwrap();
+    let config: toml::Value =
+        toml::from_str(&fs::read_to_string(workspace.join("config.toml")).unwrap()).unwrap();
+    assert_eq!(
+        config["mcp_servers"]["docs"]["startup_timeout_sec"].as_integer(),
+        Some(30)
+    );
+    assert_eq!(
+        config["mcp_servers"]["docs"]["tool_timeout_sec"].as_float(),
+        Some(60.5)
+    );
+}
