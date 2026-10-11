@@ -2629,26 +2629,13 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
 
                 crate::calendar_dispatch::poll(brain_for_kairos.schedules().clone()).await;
 
-                let preview = triggered
-                    .iter()
-                    .take(3)
-                    .map(|task| task.title.clone())
-                    .collect::<Vec<_>>();
-                let message = if triggered.len() == 1 {
-                    format!("[Kairos] Triggered scheduled task: {}", preview[0])
-                } else {
-                    let suffix = if triggered.len() > preview.len() {
-                        format!(" 외 {}개", triggered.len() - preview.len())
-                    } else {
-                        String::new()
-                    };
-                    format!(
-                        "[Kairos] Triggered {} scheduled tasks: {}{}",
-                        triggered.len(),
-                        preview.join(", "),
-                        suffix
-                    )
-                };
+                // Requests with a saved prompt join the Work follow-up queue that the
+                // Desktop host runs (UGOT Pro); everything else stays a notification.
+                let message = crate::kairos_scheduled_prompts::dispatch(
+                    brain_for_kairos.schedules().clone(),
+                    &triggered,
+                )
+                .await;
 
                 info!("{}", message);
                 if let Err(e) = notif_store_for_kairos.add(&message, "info", "kairos") {
