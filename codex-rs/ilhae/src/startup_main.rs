@@ -2580,6 +2580,22 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(15)).await;
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut prompts_without_kairos =
+                crate::kairos_scheduled_prompts::WithoutKairos::default();
+            let notify = |message: String| {
+                info!("{}", message);
+                if let Err(e) = notif_store_for_kairos.add(&message, "info", "kairos") {
+                    warn!("[Kairos] Failed to persist notification: {}", e);
+                }
+                broadcast_event(
+                    &relay_tx_for_kairos,
+                    RelayEvent::UiNotification {
+                        message,
+                        level: "info".to_string(),
+                        source: Some("kairos".to_string()),
+                    },
+                );
+            };
             loop {
                 interval.tick().await;
 
@@ -2592,6 +2608,21 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                 let run_hygiene_kairos = crate::hygiene_loop::hygiene_mode_includes_kairos(
                     &settings_snapshot.agent.hygiene_mode,
                 );
+                if !run_task_kairos {
+                    // A saved request runs without the task loop on UGOT Pro; the
+                    // free plan leaves it untouched, as before.
+                    if let Some(message) = prompts_without_kairos
+                        .tick(
+                            brain_for_kairos.schedules().clone(),
+                            normalize_task_scope(settings_snapshot.agent.task_scope.as_deref()),
+                            chrono::Utc::now(),
+                            crate::kairos_scheduled_prompts::account_plan,
+                        )
+                        .await
+                    {
+                        notify(message);
+                    }
+                }
                 if !run_task_kairos && !run_kb_kairos && !run_hygiene_kairos {
                     continue;
                 }
@@ -2637,18 +2668,7 @@ pub async fn run_ilhae_proxy() -> anyhow::Result<()> {
                 )
                 .await;
 
-                info!("{}", message);
-                if let Err(e) = notif_store_for_kairos.add(&message, "info", "kairos") {
-                    warn!("[Kairos] Failed to persist notification: {}", e);
-                }
-                broadcast_event(
-                    &relay_tx_for_kairos,
-                    RelayEvent::UiNotification {
-                        message,
-                        level: "info".to_string(),
-                        source: Some("kairos".to_string()),
-                    },
-                );
+                notify(message);
             }
         });
     }
