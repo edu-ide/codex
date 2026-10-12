@@ -188,3 +188,36 @@ async fn loop_on_still_fires_everything_and_queues_on_pro() {
         "{message}"
     );
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn proxy_and_space_desktop_on_one_store_queue_the_request_once() {
+    let _home = test_env::empty_home();
+    let dir = tempfile::tempdir().unwrap();
+    let proxy_store = Arc::new(ScheduleStore::new(dir.path()));
+    add(&proxy_store, "환율 확인", Some("오늘 환율 정리"));
+    // The Space desktop opens its own store on the same data directory and
+    // drives the same work-rs ticker.
+    let desktop_dir = dir.path().to_path_buf();
+    let desktop = tokio::task::spawn_blocking(move || {
+        let store = ScheduleStore::new(&desktop_dir);
+        ScheduledPromptTicker::default()
+            .tick(&store, None, now(), || ScheduledPromptPlan::Pro)
+            .unwrap()
+    });
+    let mut proxy = WithoutKairos::default();
+    let proxy_notice = proxy
+        .tick(proxy_store.clone(), None, now(), || async {
+            ScheduledPromptPlan::Pro
+        })
+        .await;
+    let desktop_run = desktop.await.unwrap();
+
+    assert_eq!(followups(&proxy_store), 1);
+    let queued_by_proxy = proxy_notice.is_some_and(|notice| notice.contains("실행 대기열"));
+    let queued_by_desktop = desktop_run.is_some_and(|run| run.enqueued() == 1);
+    assert!(
+        queued_by_proxy ^ queued_by_desktop,
+        "exactly one host queues it (proxy {queued_by_proxy}, desktop {queued_by_desktop})"
+    );
+}

@@ -11,14 +11,19 @@
 //! peeks the due requests without firing them, asks pay only when one is due, and
 //! fires only those requests on UGOT Pro. On the free plan it fires nothing, so the
 //! loop-off behaviour there is unchanged: no schedule is consumed and nothing is
-//! announced.
+//! announced. That decision is work-rs `ScheduledPromptTicker`, which the UGOT Space
+//! desktop also ticks (it runs `ilhae app-server` without this proxy); the store's
+//! file lock keeps the two hosts from firing one occurrence twice.
 
 use brain_rs::schedule::ScheduleStore;
 use brain_rs::schedule::ScheduleTrigger;
+use brain_rs::schedule::ScheduledPromptTicker;
 use brain_rs::schedule::ScheduledPromptOutcome;
 use brain_rs::schedule::ScheduledPromptPlan;
 use brain_rs::schedule::scheduled_prompt_notice;
 use brain_rs::schedule::scheduled_prompts_need_plan;
+#[cfg(test)]
+use brain_rs::schedule::FREE_RECHECK_MINUTES;
 use chrono::DateTime;
 use chrono::Utc;
 use std::future::Future;
@@ -26,11 +31,6 @@ use std::sync::Arc;
 use tracing::info;
 use tracing::warn;
 use ugot_local_session::entitlement::UgotPlan;
-
-/// After a free verdict with the Kairos loop off, how long the loop leaves due
-/// requests alone before asking pay again. The entitlement cache alone would ask
-/// every five minutes for as long as the request stays due.
-const FREE_RECHECK_MINUTES: i64 = 30;
 
 /// The signed-in plan, asked of pay through the shared entitlement cache.
 pub(crate) async fn account_plan() -> ScheduledPromptPlan {
@@ -84,7 +84,12 @@ async fn dispatch_with_plan(
             ]
         }
     };
-    for (trigger, outcome) in triggered.iter().zip(&outcomes) {
+    log_outcomes(triggered, &outcomes);
+    scheduled_prompt_notice(triggered, &outcomes)
+}
+
+fn log_outcomes(triggered: &[ScheduleTrigger], outcomes: &[ScheduledPromptOutcome]) {
+    for (trigger, outcome) in triggered.iter().zip(outcomes) {
         match outcome {
             ScheduledPromptOutcome::Enqueued { followup_id } => info!(
                 "[Kairos] Queued scheduled request {} ({}) as follow-up {followup_id}",
@@ -101,14 +106,16 @@ async fn dispatch_with_plan(
             _ => {}
         }
     }
-    scheduled_prompt_notice(triggered, &outcomes)
 }
 
 /// Runs scheduled requests while the Kairos task loop is off. Reminders and
-/// calendar browser batches are left to the loop, exactly as before.
+/// calendar browser batches are left to the loop, exactly as before. The decision
+/// itself lives in work-rs ([`ScheduledPromptTicker`]) and is shared with the UGOT
+/// Space desktop, which never starts this proxy; this wrapper only moves the
+/// file-locked store calls off the async runtime and asks pay between them.
 #[derive(Debug, Default)]
 pub(crate) struct WithoutKairos {
-    quiet_until: Option<DateTime<Utc>>,
+    ticker: ScheduledPromptTicker,
 }
 
 impl WithoutKairos {
@@ -124,19 +131,19 @@ impl WithoutKairos {
         F: FnOnce() -> Fut,
         Fut: Future<Output = ScheduledPromptPlan>,
     {
-        if self.quiet_until.is_some_and(|until| now < until) {
-            return None;
-        }
-        let peeked = {
+        let ticker = self.ticker;
+        let checked = {
             let schedules = schedules.clone();
             let scope = task_scope.clone();
             tokio::task::spawn_blocking(move || {
-                schedules.try_peek_scheduled_prompts_with_scope(scope.as_deref(), now)
+                ticker.needs_plan(&schedules, scope.as_deref(), now)
             })
             .await
         };
-        let peeked = match peeked {
-            Ok(Ok(peeked)) => peeked,
+        match checked {
+            Ok(Ok(true)) => {}
+            // Nothing would run: no pay request, nothing consumed.
+            Ok(Ok(false)) => return None,
             Ok(Err(error)) => {
                 warn!("[Kairos] Could not read due scheduled requests: {error}");
                 return None;
@@ -145,40 +152,31 @@ impl WithoutKairos {
                 warn!("[Kairos] Due scheduled request check stopped: {error}");
                 return None;
             }
-        };
-        // Nothing would run: no pay request, nothing consumed.
-        if !scheduled_prompts_need_plan(&peeked, now) {
-            return None;
         }
-        if plan().await != ScheduledPromptPlan::Pro {
-            // Free or unconfirmed: leave the schedules untouched, as the loop-off
-            // host always did, and stop asking pay for a while.
-            self.quiet_until = Some(now + chrono::Duration::minutes(FREE_RECHECK_MINUTES));
-            return None;
-        }
-        self.quiet_until = None;
-        let fired = {
-            let schedules = schedules.clone();
-            tokio::task::spawn_blocking(move || {
-                schedules.try_run_scheduled_prompts_with_scope(task_scope.as_deref(), now)
-            })
-            .await
-        };
-        let fired = match fired {
-            Ok(Ok(fired)) => fired,
-            Ok(Err(error)) => {
+        let plan = plan().await;
+        let mut ticker = self.ticker;
+        let ran = tokio::task::spawn_blocking(move || {
+            let run = ticker.run_with_plan(&schedules, task_scope.as_deref(), now, plan);
+            (ticker, run)
+        })
+        .await;
+        match ran {
+            Ok((ticker, Ok(run))) => {
+                self.ticker = ticker;
+                let run = run?;
+                log_outcomes(&run.triggers, &run.outcomes);
+                Some(run.notice)
+            }
+            Ok((ticker, Err(error))) => {
+                self.ticker = ticker;
                 warn!("[Kairos] Could not take due scheduled requests: {error}");
-                return None;
+                None
             }
             Err(error) => {
                 warn!("[Kairos] Taking due scheduled requests stopped: {error}");
-                return None;
+                None
             }
-        };
-        if fired.is_empty() {
-            return None;
         }
-        Some(dispatch_with_plan(schedules, &fired, now, ScheduledPromptPlan::Pro).await)
     }
 }
 
