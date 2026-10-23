@@ -352,6 +352,8 @@ macro_rules! register_admin_task_handlers {
                                                     max_retries: brain_rs::schedule::default_max_retries(),
                                                     super_loop: None,
                                                     calendar: None,
+                                                    work_units: Vec::new(),
+                                                    quarantined_work_units: Vec::new(),
                                                 });
                                             }
                                         }
@@ -424,6 +426,8 @@ macro_rules! register_admin_task_handlers {
                         max_retries: brain_rs::schedule::default_max_retries(),
                         super_loop: None,
                         calendar: None,
+                        work_units: Vec::new(),
+                        quarantined_work_units: Vec::new(),
                     };
                     responder.respond(CreateTaskResponse { task: Some(serde_json::to_value(task).unwrap()), error: None })
                 }
@@ -496,6 +500,8 @@ macro_rules! register_admin_task_handlers {
                                             max_retries: brain_rs::schedule::default_max_retries(),
                                             super_loop: None,
                                             calendar: None,
+                                            work_units: Vec::new(),
+                                            quarantined_work_units: Vec::new(),
                                         };
                                         return responder.respond(UpdateTaskResponse { task: Some(serde_json::to_value(task).unwrap()), error: None });
                                     }
