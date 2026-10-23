@@ -26,10 +26,11 @@ fn processor_exec_snapshot_is_raw_and_model_replacement_keeps_native_headers() {
         json!({
             "text":"raw-before-truncation", "is_error":false,
             "completeness":{"state":"partial","omitted_bytes":100},
-            "process_id":123,"chunk_id":"chunk"
+            "process_id":123,"chunk_id":"chunk","model_text_truncated":true
         })
     );
-    let typed = original.code_mode_result(&payload);
+    let mut typed = original.code_mode_result(&payload);
+    typed["output"] = json!("Untrusted tool data (local result processor):\nshort");
     let hook = original.post_tool_use_response("call", &payload);
     let wrapped = ModelTextReplacement::new(Box::new(original), "short".to_string());
     let ResponseInputItem::FunctionCallOutput { output, .. } =
@@ -73,7 +74,13 @@ fn processor_mcp_replacement_preserves_media_typed_json_and_error_status() {
         original.raw_text_snapshot().unwrap(),
         ToolResultSnapshot::complete("original\nmore text".to_string(), true)
     );
-    let typed = original.code_mode_result(&payload);
+    let mut typed = original.code_mode_result(&payload);
+    typed["content"] = json!([
+        {"type":"text","text":"Untrusted tool data (local result processor):\ncompact"},
+        {"type":"image","mimeType":"image/png","data":"AAA"},
+        {"type":"audio","mimeType":"audio/wav","data":"BBB"},
+        {"type":"text","text":"opaque","_meta":{"codex/encryptedContent":true}},
+    ]);
     let hook = original.post_tool_use_response("call", &payload);
     let external_context = original.contains_external_context();
     let wrapped = ModelTextReplacement::new(Box::new(original), "compact".to_string());
@@ -138,7 +145,10 @@ fn processor_exec_replacement_preserves_retrieval_handles_at_small_output_budget
             output_omitted_bytes: None,
             hook_command: Some("command".to_string()),
         };
-        let typed = original.code_mode_result(&payload);
+        let mut typed = original.code_mode_result(&payload);
+        typed["output"] = json!(format!(
+            "Untrusted tool data (local result processor):\n{replacement}"
+        ));
         let hook = original.post_tool_use_response("call", &payload);
         let wrapped = ModelTextReplacement::new(Box::new(original), replacement.clone());
         let ResponseInputItem::FunctionCallOutput { output, .. } =
@@ -155,4 +165,23 @@ fn processor_exec_replacement_preserves_retrieval_handles_at_small_output_budget
         assert_eq!(wrapped.code_mode_result(&payload), typed);
         assert_eq!(wrapped.post_tool_use_response("call", &payload), hook);
     }
+}
+
+#[test]
+fn processor_function_snapshot_keeps_text_before_outer_budget() {
+    let raw = "untruncated outer output ".repeat(500);
+    let mut original = FunctionToolOutput::from_text("short display".to_string(), Some(false));
+    original.raw_text_before_truncation = Some(raw.clone());
+    let mut snapshot = ToolResultSnapshot::complete(raw, true);
+    snapshot.model_text_truncated = true;
+    assert_eq!(original.raw_text_snapshot(), Some(snapshot));
+    let payload = ToolPayload::Custom {
+        input: String::new(),
+    };
+    let wrapped = ModelTextReplacement::new(Box::new(original), "capture-outer".to_string());
+    assert_eq!(
+        wrapped.code_mode_result(&payload),
+        json!("Untrusted tool data (local result processor):\ncapture-outer")
+    );
+    assert!(!wrapped.success_for_logging());
 }

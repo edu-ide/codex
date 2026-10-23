@@ -18,6 +18,7 @@ use codex_code_mode::CodeModeSessionProvider;
 use codex_code_mode::CodeModeToolKind;
 use codex_code_mode::RuntimeResponse;
 use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::models::function_call_output_content_items_to_text;
 use futures::future::join_all;
 use serde_json::Value as JsonValue;
 use tokio::sync::OnceCell;
@@ -238,20 +239,10 @@ pub(super) async fn handle_runtime_response(
 ) -> Result<FunctionToolOutput, String> {
     let script_status = format_script_status(&response);
 
-    match response {
-        RuntimeResponse::Yielded { content_items, .. } => {
-            let mut content_items = into_function_call_output_content_items(content_items);
-            sanitize_runtime_image_detail(exec.turn.as_ref(), &mut content_items);
-            content_items = truncate_code_mode_result(content_items, max_output_tokens);
-            prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
-            Ok(FunctionToolOutput::from_content(content_items, Some(true)))
-        }
-        RuntimeResponse::Terminated { content_items, .. } => {
-            let mut content_items = into_function_call_output_content_items(content_items);
-            sanitize_runtime_image_detail(exec.turn.as_ref(), &mut content_items);
-            content_items = truncate_code_mode_result(content_items, max_output_tokens);
-            prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
-            Ok(FunctionToolOutput::from_content(content_items, Some(true)))
+    let (mut content_items, success) = match response {
+        RuntimeResponse::Yielded { content_items, .. }
+        | RuntimeResponse::Terminated { content_items, .. } => {
+            (into_function_call_output_content_items(content_items), true)
         }
         RuntimeResponse::Result {
             content_items,
@@ -259,21 +250,25 @@ pub(super) async fn handle_runtime_response(
             ..
         } => {
             let mut content_items = into_function_call_output_content_items(content_items);
-            sanitize_runtime_image_detail(exec.turn.as_ref(), &mut content_items);
             let success = error_text.is_none();
             if let Some(error_text) = error_text {
                 content_items.push(FunctionCallOutputContentItem::InputText {
                     text: format!("Script error:\n{error_text}"),
                 });
             }
-            content_items = truncate_code_mode_result(content_items, max_output_tokens);
-            prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
-            Ok(FunctionToolOutput::from_content(
-                content_items,
-                Some(success),
-            ))
+            (content_items, success)
         }
-    }
+    };
+    sanitize_runtime_image_detail(exec.turn.as_ref(), &mut content_items);
+    let wall_time = started_at.elapsed();
+    let mut raw_items = content_items.clone();
+    prepend_script_status(&mut raw_items, &script_status, wall_time);
+    let raw_text_before_truncation = function_call_output_content_items_to_text(&raw_items);
+    content_items = truncate_code_mode_result(content_items, max_output_tokens);
+    prepend_script_status(&mut content_items, &script_status, wall_time);
+    let mut output = FunctionToolOutput::from_content(content_items, Some(success));
+    output.raw_text_before_truncation = raw_text_before_truncation;
+    Ok(output)
 }
 
 fn sanitize_runtime_image_detail(turn: &TurnContext, items: &mut [FunctionCallOutputContentItem]) {

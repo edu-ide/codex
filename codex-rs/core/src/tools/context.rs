@@ -130,6 +130,34 @@ impl ToolOutput for McpToolOutput {
         self.result.code_mode_result(payload)
     }
 
+    fn code_mode_result_with_replacement(
+        &self,
+        payload: &ToolPayload,
+        text: &str,
+    ) -> Option<JsonValue> {
+        let mut result = self.result.clone();
+        let mut replaced = false;
+        result.content.retain_mut(|item| {
+            if item.get("type").and_then(JsonValue::as_str) != Some("text")
+                || item.pointer("/_meta/codex~1encryptedContent") == Some(&JsonValue::Bool(true))
+            {
+                return true;
+            }
+            if replaced {
+                return false;
+            }
+            item["text"] = JsonValue::String(text.to_string());
+            replaced = true;
+            true
+        });
+        if !replaced {
+            result
+                .content
+                .insert(0, serde_json::json!({"type": "text", "text": text}));
+        }
+        Some(result.code_mode_result(payload))
+    }
+
     fn post_tool_use_input(&self, _payload: &ToolPayload) -> Option<JsonValue> {
         Some(self.tool_input.clone())
     }
@@ -220,6 +248,8 @@ pub struct FunctionToolOutput {
     pub body: Vec<FunctionCallOutputContentItem>,
     pub success: Option<bool>,
     pub post_tool_use_response: Option<JsonValue>,
+    /// Text captured before the outer Code Mode display budget is applied.
+    pub(crate) raw_text_before_truncation: Option<String>,
 }
 
 impl FunctionToolOutput {
@@ -228,6 +258,7 @@ impl FunctionToolOutput {
             body: vec![FunctionCallOutputContentItem::InputText { text }],
             success,
             post_tool_use_response: None,
+            raw_text_before_truncation: None,
         }
     }
 
@@ -239,6 +270,7 @@ impl FunctionToolOutput {
             body: content,
             success,
             post_tool_use_response: None,
+            raw_text_before_truncation: None,
         }
     }
 
@@ -249,10 +281,15 @@ impl FunctionToolOutput {
 
 impl ToolOutput for FunctionToolOutput {
     fn raw_text_snapshot(&self) -> Option<ToolResultSnapshot> {
-        Some(ToolResultSnapshot::complete(
-            function_call_output_content_items_to_text(&self.body)?,
+        let model_text = function_call_output_content_items_to_text(&self.body)?;
+        let mut snapshot = ToolResultSnapshot::complete(
+            self.raw_text_before_truncation
+                .clone()
+                .unwrap_or_else(|| model_text.clone()),
             !self.success_for_logging(),
-        ))
+        );
+        snapshot.model_text_truncated = snapshot.text != model_text;
+        Some(snapshot)
     }
 
     fn response_with_replacement(
@@ -285,6 +322,19 @@ impl ToolOutput for FunctionToolOutput {
 
     fn post_tool_use_response(&self, _call_id: &str, _payload: &ToolPayload) -> Option<JsonValue> {
         self.post_tool_use_response.clone()
+    }
+
+    fn code_mode_result_with_replacement(
+        &self,
+        payload: &ToolPayload,
+        text: &str,
+    ) -> Option<JsonValue> {
+        let mut body = FunctionCallOutputBody::ContentItems(self.body.clone());
+        replace_body_text(&mut body, text);
+        let FunctionCallOutputBody::ContentItems(body) = body else {
+            return None;
+        };
+        Some(Self::from_content(body, self.success).code_mode_result(payload))
     }
 }
 
@@ -393,6 +443,8 @@ impl ToolOutput for ExecCommandToolOutput {
             },
             process_id: self.process_id,
             chunk_id: Some(self.chunk_id.clone()).filter(|id| !id.is_empty()),
+            model_text_truncated: self.truncated_output(self.model_output_max_tokens())
+                != String::from_utf8_lossy(&self.raw_output),
         })
     }
 
@@ -457,6 +509,23 @@ impl ToolOutput for ExecCommandToolOutput {
     }
 
     fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+        self.code_mode_result_with_output(match self.max_output_tokens {
+            Some(max_tokens) => self.truncated_output(max_tokens),
+            None => String::from_utf8_lossy(&self.raw_output).to_string(),
+        })
+    }
+
+    fn code_mode_result_with_replacement(
+        &self,
+        _payload: &ToolPayload,
+        text: &str,
+    ) -> Option<JsonValue> {
+        Some(self.code_mode_result_with_output(text.to_string()))
+    }
+}
+
+impl ExecCommandToolOutput {
+    fn code_mode_result_with_output(&self, output: String) -> JsonValue {
         #[derive(Serialize)]
         struct UnifiedExecCodeModeResult {
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -477,10 +546,7 @@ impl ToolOutput for ExecCommandToolOutput {
             exit_code: self.exit_code,
             session_id: self.process_id,
             original_token_count: self.original_token_count,
-            output: match self.max_output_tokens {
-                Some(max_tokens) => self.truncated_output(max_tokens),
-                None => String::from_utf8_lossy(&self.raw_output).to_string(),
-            },
+            output,
         };
 
         serde_json::to_value(result).unwrap_or_else(|err| {

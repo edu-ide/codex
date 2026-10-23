@@ -200,6 +200,100 @@ async fn check_tool_result_processor_model_delivery(replace: bool) -> Result<()>
     Ok(())
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn tool_result_processor_code_mode_keeps_handles_and_status_at_both_small_budgets()
+-> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = start_mock_server().await;
+    let dir = TempDir::new()?;
+    let captures = dir.path().join("processor-inputs.jsonl");
+    let raw = "BEFORE-TRUNCATION ".repeat(500);
+    let args = serde_json::json!({
+        "cmd": format!("printf '%s' '{raw}'; exit 7"),
+        "max_output_tokens": 32,
+    });
+    let code =
+        format!("// @exec: {{\"max_output_tokens\":32}}\ntext(await tools.exec_command({args}));");
+    let call_id = "processor-code-mode";
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_custom_tool_call(call_id, "exec", &code),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "done"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+    let command = vec![
+        "python3".to_string(), "-c".to_string(),
+        concat!(
+            "import json,sys; from pathlib import Path; data=json.load(sys.stdin); ",
+            "Path(sys.argv[1]).open('a').write(json.dumps(data)+'\\n'); ",
+            "name=data['source']['tool_name']; ",
+            "text=json.dumps({'capture_id':'capture-'+name, 'preview':data['output']['text'] if name=='exec' else 'saved native output'}); ",
+            "print(json.dumps({'version':1,'action':'replace_text','text':text}))",
+        ).to_string(),
+        captures.display().to_string(),
+    ];
+    let mut builder = test_codex()
+        .with_model("test-gpt-5.1-codex")
+        .with_config(move |config| {
+            config
+                .features
+                .enable(Feature::CodeMode)
+                .expect("code mode");
+            config
+                .features
+                .enable(Feature::UnifiedExec)
+                .expect("unified exec");
+            config.use_experimental_unified_exec_tool = true;
+            config.tool_result_processor = Some(
+                serde_json::from_value(serde_json::json!({"command":command}))
+                    .expect("processor config"),
+            );
+        });
+    let test = builder.build(&server).await?;
+    test.submit_turn_with_permission_profile("run the code", PermissionProfile::Disabled)
+        .await?;
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let output = code_mode_custom_tool_output_text(&requests[1].custom_tool_call_output(call_id));
+    assert!(output.contains("capture-exec"));
+    assert!(output.contains("capture-exec_command"));
+    assert!(!output.contains("BEFORE-TRUNCATION"));
+    assert!(!output.contains("tokens truncated"));
+    let inputs: Vec<Value> = fs::read_to_string(captures)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<std::result::Result<_, _>>()?;
+    assert_eq!(inputs.len(), 2);
+    assert_eq!(inputs[0]["source"]["tool_name"], "exec_command");
+    assert_eq!(inputs[0]["output"]["text"], raw);
+    assert_eq!(inputs[0]["output"]["model_text_truncated"], true);
+    assert_eq!(inputs[1]["source"]["tool_name"], "exec");
+    assert_eq!(inputs[1]["output"]["model_text_truncated"], true);
+    let outer = inputs[1]["output"]["text"].as_str().expect("outer text");
+    let typed: Value = serde_json::from_str(outer.lines().last().expect("typed result"))?;
+    assert_eq!(typed["exit_code"], 7);
+    assert!(typed["wall_time_seconds"].is_number());
+    assert!(
+        typed["output"]
+            .as_str()
+            .unwrap()
+            .contains("capture-exec_command")
+    );
+    assert!(!outer.contains("tokens truncated"));
+    Ok(())
+}
+
 fn restrictive_workspace_write_profile() -> PermissionProfile {
     PermissionProfile::workspace_write_with(
         &[],

@@ -16,6 +16,9 @@ pub struct ToolResultSnapshot {
     pub completeness: ToolResultCompleteness,
     pub process_id: Option<i32>,
     pub chunk_id: Option<String>,
+    /// The host's model-facing text was shortened after this snapshot was collected.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub model_text_truncated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -35,11 +38,13 @@ impl ToolResultSnapshot {
             },
             process_id: None,
             chunk_id: None,
+            model_text_truncated: false,
         }
     }
 }
 
-/// Changes only model delivery; typed consumers, hooks, and telemetry retain the original.
+/// Changes model delivery, including text inside typed Code Mode results. Hooks and
+/// telemetry retain the original; typed results retain their non-text fields.
 pub struct ModelTextReplacement {
     original: Box<dyn ToolOutput>,
     text: String,
@@ -88,6 +93,8 @@ impl ToolOutput for ModelTextReplacement {
         self.original.post_tool_use_response(call_id, payload)
     }
     fn code_mode_result(&self, payload: &ToolPayload) -> Value {
-        self.original.code_mode_result(payload)
+        self.original
+            .code_mode_result_with_replacement(payload, &self.text)
+            .unwrap_or_else(|| self.original.code_mode_result(payload))
     }
 }

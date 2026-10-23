@@ -243,6 +243,7 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
         ],
         success: Some(true),
         post_tool_use_response,
+        raw_text_before_truncation: None,
     })
 }
 
