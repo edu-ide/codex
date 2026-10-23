@@ -211,6 +211,9 @@ pub struct ConfigToml {
     #[serde(default)]
     pub notify: Option<Vec<String>>,
 
+    /// Optional local command that processes raw tool text before model truncation.
+    pub tool_result_processor: Option<crate::ToolResultProcessorConfig>,
+
     /// System instructions.
     pub instructions: Option<String>,
 

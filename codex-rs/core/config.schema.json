@@ -3320,6 +3320,42 @@
       },
       "type": "object"
     },
+    "ToolResultProcessorConfig": {
+      "description": "Optional local command that can replace model-visible tool text.",
+      "properties": {
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_input_bytes": {
+          "default": 33554432,
+          "format": "uint",
+          "maximum": 67108864.0,
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "default": 65536,
+          "format": "uint",
+          "maximum": 262144.0,
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "default": 2000,
+          "format": "uint64",
+          "maximum": 30000.0,
+          "minimum": 1.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
     "ToolSuggestConfig": {
       "additionalProperties": false,
       "properties": {
@@ -5958,6 +5994,14 @@
       "format": "uint",
       "minimum": 0.0,
       "type": "integer"
+    },
+    "tool_result_processor": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ToolResultProcessorConfig"
+        }
+      ],
+      "description": "Optional local command that processes raw tool text before model truncation."
     },
     "tool_suggest": {
       "allOf": [

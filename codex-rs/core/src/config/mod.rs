@@ -748,6 +748,8 @@ pub struct Config {
     /// If unset the feature is disabled.
     pub notify: Option<Vec<String>>,
 
+    pub tool_result_processor: Option<codex_config::ToolResultProcessorConfig>,
+
     /// TUI notification settings, including enabled events, delivery method, and focus condition.
     pub tui_notifications: TuiNotificationSettings,
 
@@ -4155,6 +4157,7 @@ impl Config {
             approvals_reviewer: constrained_approvals_reviewer.value(),
             enforce_residency: enforce_residency.value,
             notify: cfg.notify,
+            tool_result_processor: cfg.tool_result_processor,
             base_instructions,
             base_instructions_provenance,
             personality,

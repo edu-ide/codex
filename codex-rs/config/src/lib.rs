@@ -30,10 +30,12 @@ mod state;
 mod strict_config;
 pub mod test_support;
 mod thread_config;
+mod tool_result_processor;
 mod tui_keymap;
 pub mod types;
 
 pub const CONFIG_TOML_FILE: &str = "config.toml";
+pub use tool_result_processor::ToolResultProcessorConfig;
 
 pub use auth_policy::ManagedAuthPolicy;
 pub use cloud_config_bundle::CloudConfigBundle;

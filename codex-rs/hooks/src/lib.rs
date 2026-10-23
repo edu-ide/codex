@@ -6,6 +6,7 @@ mod legacy_notify;
 mod output_spill;
 mod registry;
 pub mod schema;
+mod tool_result_processor;
 mod types;
 
 use codex_protocol::protocol::HookEventName;
@@ -15,6 +16,7 @@ pub use declarations::PluginHookDeclaration;
 pub use declarations::plugin_hook_declarations;
 pub use engine::HookListEntry;
 pub use events::common::SubagentHookContext;
+pub use tool_result_processor::process_tool_result;
 /// Hook event names as they appear in hooks JSON and config files.
 pub const HOOK_EVENT_NAMES: [&str; 11] = [
     "PreToolUse",
