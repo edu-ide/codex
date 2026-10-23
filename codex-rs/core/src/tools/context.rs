@@ -100,7 +100,9 @@ impl ToolOutput for McpToolOutput {
         replace_body_text(&mut output.body, text);
         Some(ResponseInputItem::FunctionCallOutput {
             call_id: call_id.to_string(),
-            output: self.finish_response_payload(output),
+            // ModelTextReplacement has already bounded this body. Reapplying the raw-output
+            // budget can remove retrieval handles from the processor's replacement.
+            output: self.format_response_payload(output),
         })
     }
 
@@ -139,10 +141,13 @@ impl ToolOutput for McpToolOutput {
 
 impl McpToolOutput {
     fn response_payload(&self) -> FunctionCallOutputPayload {
-        self.finish_response_payload(self.result.as_function_call_output_payload())
+        let payload = self.format_response_payload(self.result.as_function_call_output_payload());
+        // Keep raw context injection aligned with conversation-history truncation. The text is
+        // serialized again in the Responses payload, so allow JSON escaping/wrapper overhead.
+        truncate_function_output_payload(&payload, self.truncation_policy * 1.2)
     }
 
-    fn finish_response_payload(
+    fn format_response_payload(
         &self,
         mut payload: FunctionCallOutputPayload,
     ) -> FunctionCallOutputPayload {
@@ -166,13 +171,7 @@ impl McpToolOutput {
             }
         }
 
-        // This is the context-injection form, so keep it aligned with the
-        // function-call output truncation that conversation history already
-        // applies. Code-mode consumers still get the raw `CallToolResult`.
-        //
-        // The text is serialized again inside the Responses payload, so allow
-        // a small buffer for JSON escaping and wrapper overhead.
-        truncate_function_output_payload(&payload, self.truncation_policy * 1.2)
+        payload
     }
 }
 
@@ -403,15 +402,12 @@ impl ToolOutput for ExecCommandToolOutput {
         payload: &ToolPayload,
         text: &str,
     ) -> Option<ResponseInputItem> {
-        let text = formatted_truncate_text(
-            text,
-            TruncationPolicy::Tokens(self.model_output_max_tokens()),
-        );
         Some(function_tool_response(
             call_id,
             payload,
             vec![FunctionCallOutputContentItem::InputText {
-                text: self.response_text_with_output(text),
+                // The processor replacement is bounded independently of the raw tool's budget.
+                text: self.response_text_with_output(text.to_string()),
             }],
             Some(true),
         ))

@@ -32,6 +32,7 @@ pub trait ToolOutput: Send {
     }
 
     /// Builds model-only replacement text while preserving tool-specific metadata and media.
+    /// The caller bounds the replacement independently of the original output's text budget.
     fn response_with_replacement(
         &self,
         _call_id: &str,

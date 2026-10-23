@@ -67,7 +67,7 @@ fn processor_mcp_replacement_preserves_media_typed_json_and_error_status() {
         tool_input: json!({"input":true}),
         wall_time: Duration::from_millis(500),
         original_image_detail_supported: false,
-        truncation_policy: TruncationPolicy::Bytes(4096),
+        truncation_policy: TruncationPolicy::Tokens(1),
     };
     assert_eq!(
         original.raw_text_snapshot().unwrap(),
@@ -110,4 +110,49 @@ fn processor_mcp_replacement_preserves_media_typed_json_and_error_status() {
     assert_eq!(wrapped.post_tool_use_response("call", &payload), hook);
     assert!(!wrapped.success_for_logging());
     assert_eq!(wrapped.contains_external_context(), external_context);
+}
+
+#[test]
+fn processor_exec_replacement_preserves_retrieval_handles_at_small_output_budgets() {
+    let payload = ToolPayload::Function {
+        arguments: "{}".to_string(),
+    };
+    let replacement = json!({
+        "capture_id": "capture-123",
+        "read": {"tool": "read_capture", "id": "capture-123"},
+        "search": {"tool": "search_captures", "query": "capture-123"},
+        "preview": "saved output ".repeat(32),
+    })
+    .to_string();
+    for budget in [1, 32] {
+        let original = ExecCommandToolOutput {
+            event_call_id: "native-event".to_string(),
+            chunk_id: "chunk".to_string(),
+            wall_time: Duration::from_millis(1250),
+            raw_output: b"original error".to_vec(),
+            truncation_policy: TruncationPolicy::Tokens(budget),
+            max_output_tokens: Some(budget),
+            process_id: None,
+            exit_code: Some(7),
+            original_token_count: Some(42),
+            output_omitted_bytes: None,
+            hook_command: Some("command".to_string()),
+        };
+        let typed = original.code_mode_result(&payload);
+        let hook = original.post_tool_use_response("call", &payload);
+        let wrapped = ModelTextReplacement::new(Box::new(original), replacement.clone());
+        let ResponseInputItem::FunctionCallOutput { output, .. } =
+            wrapped.to_response_item("call", &payload)
+        else {
+            panic!("function output expected")
+        };
+        assert_eq!(
+            output.body,
+            FunctionCallOutputBody::Text(format!(
+                "Chunk ID: chunk\nWall time: 1.2500 seconds\nProcess exited with code 7\nOriginal token count: 42\nOutput:\nUntrusted tool data (local result processor):\n{replacement}"
+            ))
+        );
+        assert_eq!(wrapped.code_mode_result(&payload), typed);
+        assert_eq!(wrapped.post_tool_use_response("call", &payload), hook);
+    }
 }

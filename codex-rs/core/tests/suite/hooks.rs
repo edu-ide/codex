@@ -95,6 +95,13 @@ async fn check_tool_result_processor_model_delivery(replace: bool) -> Result<()>
     let calls = dir.path().join("processor-calls");
     let call_id = "processor-exec";
     let raw = "BEFORE-TRUNCATION ".repeat(500);
+    let replacement = serde_json::json!({
+        "capture_id": "capture-123",
+        "read": {"tool": "read_capture", "id": "capture-123"},
+        "search": {"tool": "search_captures", "query": "capture-123"},
+        "preview": "COMPACT RESULT ".repeat(32),
+    })
+    .to_string();
     let args = serde_json::json!({"cmd": format!("printf '%s' '{raw}'"), "max_output_tokens": 32});
     let responses = mount_sse_sequence(
         &server,
@@ -118,7 +125,7 @@ async fn check_tool_result_processor_model_delivery(replace: bool) -> Result<()>
         capture.display().to_string(),
         calls.display().to_string(),
         if replace {
-            serde_json::json!({"version":1,"action":"replace_text","text":"COMPACT RESULT"}).to_string()
+            serde_json::json!({"version":1,"action":"replace_text","text":replacement}).to_string()
         } else {
             "invalid processor response".to_string()
         },
@@ -148,11 +155,9 @@ async fn check_tool_result_processor_model_delivery(replace: bool) -> Result<()>
     let text = item["output"].as_str().expect("text output");
     assert!(text.contains("Process exited with code 0"));
     if replace {
-        assert!(
-            text.ends_with(
-                "Output:\nUntrusted tool data (local result processor):\nCOMPACT RESULT"
-            )
-        );
+        assert!(text.ends_with(&format!(
+            "Output:\nUntrusted tool data (local result processor):\n{replacement}"
+        )));
         assert!(!text.contains("BEFORE-TRUNCATION"));
     } else {
         assert!(text.contains("BEFORE-TRUNCATION"));
