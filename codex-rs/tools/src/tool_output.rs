@@ -26,6 +26,21 @@ pub trait ToolOutput: Send {
 
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem;
 
+    /// Opts in to raw text processing. Outputs with unsupported content keep their original form.
+    fn raw_text_snapshot(&self) -> Option<crate::ToolResultSnapshot> {
+        None
+    }
+
+    /// Builds model-only replacement text while preserving tool-specific metadata and media.
+    fn response_with_replacement(
+        &self,
+        _call_id: &str,
+        _payload: &ToolPayload,
+        _text: &str,
+    ) -> Option<ResponseInputItem> {
+        None
+    }
+
     /// Returns the tool call id exposed to `PostToolUse` hooks for this output.
     fn post_tool_use_id(&self, call_id: &str) -> String {
         call_id.to_string()
@@ -70,6 +85,19 @@ where
 
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
         (**self).to_response_item(call_id, payload)
+    }
+
+    fn raw_text_snapshot(&self) -> Option<crate::ToolResultSnapshot> {
+        (**self).raw_text_snapshot()
+    }
+
+    fn response_with_replacement(
+        &self,
+        call_id: &str,
+        payload: &ToolPayload,
+        text: &str,
+    ) -> Option<ResponseInputItem> {
+        (**self).response_with_replacement(call_id, payload, text)
     }
 
     fn post_tool_use_id(&self, call_id: &str) -> String {
@@ -120,6 +148,30 @@ impl JsonToolOutput {
 }
 
 impl ToolOutput for JsonToolOutput {
+    fn raw_text_snapshot(&self) -> Option<crate::ToolResultSnapshot> {
+        Some(crate::ToolResultSnapshot::complete(
+            self.value.to_string(),
+            !self.success_for_logging(),
+        ))
+    }
+
+    fn response_with_replacement(
+        &self,
+        call_id: &str,
+        payload: &ToolPayload,
+        text: &str,
+    ) -> Option<ResponseInputItem> {
+        let mut response = self.to_response_item(call_id, payload);
+        match &mut response {
+            ResponseInputItem::FunctionCallOutput { output, .. }
+            | ResponseInputItem::CustomToolCallOutput { output, .. } => {
+                output.body = FunctionCallOutputBody::Text(text.to_string())
+            }
+            _ => return None,
+        }
+        Some(response)
+    }
+
     fn log_preview(&self) -> String {
         telemetry_preview(&self.value.to_string())
     }

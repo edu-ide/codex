@@ -18,6 +18,7 @@ mod tool_discovery;
 mod tool_executor;
 mod tool_output;
 mod tool_payload;
+mod tool_result_snapshot;
 mod tool_search;
 mod tool_spec;
 
@@ -104,6 +105,9 @@ pub use tool_executor::ToolExposures;
 pub use tool_output::JsonToolOutput;
 pub use tool_output::ToolOutput;
 pub use tool_payload::ToolPayload;
+pub use tool_result_snapshot::ModelTextReplacement;
+pub use tool_result_snapshot::ToolResultCompleteness;
+pub use tool_result_snapshot::ToolResultSnapshot;
 pub use tool_search::ToolSearchEntry;
 pub use tool_search::ToolSearchInfo;
 pub use tool_spec::ResponsesApiWebSearchFilters;
