@@ -816,6 +816,7 @@ async fn handle_any_tool(
     }
     let post_tool_use_payload =
         CoreToolRuntime::post_tool_use_payload(tool, &invocation, output.as_ref());
+    let output = super::result_processor::process_output(&invocation, output).await;
     Ok(AnyToolResult {
         call_id,
         payload,

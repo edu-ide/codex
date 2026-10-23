@@ -11,6 +11,7 @@ pub(crate) mod network_approval;
 pub(crate) mod orchestrator;
 pub(crate) mod parallel;
 pub(crate) mod registry;
+mod result_processor;
 pub(crate) mod router;
 pub(crate) mod runtimes;
 pub(crate) mod sandboxing;

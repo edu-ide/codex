@@ -73,6 +73,128 @@ const BLOCKED_PROMPT_CONTEXT: &str = "Remember the blocked lighthouse note.";
 const PERMISSION_REQUEST_HOOK_MATCHER: &str = "^Bash$";
 const PERMISSION_REQUEST_ALLOW_REASON: &str = "should not be used for allow";
 
+#[cfg(unix)]
+#[tokio::test]
+async fn tool_result_processor_receives_raw_exec_and_only_replaces_model_text() -> Result<()> {
+    check_tool_result_processor_model_delivery(/*replace*/ true).await
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn tool_result_processor_failure_preserves_original_model_output_without_retry() -> Result<()>
+{
+    check_tool_result_processor_model_delivery(/*replace*/ false).await
+}
+
+#[cfg(unix)]
+async fn check_tool_result_processor_model_delivery(replace: bool) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = start_mock_server().await;
+    let dir = TempDir::new()?;
+    let capture = dir.path().join("processor-input.json");
+    let calls = dir.path().join("processor-calls");
+    let call_id = "processor-exec";
+    let raw = "BEFORE-TRUNCATION ".repeat(500);
+    let args = serde_json::json!({"cmd": format!("printf '%s' '{raw}'"), "max_output_tokens": 32});
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call(call_id, "exec_command", &serde_json::to_string(&args)?),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "done"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+    let command = vec![
+        "python3".to_string(), "-c".to_string(),
+        "import json,sys; from pathlib import Path; data=json.load(sys.stdin); Path(sys.argv[1]).write_text(json.dumps(data)); Path(sys.argv[2]).open('a').write('x'); print(sys.argv[3])".to_string(),
+        capture.display().to_string(),
+        calls.display().to_string(),
+        if replace {
+            serde_json::json!({"version":1,"action":"replace_text","text":"COMPACT RESULT"}).to_string()
+        } else {
+            "invalid processor response".to_string()
+        },
+    ];
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            write_post_tool_use_hook(home, Some("^Bash$"), "record", "")
+                .expect("write original PostToolUse capture");
+        })
+        .with_config(move |config| {
+            config.use_experimental_unified_exec_tool = true;
+            config
+                .features
+                .enable(Feature::UnifiedExec)
+                .expect("unified exec");
+            trust_discovered_hooks(config);
+            config.tool_result_processor = Some(
+                serde_json::from_value(serde_json::json!({"command":command}))
+                    .expect("valid processor config"),
+            );
+        });
+    let test = builder.build_with_auto_env(&server).await?;
+    test.submit_turn("run the command").await?;
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let item = requests[1].function_call_output(call_id);
+    let text = item["output"].as_str().expect("text output");
+    assert!(text.contains("Process exited with code 0"));
+    if replace {
+        assert!(
+            text.ends_with(
+                "Output:\nUntrusted tool data (local result processor):\nCOMPACT RESULT"
+            )
+        );
+        assert!(!text.contains("BEFORE-TRUNCATION"));
+    } else {
+        assert!(text.contains("BEFORE-TRUNCATION"));
+        assert!(!text.contains("Untrusted tool data (local result processor)"));
+        assert!(!text.contains("invalid processor response"));
+    }
+    assert_eq!(fs::read_to_string(calls)?, "x");
+    let captured: Value = serde_json::from_slice(&fs::read(capture)?)?;
+    assert_eq!(captured["version"], 1);
+    assert_eq!(captured["source"]["host"], "codex");
+    assert_eq!(captured["source"]["call_id"], call_id);
+    assert_eq!(captured["source"]["tool_name"], "exec_command");
+    assert!(
+        captured["source"]["session_uri"]
+            .as_str()
+            .unwrap()
+            .starts_with("codex://threads/")
+    );
+    assert!(captured["source"]["cwd"].is_string());
+    assert_eq!(captured["input"], args);
+    assert_eq!(captured["output"]["text"], raw);
+    assert_eq!(
+        captured["output"]["completeness"],
+        serde_json::json!({"state":"complete","omitted_bytes":null})
+    );
+    let hooks = read_post_tool_use_hook_inputs(test.codex_home_path())?;
+    assert_eq!(hooks.len(), 1);
+    assert!(
+        hooks[0]["tool_response"]
+            .as_str()
+            .unwrap()
+            .contains("BEFORE-TRUNCATION")
+    );
+    assert!(
+        !hooks[0]["tool_response"]
+            .as_str()
+            .unwrap()
+            .contains("COMPACT RESULT")
+    );
+    Ok(())
+}
+
 fn restrictive_workspace_write_profile() -> PermissionProfile {
     PermissionProfile::workspace_write_with(
         &[],

@@ -17,6 +17,8 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_tools::LoadableToolSpec;
 use codex_tools::ToolName;
+use codex_tools::ToolResultCompleteness;
+use codex_tools::ToolResultSnapshot;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::formatted_truncate_text;
@@ -80,6 +82,28 @@ pub struct McpToolOutput {
 }
 
 impl ToolOutput for McpToolOutput {
+    fn raw_text_snapshot(&self) -> Option<ToolResultSnapshot> {
+        let payload = self.result.as_function_call_output_payload();
+        Some(ToolResultSnapshot::complete(
+            payload.body.to_text()?,
+            !self.result.success(),
+        ))
+    }
+
+    fn response_with_replacement(
+        &self,
+        call_id: &str,
+        _payload: &ToolPayload,
+        text: &str,
+    ) -> Option<ResponseInputItem> {
+        let mut output = self.result.as_function_call_output_payload();
+        replace_body_text(&mut output.body, text);
+        Some(ResponseInputItem::FunctionCallOutput {
+            call_id: call_id.to_string(),
+            output: self.finish_response_payload(output),
+        })
+    }
+
     fn log_preview(&self) -> String {
         let payload = self.response_payload();
         let preview = payload.body.to_text().unwrap_or_else(|| {
@@ -115,7 +139,13 @@ impl ToolOutput for McpToolOutput {
 
 impl McpToolOutput {
     fn response_payload(&self) -> FunctionCallOutputPayload {
-        let mut payload = self.result.as_function_call_output_payload();
+        self.finish_response_payload(self.result.as_function_call_output_payload())
+    }
+
+    fn finish_response_payload(
+        &self,
+        mut payload: FunctionCallOutputPayload,
+    ) -> FunctionCallOutputPayload {
         if let Some(items) = payload.content_items_mut() {
             sanitize_original_image_detail(self.original_image_detail_supported, items);
         }
@@ -219,6 +249,27 @@ impl FunctionToolOutput {
 }
 
 impl ToolOutput for FunctionToolOutput {
+    fn raw_text_snapshot(&self) -> Option<ToolResultSnapshot> {
+        Some(ToolResultSnapshot::complete(
+            function_call_output_content_items_to_text(&self.body)?,
+            !self.success_for_logging(),
+        ))
+    }
+
+    fn response_with_replacement(
+        &self,
+        call_id: &str,
+        payload: &ToolPayload,
+        text: &str,
+    ) -> Option<ResponseInputItem> {
+        let mut body = FunctionCallOutputBody::ContentItems(self.body.clone());
+        replace_body_text(&mut body, text);
+        let FunctionCallOutputBody::ContentItems(body) = body else {
+            return None;
+        };
+        Some(function_tool_response(call_id, payload, body, self.success))
+    }
+
     fn log_preview(&self) -> String {
         telemetry_preview(
             &function_call_output_content_items_to_text(&self.body).unwrap_or_default(),
@@ -328,6 +379,44 @@ pub struct ExecCommandToolOutput {
 }
 
 impl ToolOutput for ExecCommandToolOutput {
+    fn raw_text_snapshot(&self) -> Option<ToolResultSnapshot> {
+        let omitted_bytes = self.output_omitted_bytes.map(NonZeroUsize::get);
+        Some(ToolResultSnapshot {
+            text: String::from_utf8_lossy(&self.raw_output).into_owned(),
+            is_error: self.exit_code.is_some_and(|code| code != 0),
+            completeness: ToolResultCompleteness {
+                state: if omitted_bytes.is_some() {
+                    "partial"
+                } else {
+                    "complete"
+                },
+                omitted_bytes,
+            },
+            process_id: self.process_id,
+            chunk_id: Some(self.chunk_id.clone()).filter(|id| !id.is_empty()),
+        })
+    }
+
+    fn response_with_replacement(
+        &self,
+        call_id: &str,
+        payload: &ToolPayload,
+        text: &str,
+    ) -> Option<ResponseInputItem> {
+        let text = formatted_truncate_text(
+            text,
+            TruncationPolicy::Tokens(self.model_output_max_tokens()),
+        );
+        Some(function_tool_response(
+            call_id,
+            payload,
+            vec![FunctionCallOutputContentItem::InputText {
+                text: self.response_text_with_output(text),
+            }],
+            Some(true),
+        ))
+    }
+
     fn log_preview(&self) -> String {
         telemetry_preview(&self.response_text())
     }
@@ -440,6 +529,10 @@ impl ExecCommandToolOutput {
     }
 
     fn response_text(&self) -> String {
+        self.response_text_with_output(self.truncated_output(self.model_output_max_tokens()))
+    }
+
+    fn response_text_with_output(&self, output: String) -> String {
         let mut sections = Vec::new();
 
         if !self.chunk_id.is_empty() {
@@ -462,9 +555,35 @@ impl ExecCommandToolOutput {
         }
 
         sections.push("Output:".to_string());
-        sections.push(self.truncated_output(self.model_output_max_tokens()));
+        sections.push(output);
 
         sections.join("\n")
+    }
+}
+
+fn replace_body_text(body: &mut FunctionCallOutputBody, text: &str) {
+    match body {
+        FunctionCallOutputBody::Text(original) => *original = text.to_string(),
+        FunctionCallOutputBody::ContentItems(items) => {
+            let mut replaced = false;
+            items.retain_mut(|item| match item {
+                FunctionCallOutputContentItem::InputText { text: original } if !replaced => {
+                    *original = text.to_string();
+                    replaced = true;
+                    true
+                }
+                FunctionCallOutputContentItem::InputText { .. } => false,
+                _ => true,
+            });
+            if !replaced {
+                items.insert(
+                    0,
+                    FunctionCallOutputContentItem::InputText {
+                        text: text.to_string(),
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -538,3 +657,7 @@ fn telemetry_preview(content: &str) -> String {
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "context_processor_tests.rs"]
+mod processor_tests;
