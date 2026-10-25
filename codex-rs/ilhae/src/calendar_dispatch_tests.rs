@@ -8,6 +8,8 @@ fn receipt() -> BrowserBatchDispatch {
         browser_batch_id: "72f62885-91b2-4500-8f86-51caf369c488".into(),
         browser_run_id: "59c6f313-9cce-52ed-809d-471c719e20ea".into(),
         status: BrowserBatchStatus::Dispatching,
+        origin: brain_rs::schedule::BrowserBatchOrigin::Manual,
+        subject: None,
         result_summary: None,
         bridge_updated_at: None,
         space_sync_pending: false,
