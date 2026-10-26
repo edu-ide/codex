@@ -2319,17 +2319,8 @@ pub struct MemoryToolExtractInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MemoryToolDreamPromoteInput {
-    /// Array of raw memory chunk IDs that were synthesized into this knowledge item.
-    pub chunk_ids: Vec<i64>,
-    /// Target knowledge item ID (e.g. "api-auth-flow").
-    pub ki_id: String,
-    /// Target knowledge item title.
-    pub title: String,
-    /// Synthesized markdown content for the knowledge item.
-    pub content: String,
-    /// Optional tags.
-    #[serde(default)]
-    pub tags: Vec<String>,
+    /// Reviewed candidate with source chunk hashes, literal evidence quotes, and a reuse assessment.
+    pub candidate: brain_knowledge_rs::consolidation::DreamCandidate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

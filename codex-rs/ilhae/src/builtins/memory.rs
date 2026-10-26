@@ -219,7 +219,7 @@ macro_rules! register_memory_tools {
             )
             .tool_fn(
                 "memory_dream_promote",
-                "Synthesize raw memory chunks into a new durable LLM Wiki artifact. Promoted chunks are marked as summarized and drop in priority.",
+                "Promote a reviewed candidate with source chunk hashes, literal evidence quotes, and a reuse assessment into a durable LLM Wiki artifact. Promoted chunks are marked as summarized and drop in priority.",
                 {
                     let brain = $brain_service.clone();
                     let bts = $bt_settings.clone();
@@ -230,13 +230,7 @@ macro_rules! register_memory_tools {
                                 "Self-improvement is disabled. Enable it in the active ilhae profile.".to_string(),
                             ));
                         }
-                        match brain.memory_dream_promote(
-                            &input.chunk_ids,
-                            &input.ki_id,
-                            &input.title,
-                            &input.content,
-                            input.tags,
-                        ) {
+                        match brain.memory_dream_promote(&input.candidate) {
                             Ok(result) => Ok::<String, sacp::Error>(
                                 serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
                             ),
